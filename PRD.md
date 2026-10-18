@@ -235,11 +235,25 @@ Assay runs three model tiers. Two tiers are hosted models. One tier is an open-w
 
 The local tier gives three things. It removes the money cost from one model tier, and therefore it buys repetitions. It extends the central question below the cheapest hosted model: is a model on your own hardware sufficient for this work? It also runs against a private codebase with no data that leaves the network.
 
-Harbor supports this through environment variables. For the `claude-code` adapter, set `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` under the `env:` key of the agent. Harbor then gives `model_name` to the server without change, and the server must accept that exact name. Harbor has no special flags for a local model. The default network mode of a task is `public`, and therefore the container reaches the host when the host name resolves (L7).
+Harbor supports this through environment variables. For the `claude-code` adapter, set `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` under the `env:` key of the agent. Harbor then gives `model_name` to the server without change, and the server must accept that exact name. Harbor has no special flags for a local model. The default network mode of a task is `public`, and therefore the container reaches the server at its network address (L7).
 
-The recommended local inference server is `llama-server` from llama.cpp. It serves the Anthropic Messages API (`/v1/messages`) directly, and therefore the local tier needs no proxy. [Issue #4](https://github.com/LeeSanderson/Assay/issues/4) makes the final selection. A Qwen model needs a changed chat template, because Claude Code sends a system message in the middle of the conversation and the default template rejects it.
+#### The reference setup
 
-*Source: Harbor v0.24.0, research in [issue #2](https://github.com/LeeSanderson/Assay/issues/2) and [issue #3](https://github.com/LeeSanderson/Assay/issues/3).*
+The reference setup is guidance. Another local setup can be different from it. Each local setup must obey the requirements below, and it must write the record that L6 gives.
+
+| Item | Reference setup |
+|---|---|
+| Hardware | AMD Ryzen AI Max+ 395 with 128 GB of unified memory |
+| Operating system | Windows. Harbor and Docker run in WSL2 on the same machine. |
+| Inference server | `llama-server` from llama.cpp, native on Windows (not in WSL2). It is built from fork commit `c49ebdb` (`charlie12345/experimental/rocmi4-iu4`, gfx1151 ROCm), because Laguna needs this fork. |
+| API | The Anthropic Messages API (`/v1/messages`) of `llama-server`. The local tier needs no proxy. |
+| Model | `laguna-s-2.1` from Poolside, quantization `Q4_K_M`. The context is 262,144 tokens, with one slot. |
+| Chat template | The template in the model file, without change. It accepts the system message that Claude Code sends in the middle of the conversation. |
+| Thinking | On. This is the default of the model. |
+| Address | `http://192.168.1.252:8080`. A DHCP reservation keeps this address fixed. |
+| Fallback model | Qwen3-Coder-30B-A3B, if the phase 0 time breaks the Risk 10 limit. It is a different local setup with its own L6 record. A Qwen model needs a changed chat template, because its default template rejects a system message in the middle of the conversation. |
+
+*Source: Harbor v0.24.0, research in [issue #2](https://github.com/LeeSanderson/Assay/issues/2) and [issue #3](https://github.com/LeeSanderson/Assay/issues/3), and the decision in [issue #4](https://github.com/LeeSanderson/Assay/issues/4).*
 
 #### Requirements
 
@@ -250,21 +264,25 @@ The recommended local inference server is `llama-server` from llama.cpp. It serv
 | L3 | The local tier declares a `concurrency_group` with `n_concurrent = 1`. One local server answers one request at a time. The hosted tiers keep their parallel trials. |
 | L4 | The local tier runs with a higher `timeout_multiplier`. This key applies to the full job and not to one agent, so the local tier runs as a separate job. The report gives the timeout rate for each model tier. A trial that reaches the timeout is not a failure of capability. |
 | L5 | The report gives seconds for each solved task pack beside the figure in USD. Harbor takes the cost from the `total_cost_usd` value of Claude Code. For a local model this value can be wrong, so the analyzer sets the money cost of the local tier to zero. The token counts stay correct. |
-| L6 | The results record the model file, the quantization, the chat template, the inference server with its version, and the hardware. The agent configuration rejects unknown keys, so this record goes in a file beside the job configuration. A model name alone is not a stable identifier, and a different quantization is a different model. |
-| L7 | On Linux the job adds `extra_hosts: ["host.docker.internal:host-gateway"]` through `--extra-docker-compose`. That overlay sets no `network_mode` and no `networks` on the `main` service. Harbor treats a service with explicit networking as outside the egress sidecar, and the allowlist then stops without a message. Docker also rejects `extra_hosts` on `main` when the sidecar is active, so this overlay works only while every network policy is `public`. |
+| L6 | The results record the model file, the quantization, the chat template, the inference server with its version, the full server command line with its environment flags, the thinking setting, the hardware, and the operating system. The agent configuration rejects unknown keys, so this record goes in a file beside the job configuration. A model name alone is not a stable identifier. A different quantization, build option, or thinking setting is a different model. |
+| L7 | The container reaches the server at its network address, and not through `host.docker.internal`. In WSL2, `host.docker.internal:host-gateway` goes to the WSL2 virtual machine and not to the Windows host. Thus the reference setup adds no `extra_hosts` overlay and changes no networking on the `main` service. This also keeps the egress sidecar correct. If the address cannot be reached, use WSL2 mirrored networking and `127.0.0.1`. |
 | L8 | The local tier is one model tier of the same matrix. It uses the same task packs, the same variants, and the same verifiers as the hosted tiers. |
+| L9 | Every model tier sets `DISABLE_NON_ESSENTIAL_MODEL_CALLS=1` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` under `env:`. Background requests (titles and summaries) use the one server slot and remove the prefix cache. Every model tier sets them, so the harness stays the same (L1). |
+| L10 | One setting, `ASSAY_LOCAL_BASE_URL`, holds the server address. No other file contains the address. To use a different local setup, change this one setting. |
 
 ```yaml
 # jobs/v1.yaml — the local tier
 timeout_multiplier: 3.0             # job level; no agent has this key
 agents:
   - name: claude-code
-    model_name: local/qwen3-coder-30b-a3b-q5_k_m   # the server receives this exact name
+    model_name: laguna-s-2.1        # the server receives this exact name
     concurrency_group: local-llm
     n_concurrent: 1
     env:
-      ANTHROPIC_BASE_URL: http://host.docker.internal:9931
+      ANTHROPIC_BASE_URL: <value of ASSAY_LOCAL_BASE_URL>   # one setting only (L10)
       ANTHROPIC_API_KEY: dummy
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"                # every model tier (L9)
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
     kwargs:
       version: "<pinned Claude Code version>"
 ```
@@ -379,7 +397,7 @@ The analyzer is the only large piece of code. Its budget is 400 to 600 lines of 
 
 | Phase | Deliverable | Acceptance criteria |
 |---|---|---|
-| 0 | Measurement spike | Over ten manual trials: `trajectory.py` finds the test-before-implementation order, and a person who reads the same trajectory agrees every time. The report gives the share of trials that write a file through `Bash`. One trial carries a trace hook that writes a marker file, and the marker reaches the trial tree. One trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. **This phase blocks all other phases.** |
+| 0 | Measurement spike | Over ten manual trials: `trajectory.py` finds the test-before-implementation order, and a person who reads the same trajectory agrees every time. The report gives the share of trials that write a file through `Bash`. One trial carries a trace hook that writes a marker file, and the marker reaches the trial tree. One trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
 | 1 | Corpus and conditions | Six task packs in two languages. Two variant directories and a manifest. The analyzer passes every comparability test for the derived variant. `tests/test.sh` returns the full reward for `solution/solve.sh`. It returns zero for an empty repository. |
 | 2 | Matrix run | Harbor completes 360 trials inside the budget. The repository holds the results. |
 | 3 | Analysis | `report.md` gives effect sizes with confidence intervals for four tiers. It also gives activation rates, cost for each solved task pack, and `UNSTABLE` marks. |
@@ -399,7 +417,7 @@ Phase 0 comes first because it tests the assumption under all later phases.
 | 6 | The effects are smaller than the noise between trials at five repetitions | Measure the power of the phase 2 output | Add repetitions to the cells that show an effect, and not to the whole matrix. |
 | 7 | The language toolchains drift, and the results do not reproduce | Pinned images, no network access, and a dependency cache inside each image | Publish the images with the results. |
 | 8 | The hook route depends on behavior that the Harbor documents do not describe. A new version of Harbor can inspect or reject the settings object. | Phase 0 runs one trial with a hook that writes a marker file. The verifier tests for the marker. | Pin the version of Harbor. Record the version with the results. If Harbor closes this route, write the settings file with a 15-line subclass of the agent. |
-| 9 | The Anthropic-format proxy route for the local tier is not tested. | Phase 0 runs one local trial through the proxy and inspects the trajectory | Use `opencode` for every model tier, including the hosted tiers, and recover red-to-green by offline replay only. |
+| 9 | The Anthropic-format route for the local tier is not tested. | Phase 0 runs one local trial against `/v1/messages` of the local server and inspects the trajectory | Use `opencode` for every model tier, including the hosted tiers, and recover red-to-green by offline replay only. |
 | 10 | The local tier is slow, and wall clock replaces money as the binding constraint. | Time one local trial in phase 0, and multiply by 180 | Cut the local tier to one language, or reduce its repetitions and widen its confidence intervals. |
 | 11 | A combination study multiplies the variant axis. Four bundle parts with two states each give 16 variants. | Count the trials before each job, and compare the count against the budget | Use a fractional design. Test each part against the control first, and test only the pairs that show an effect. |
 
@@ -419,4 +437,4 @@ Phase 0 comes first because it tests the assumption under all later phases.
 |---|---|---|
 | 1 | The second language. Go is further from the assumptions of the artifact. Python is closer to real use. The specification gives Go today. | Phase 1 |
 | 2 | Publication of the task packs. Publication invites replication. It also invites contamination of future training sets. | Phase 4 |
-| 3 | The open-weight model for the local tier, and the hardware it runs on. | Phase 0 |
+| 3 | Closed. The reference setup gives the open-weight model and the hardware ([issue #4](https://github.com/LeeSanderson/Assay/issues/4)). | Phase 0 |

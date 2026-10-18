@@ -50,3 +50,11 @@ _Avoid_: Arm
 **Cell**:
 One combination of model tier, condition, and language, holding the trials across task packs and repetitions.
 _Avoid_: Arm, slot
+
+**Local setup**:
+The hardware, inference server, model file, and settings that together serve a local model tier, recorded in full beside its results.
+_Avoid_: Local stack, local config
+
+**Reference setup**:
+The one local setup that Assay documents as guidance; any other local setup may differ from it, provided it is recorded in the same way.
+_Avoid_: Required setup, default setup
