@@ -1,0 +1,413 @@
+# Assay — Product Requirements Document
+
+**Owner:** Lee Sanderson · Version 2.0 · 18 October 2026
+
+*This document uses Simplified Technical English (ASD-STE100). Spelling is American, as Rule 1.14 requires.*
+
+---
+
+## 1. What Assay is
+
+**The name.** An assay is a test that measures the strength or the purity of a substance. A metallurgist assays an ore to find how much metal it holds, because the claim on the label is not the measurement. Assay does the same for a context artifact.
+
+Assay measures the value of a context artifact. A context artifact is a skill, a rules file, an instruction file, or a hook for a coding agent. This document uses the short form "artifact".
+
+Assay measures two effects of an artifact. The first effect is the change in the work of the agent. The second effect is the change in cost. Assay also measures how these two effects change with the model tier and with the target language.
+
+Assay answers questions of this form. Does the TDD skill improve the output of Haiku in Go? Does it improve the output of Sonnet in TypeScript by the same amount? Is an open-weight model on local hardware sufficient for either? What does each result cost?
+
+Assay has three parts:
+
+- A corpus of task packs in more than one language.
+- A protocol that runs the task packs as a controlled experiment.
+- An analyzer that converts agent trajectories into effect sizes.
+
+Assay is not a runner. Assay is not a harness. Assay is not a benchmark platform. [Harbor](https://www.harborframework.com/) runs every trial.
+
+## 2. How Assay works
+
+Assay is a pipeline of three stages around Harbor.
+
+```
+  assay/tasks/**              assay/conditions/**
+  (task packs)                (control + variant bundles)
+        │                            │
+        └──────────┬─────────────────┘
+                   ▼
+         ┌───────────────────────┐
+         │  HARBOR               │   -m model   -k repetitions
+         │  runs the matrix      │   --skill    -n concurrency
+         └───────────┬───────────┘   one image for each task pack
+                     ▼
+         results/<job-id>/<trial>/
+           agent/trajectory.json     ATIF: every tool call, in order
+           verifier/reward.json      outcome and quality metrics
+           artifacts/                files collected from /logs/artifacts
+           lock.json                 resolved inputs, with skill digests
+           result.json               tokens, cost, duration
+                     ▼
+         ┌───────────────────────┐
+         │  assay/analyze        │   trajectory to process metrics
+         │                       │   trials to paired deltas and CIs
+         └───────────┬───────────┘
+                     ▼
+              report.md / report.json
+```
+
+### Stage 1: Harbor runs the matrix
+
+The task packs use the native `task.toml` format of Harbor. Therefore Assay needs no adapter layer.
+
+Harbor supplies each condition to the agent through the `--skill` flag and the `--extra-instruction-path` flag. One job configuration expands into the full matrix. The matrix is model, condition, language, task pack, and repetition.
+
+### Stage 2: The verifier writes metrics
+
+Each task pack contains a `tests/test.sh` script. The script runs the withheld reference tests inside the container. Then the script writes `reward.json`.
+
+`reward.json` holds a dictionary of metrics. It does not hold one pass value or one fail value. Harbor records the complete agent trajectory beside it. Harbor also records the token count, the cost, and the duration of each trial.
+
+### Stage 3: The analyzer produces the report
+
+The analyzer reads the output tree of Harbor. It produces two results that Harbor cannot produce. The first result is a set of process metrics from the trajectory. The second result is a set of paired effect sizes with confidence intervals.
+
+### Division of responsibility
+
+| Harbor owns | Assay owns |
+|---|---|
+| The sandbox and one container image for each task pack | The task packs and their withheld reference tests |
+| Model selection, agent selection, and matrix expansion | The condition set and the construction of each condition |
+| Repetitions, `pass@k`, retries, and concurrency | Pairs, effect sizes, and confidence intervals |
+| Capture of the trajectory and the cost | Interpretation of the trajectory into process metrics |
+| The result tree on disk | The report |
+
+## 3. Why Assay is necessary
+
+Two decisions occur every day across the industry. The first decision is the choice of model tier for a kind of work. The second decision is the choice of artifact. No measurement supports either decision today.
+
+The published evidence shows that a simple measurement gives a false result. Three studies from 2026 examined repository context files ([arXiv 2602.11988](https://arxiv.org/abs/2602.11988), [2601.20404](https://arxiv.org/abs/2601.20404), [2607.27250](https://arxiv.org/html/2607.27250)). The studies found a small change in the success rate of tasks. The studies also found a large change in cost. One study measured a decrease of 29% in runtime and 17% in output tokens. Another study measured an increase of more than 20% in cost.
+
+A harness that measures only the success rate therefore reports no effect. The real effect is large. Assay measures both.
+
+No current tool closes this gap:
+
+- `skill-creator` from Anthropic runs paired trials with a skill and without a skill. It uses one language only. It has no model tier axis. An agent grades the output instead of a real test suite.
+- The test-generation benchmarks use Python only. Three examples are SWT-Bench, TDD-Bench-Verified, and TestGenEval. Therefore no current corpus can measure transfer between languages.
+- Harbor supplies the execution matrix. Harbor has no concept of an experimental condition. Harbor computes `pass@k`, and `pass@k` is not an effect size.
+
+## 4. Scope
+
+Version 1 includes these items:
+
+- Six task packs in TypeScript and Go. The packs come from Exercism specifications. Each pack withholds its reference tests, and therefore the agent must write its own tests.
+- One control condition and two artifact variants. Section 5 defines a condition and a variant.
+- Three model tiers. Two tiers are hosted models. One tier is an open-weight model that runs on local hardware.
+- Four metric tiers for every trial: outcome, process, cost, and quality.
+- A report that gives paired effect sizes with confidence intervals for each cell.
+
+Version 1 excludes these items:
+
+- All execution code, sandbox code, and scheduler code.
+- A plugin interface, a web interface, and a hosted service.
+- Public leaderboards and rankings of frontier models.
+- A harness axis. Every arm of version 1 uses one harness, and therefore the token counts stay comparable.
+
+## 5. Experiment specification
+
+```
+3 model tiers   local open-weight, Haiku, Sonnet
+3 conditions    control + 2 artifact variants
+2 languages     TypeScript, Go
+6 task packs    reference tests withheld
+5 repetitions
+= 540 trials
+
+The two hosted tiers are 360 trials at £40 to £110.
+The local tier is 180 trials at no money cost, and it is the slowest arm.
+```
+
+### Conditions
+
+A condition controls one thing only. It controls what the agent receives in addition to the task prompt. The task prompt, the seed repository, the model, and the language are the same across all conditions.
+
+An experiment has one control condition and one or more artifact variants.
+
+**The control.** The agent receives the task prompt and nothing else. Harbor runs the control with none of the flags in the table below. Every effect size in the report is a difference from the control.
+
+**A variant.** A variant is a named bundle of agent configuration. A bundle holds any combination of these four parts:
+
+| Part | Harbor flag | Content |
+|---|---|---|
+| Skills | `--skill <dir>`, repeatable | One or more skill directories. A directory of directories injects all of them. |
+| Hooks and settings | `--ak config=<path or JSON>` | A settings object for Claude Code. Harbor uploads it and starts the agent with `--settings`. |
+| MCP servers | `--mcp-config <path>`, repeatable | An `.mcp.json` file. |
+| Extra instructions | `--extra-instruction-path <path>` | Text that Harbor adds to the prompt. |
+
+Assay sets no limit on the number of variants. Assay also sets no limit on which parts a variant uses. A variant with skills only tests a skill. A variant with a settings object only tests a hook. A variant with both tests the combination of the two.
+
+A variant is a complete configuration. It is not a rule that modifies another configuration. Therefore an artifact with no code examples needs no special treatment, and a change of any kind becomes a new variant.
+
+### The variant manifest
+
+The file `variants/variants.toml` declares every variant. Each entry names the parts of the bundle. An entry also gives the relation of that variant to another variant.
+
+```toml
+[tdd-examples-ts]
+label     = "TDD skill, TypeScript examples"
+skills    = ["variants/tdd-examples-ts"]
+published = true                        # the artifact as its author released it
+
+[tdd-examples-go]
+label        = "TDD skill, Go examples"
+skills       = ["variants/tdd-examples-go"]
+derived_from = "tdd-examples-ts"
+differs_in   = "code-examples"
+
+[tdd-ts-with-gate]
+label        = "TDD skill and a pre-tool hook"
+skills       = ["variants/tdd-examples-ts"]
+settings     = "variants/gate/settings.json"
+derived_from = "tdd-examples-ts"
+differs_in   = "settings"
+```
+
+`assay/analyze/variants.py` reads the manifest. It builds the Harbor flags for each variant, and it tests the comparability rules.
+
+The analyzer uses `derived_from` for two purposes.
+
+First, the analyzer tests the comparability rules below. A variant that declares `derived_from` must obey every rule.
+
+Second, the analyzer labels each comparison in the report. A comparison between a variant and the control is always valid. A comparison between two variants is controlled only when one variant declares `derived_from` for the other. For every other pair, the report marks the comparison `UNCONTROLLED`.
+
+### Comparability rules for a derived variant
+
+- The bundle is identical to the base bundle, part for part, except for the part that `differs_in` names.
+- Where the changed part is a file, the content is identical byte for byte outside the declared change.
+- The token counts of the two bundles differ by 5% or less. Without this rule, the length of the prompt confounds the measured effect. The study from ETH found that long context files can decrease the success rate.
+- The file name, the front matter, and the description of each skill are the same in both bundles. Therefore both variants have the same chance to activate.
+- Skill directory names are unique inside one bundle. Harbor removes a duplicate name and keeps the last copy, and a duplicate therefore changes the result with no error.
+- A person writes the changed part. Code examples compile, and they pass the linter of their language.
+
+### Where hook scripts live
+
+A hook command is a shell string. A short hook needs no file. A long hook needs a script, and that script must reach the container on every trial.
+
+Put the script inside a skill directory. Harbor uploads each skill directory to `/harbor/skills/<name>/` for each trial, and it keeps the execute bit. The hook command then calls that absolute path. This route holds the script independent of the task image, which is the property Assay needs.
+
+### Limits of Harbor for this purpose
+
+| Need | State |
+|---|---|
+| Two or more skills in one trial | Supported. `--skill` repeats. Harbor records the name, the source, and the digest of each skill in the job lock, and the analyzer reads the lock to confirm the correct bundle ran. |
+| Hooks | Harbor has no hook flag. Harbor uploads the settings object without inspection, and Claude Code reads the `hooks` key from it. Phase 0 tests that a hook fires. |
+| A plugin as one unit | Not supported. Split the plugin into skills, an MCP file, and a settings object. |
+| Slash commands from a plugin | No mechanism exists. An experiment that needs commands needs a different runner. |
+| The ACP agent path (`--agent acp:<id>`) | This path does not copy skills. Use a native adapter for every Assay trial. |
+| A terminal recording | Only the Terminus-2 agent writes `recording.cast`. The Claude Code adapter does not write one. |
+| Per-test results | `ctrf.json` is a convention of the task and not a product of Harbor. The task writes it from the test runner. |
+| More than one verifier pass | Harbor runs `tests/test.sh` one time. The script itself runs the tests as many times as the task needs, and it writes one file for each pass. |
+
+### Adapter choice and trajectory fidelity
+
+Harbor records what the adapter converts, and the adapters do not convert the same detail. This table gives the detail that Assay needs:
+
+| Adapter | ATIF | Verbatim tool arguments | Exit code in the observation |
+|---|---|---|---|
+| `claude-code` | yes | Yes. A write holds the path and the full content. | Yes, under `extra.tool_result_metadata`. |
+| `opencode` | yes | Yes. A write holds the path and the full content. | No. The result is one flat string. |
+| `mini-swe-agent` | yes | No. The only tool is `bash`, and file content arrives inside a shell command. | No. |
+| `terminus-2` | yes | No. The agent drives a terminal, and file content arrives inside a shell command. | No. |
+| `aider` | no | — | — |
+
+Two rules come out of the table:
+
+- Assay uses an adapter that gives verbatim tool arguments. A terminal-only adapter breaks the process tier and offline replay together.
+- Red-to-green method 1 needs an exit code. Under `opencode`, use offline replay instead.
+
+### Model tiers, and the local tier
+
+Assay runs three model tiers. Two tiers are hosted models. One tier is an open-weight model on the local machine or on the local network.
+
+The local tier gives three things. It removes the money cost from one arm, and therefore it buys repetitions. It extends the central question below the cheapest hosted model: is a model on your own hardware sufficient for this work? It also runs against a private codebase with no data that leaves the network.
+
+Harbor supports this. The documents describe it at `agent-auth-resolution.mdx`, and the repository holds a working example at `examples/configs/features/ollama-job.yaml`. The flags are `--base-url`, `--api-key-name`, `--api-format`, and `--skip-model-parsing-and-provider-mapping`. The default network mode of a task is `public`, and therefore the container reaches the host with no extra configuration.
+
+#### Requirements
+
+| # | Requirement |
+|---|---|
+| L1 | One adapter serves every model arm. Two adapters confound the model with the harness, and the comparison between tiers is then void. |
+| L2 | The adapter records verbatim tool arguments, as the fidelity table above requires. The preferred adapter is `claude-code` with a proxy that speaks the Anthropic format, because it keeps the trajectory of the hosted arms unchanged. The tested alternative is `opencode` for every arm, and it loses exit codes. Phase 0 selects between the two. |
+| L3 | The local arm declares a `concurrency_group` with `n_concurrent = 1`. One local server answers one request at a time. The hosted arms keep their parallel trials. |
+| L4 | The local arm raises `timeout_multiplier`. The report gives the timeout rate for each arm. A trial that reaches the timeout is not a failure of capability. |
+| L5 | The report gives seconds for each solved task pack beside the figure in USD. Harbor records `None` for the cost of a local model, and the token counts stay correct. The agent kwarg `model_info` supplies a price where a number is necessary. |
+| L6 | The job config records the model file, the quantization, the inference server with its version, and the hardware. A model name alone is not a stable identifier, and a different quantization is a different model. |
+| L7 | On Linux the job adds `extra_hosts: ["host.docker.internal:host-gateway"]` through `--extra-docker-compose`. That overlay sets no `network_mode` and no `networks` on the `main` service. Harbor treats a service with explicit networking as outside the egress sidecar, and the allowlist then stops without a message. |
+| L8 | The local tier is one arm of the same matrix. It uses the same task packs, the same variants, and the same verifiers as the hosted arms. |
+
+```yaml
+# jobs/v1.yaml — the local arm
+agents:
+  - name: claude-code
+    model_name: local/qwen3-coder-30b-a3b-q5_k_m
+    base_url: http://host.docker.internal:4000
+    api_format: anthropic
+    concurrency_group: local-llm
+    n_concurrent: 1
+    timeout_multiplier: 3.0
+    kwargs:
+      model_info:
+        input_cost_per_token: 0.0
+        output_cost_per_token: 0.0
+```
+
+### The version 1 variants
+
+Version 1 measures the TDD skill. Each variant uses the skills part only. The published skill has worked examples in TypeScript. The second variant holds the same prose with the examples rewritten in Go.
+
+The corpus has two languages. Therefore these two variants produce every combination of example language and target language:
+
+| Target language | control | `tdd-examples-ts`<br>(published) | `tdd-examples-go` |
+|---|---|---|---|
+| **TypeScript** | no artifact | examples **match** the target | examples **do not match** the target |
+| **Go** | no artifact | examples **do not match** the target | examples **match** the target |
+
+This is a crossover design. Each language is a match in one cell and a mismatch in another cell. Therefore the transfer effect does not confound with the difficulty of the language. A result such as "Go is harder than TypeScript" moves both Go cells together, and it cancels in the comparison.
+
+Two comparisons come out of the table:
+
+- `tdd-examples-ts` minus the control gives the value of the artifact as its author published it.
+- match minus mismatch gives the transfer penalty. The transfer penalty is the part of the value that depends on examples in the language of the reader.
+
+A later experiment uses the same machinery for hooks, for MCP servers, and for combinations. Such an experiment declares variants that differ in another part of the bundle.
+
+### Paired design
+
+Every condition runs against the same task pack, the same seed repository, and the same prompt. The analyzer computes each effect size inside one task pack. This method gives the largest available decrease in variance, and it costs nothing.
+
+### Activation gate
+
+In some trials the agent never activates the artifact. The analyzer excludes these trials from the effect calculation. The report gives the activation rate as a separate metric.
+
+### Metric tiers
+
+| Tier | Metrics | Source |
+|---|---|---|
+| Outcome | The withheld reference tests pass. `pass^k` reliability across repetitions. | `reward.json` |
+| Process | A failing test exists before the implementation. Red-to-green order. Test count. Assertion density. Mock density. | `trajectory.json` (ATIF), through the analyzer |
+| Cost | Input tokens, output tokens, and reasoning tokens. Cost in USD. Duration. Turn count. **Cost for each solved task pack.** | `result.json` and the analyzer |
+| Quality | Mutation score of the tests that the agent wrote. Coverage delta. Lint and type check are clean. Diff size. | `reward.json` |
+
+### How Assay measures the order of actions
+
+Harbor writes `agent/trajectory.json` in ATIF, the Agent Trajectory Interchange Format. ATIF is one schema that 35 Harbor agents share. Each step holds a sequential `step_id`, an ISO-8601 `timestamp`, a list of `tool_calls`, and an `observation`.
+
+Each tool call holds `function_name` and `arguments`. For Claude Code the arguments are complete and verbatim. A `Write` call holds the file path and the full content. An `Edit` call holds the old string and the new string. A `Bash` call holds the command, and the observation holds the exit code and the output. A `Skill` call appears as a tool call with that name.
+
+Therefore the analyzer reads the order of file writes directly from the trajectory. This metric needs no extra instrumentation.
+
+ATIF also makes the analyzer agent-independent. A later experiment that adds a harness axis reads the same schema.
+
+Two limits apply:
+
+- One step holds every tool call of one agent turn. Inside a step, the order is the order of the array. The timestamp belongs to the turn and not to each call.
+- A `Bash` call can write a file, and that write is not a `Write` call. The analyzer counts file-writing `Bash` calls and marks any trial that contains one.
+
+### How Assay measures red and green
+
+A trajectory shows what the agent wrote. It does not show the state of the tests after each write. Harbor runs the verifier one time, after the agent stops.
+
+Assay recovers the test state over time in three ways. The analyzer uses the cheapest way that works for each trial.
+
+1. **The agent runs the tests.** A `Bash` call that runs the test command gives an exit code in the observation. This way is free. It works only when the agent chooses to run the tests.
+2. **Offline replay.** The trajectory holds the full content of every write. `replay.py` rebuilds the repository at each step and runs the tests on each rebuilt state. This way changes nothing inside the trial. It fails for a trial that writes files through `Bash`.
+3. **A trace hook.** A `PostToolUse` hook appends one record to `/logs/artifacts/` after each write. Harbor collects that directory into the trial tree. This way gives the most complete record, and it also changes the agent environment.
+
+**Rule for the trace hook.** The hook runs in every arm, and it also runs in the control. An instrument that is present in one arm only confounds the result. The hook returns no output to the agent, and therefore it does not steer the agent.
+
+Phase 0 measures how often each way works. The result of phase 0 selects the method for the matrix.
+
+### Reporting rules
+
+- Every value carries a confidence interval. The report gives no bare point estimates.
+- If the spread of a cell is larger than its effect, the report marks that cell `UNSTABLE`. It does not give a mean value for that cell.
+- Verification is deterministic where this is possible. If a metric needs a model to grade it, the analyzer repeats the grade and reports the rate of agreement.
+
+## 6. Architecture
+
+```
+assay/
+  tasks/<lang>/<task-id>/
+    instruction.md               prompt for the agent
+    task.toml                    [verifier] [agent] [environment]
+    environment/Dockerfile       pinned language toolchain
+    solution/solve.sh            gold solution, to calibrate the verifier
+    tests/test.sh                withheld reference tests, writes reward.json
+  variants/
+    variants.toml                bundle parts and relation for each variant
+    tdd-examples-ts/SKILL.md     artifact as published, TypeScript examples
+    tdd-examples-go/SKILL.md     identical prose, Go examples
+    gate/settings.json           hook declaration for a combination variant
+  jobs/
+    v1.yaml                      Harbor job configuration for the full matrix
+  analyze/
+    trajectory.py                ATIF trajectory to process metrics
+    replay.py                    rebuilds the repository at each step, runs the tests
+    variants.py                  reads variants.toml, builds Harbor flags, tests comparability
+    pairs.py                     paired deltas and bootstrap CIs
+    report.py                    metric table, UNSTABLE marks, cost for each solve
+  results/<job-id>/              output tree of Harbor, committed without change
+```
+
+A skill directory holds a `SKILL.md` file, because the `--skill` flag of Harbor takes a directory. The control names no parts. Harbor runs the control with none of the variant flags.
+
+The task packs are native to Harbor. Therefore any user of Harbor can run the corpus without an installation of Assay. This property gives the replication path, and it also prevents the growth of an adapter layer.
+
+The repository commits the raw trajectories and not only the totals. Results in this field come from a second analysis with a metric that was not obvious at first. A second run costs money. A second analysis is free.
+
+The analyzer is the only large piece of code. Its budget is 400 to 600 lines of Python. If the analyzer becomes larger than this budget, then a function of Harbor is inside Assay.
+
+## 7. Build plan
+
+| Phase | Deliverable | Acceptance criteria |
+|---|---|---|
+| 0 | Measurement spike | Over ten manual trials: `trajectory.py` finds the test-before-implementation order, and a person who reads the same trajectory agrees every time. The report gives the share of trials that write a file through `Bash`. One trial carries a trace hook that writes a marker file, and the marker reaches the trial tree. One trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. **This phase blocks all other phases.** |
+| 1 | Corpus and conditions | Six task packs in two languages. Two variant directories and a manifest. The analyzer passes every comparability test for the derived variant. `tests/test.sh` returns the full reward for `solution/solve.sh`. It returns zero for an empty repository. |
+| 2 | Matrix run | Harbor completes 360 trials inside the budget. The repository holds the results. |
+| 3 | Analysis | `report.md` gives effect sizes with confidence intervals for four tiers. It also gives activation rates, cost for each solved task pack, and `UNSTABLE` marks. |
+| 4 | Write-up | A published result. The corpus is published with it. |
+
+Phase 0 comes first because it tests the assumption under all later phases.
+
+## 8. Risks to validate
+
+| # | Risk | Validation | Fallback |
+|---|---|---|---|
+| 1 | Red-to-green state is not recoverable. Write order is visible in ATIF, but the test state between writes is not. | Phase 0 measures all three recovery methods on ten trials | Use the trace hook in every arm. If the hook also fails, make the mutation score the primary process metric. |
+| 2 | Agents write code through `Bash` instead of `Write`, and offline replay fails | Phase 0 reports the share of trials with a file-writing `Bash` call | Use the trace hook for the whole matrix. |
+| 3 | Frontier models solve Exercism task packs too easily | Measure the `none` condition in phase 1 | The withheld tests already make the task harder. Write one or two packs from unpublished work as a control for contamination. |
+| 4 | The agent never activates the artifact, and the result is a silent false null | The activation rate is a reported metric from phase 2 | Gate the effect calculation on activation. Report the rate as a result. |
+| 5 | The matched token count does not remove the length confound | Compare the derived variant against a placebo variant of the same length | Add a variant that holds neutral filler text. |
+| 6 | The effects are smaller than the noise between trials at five repetitions | Measure the power of the phase 2 output | Add repetitions to the cells that show an effect, and not to the whole matrix. |
+| 7 | The language toolchains drift, and the results do not reproduce | Pinned images, no network access, and a dependency cache inside each image | Publish the images with the results. |
+| 8 | The hook route depends on behavior that the Harbor documents do not describe. A new version of Harbor can inspect or reject the settings object. | Phase 0 runs one trial with a hook that writes a marker file. The verifier tests for the marker. | Pin the version of Harbor. Record the version with the results. If Harbor closes this route, write the settings file with a 15-line subclass of the agent. |
+| 9 | The Anthropic-format proxy route for the local tier is not tested. | Phase 0 runs one local trial through the proxy and inspects the trajectory | Use `opencode` for every arm, including the hosted arms, and recover red-to-green by offline replay only. |
+| 10 | The local tier is slow, and wall clock replaces money as the binding constraint. | Time one local trial in phase 0, and multiply by 180 | Cut the local arm to one language, or reduce its repetitions and widen its confidence intervals. |
+| 11 | A combination study multiplies the variant axis. Four bundle parts with two states each give 16 variants. | Count the trials before each job, and compare the count against the budget | Use a fractional design. Test each part against the control first, and test only the pairs that show an effect. |
+
+**Kill criterion.** If phase 3 shows every effect inside the noise band on all four tiers, then the instrumentation is wrong. Correct the metrics. Do not add cells to the matrix.
+
+## 9. Success criteria
+
+1. A measured answer, with confidence intervals, to this question: does the value of the artifact change with the language and with the model tier?
+2. A measured answer to this question: which task packs does a local open-weight model solve as well as a hosted model?
+3. A cost for each solved task pack, in money and in seconds, reported for each model tier and each kind of task.
+4. A published corpus that another person can run under Harbor without an installation of Assay.
+5. No execution code, sandbox code, or scheduler code in the repository.
+
+## 10. Open items
+
+| # | Item | Needed by |
+|---|---|---|
+| 1 | The second language. Go is further from the assumptions of the artifact. Python is closer to real use. The specification gives Go today. | Phase 1 |
+| 2 | Publication of the task packs. Publication invites replication. It also invites contamination of future training sets. | Phase 4 |
+| 3 | The open-weight model for the local tier, and the hardware it runs on. | Phase 0 |
