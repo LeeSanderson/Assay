@@ -42,7 +42,7 @@ Assay is a pipeline of three stages around Harbor.
          results/<job-id>/<trial>/
            agent/trajectory.json     ATIF: every tool call, in order
            verifier/reward.json      outcome and quality metrics
-           artifacts/                files collected from /logs/artifacts
+           artifacts/logs/artifacts/ files collected from /logs/artifacts
            lock.json                 resolved inputs, with skill digests
            result.json               tokens, cost, duration
                      ▼
@@ -109,7 +109,7 @@ Version 1 excludes these items:
 - All execution code, sandbox code, and scheduler code.
 - A plugin interface, a web interface, and a hosted service.
 - Public leaderboards and rankings of frontier models.
-- A harness axis. Every arm of version 1 uses one harness, and therefore the token counts stay comparable.
+- A harness axis. Every trial of version 1 uses one harness, and therefore the token counts stay comparable.
 
 ## 5. Experiment specification
 
@@ -122,7 +122,7 @@ Version 1 excludes these items:
 = 540 trials
 
 The two hosted tiers are 360 trials at £40 to £110.
-The local tier is 180 trials at no money cost, and it is the slowest arm.
+The local tier is 180 trials at no money cost, and it is the slowest model tier.
 ```
 
 ### Conditions
@@ -191,7 +191,11 @@ Second, the analyzer labels each comparison in the report. A comparison between 
 
 A hook command is a shell string. A short hook needs no file. A long hook needs a script, and that script must reach the container on every trial.
 
-Put the script inside a skill directory. Harbor uploads each skill directory to `/harbor/skills/<name>/` for each trial, and it keeps the execute bit. The hook command then calls that absolute path. This route holds the script independent of the task image, which is the property Assay needs.
+Put the script inside a skill directory. Harbor uploads each skill directory to `/harbor/skills/<name>/` for each trial. The directory stays there for the full trial. This route holds the script independent of the task image, which is the property Assay needs.
+
+The execute bit of a file stays only if the file on the host has it. Harbor does not add it, and the skill digest does not include file modes. Therefore the hook command starts the script through the shell: `bash /harbor/skills/<name>/hook.sh`.
+
+Put the settings object inline in the job configuration, and not as a file path. For a file path, the lock records the path only and not the content. Inline settings put the exact hook declaration into the `config.json` and the `lock.json` of each trial.
 
 ### Limits of Harbor for this purpose
 
@@ -203,6 +207,8 @@ Put the script inside a skill directory. Harbor uploads each skill directory to 
 | Slash commands from a plugin | No mechanism exists. An experiment that needs commands needs a different runner. |
 | The ACP agent path (`--agent acp:<id>`) | This path does not copy skills. Use a native adapter for every Assay trial. |
 | A terminal recording | Only the Terminus-2 agent writes `recording.cast`. The Claude Code adapter does not write one. |
+| The version of Claude Code | Harbor installs the latest Claude Code in each trial. Set `--ak version=<x.y.z>` to pin it. All model tiers use the same version. |
+| Skills or settings from the task | The adapter also copies any `~/.claude/skills` in the task image. Claude Code also reads a `.claude/settings.json` in the seed repository. A task image and a seed repository must hold neither. |
 | Per-test results | `ctrf.json` is a convention of the task and not a product of Harbor. The task writes it from the test runner. |
 | More than one verifier pass | Harbor runs `tests/test.sh` one time. The script itself runs the tests as many times as the task needs, and it writes one file for each pass. |
 
@@ -212,7 +218,7 @@ Harbor records what the adapter converts, and the adapters do not convert the sa
 
 | Adapter | ATIF | Verbatim tool arguments | Exit code in the observation |
 |---|---|---|---|
-| `claude-code` | yes | Yes. A write holds the path and the full content. | Yes, under `extra.tool_result_metadata`. |
+| `claude-code` | yes | Yes. A write holds the path and the full content. | Pass or fail only. For a failed call, `extra.tool_result_is_error` on the observation result is true, and the content starts with `Exit code N`. A call that passes has no exit code field. |
 | `opencode` | yes | Yes. A write holds the path and the full content. | No. The result is one flat string. |
 | `mini-swe-agent` | yes | No. The only tool is `bash`, and file content arrives inside a shell command. | No. |
 | `terminus-2` | yes | No. The agent drives a terminal, and file content arrives inside a shell command. | No. |
@@ -221,43 +227,46 @@ Harbor records what the adapter converts, and the adapters do not convert the sa
 Two rules come out of the table:
 
 - Assay uses an adapter that gives verbatim tool arguments. A terminal-only adapter breaks the process tier and offline replay together.
-- Red-to-green method 1 needs an exit code. Under `opencode`, use offline replay instead.
+- Red-to-green method 1 needs a pass or fail signal for each test run. Under `opencode`, use offline replay instead.
 
 ### Model tiers, and the local tier
 
 Assay runs three model tiers. Two tiers are hosted models. One tier is an open-weight model on the local machine or on the local network.
 
-The local tier gives three things. It removes the money cost from one arm, and therefore it buys repetitions. It extends the central question below the cheapest hosted model: is a model on your own hardware sufficient for this work? It also runs against a private codebase with no data that leaves the network.
+The local tier gives three things. It removes the money cost from one model tier, and therefore it buys repetitions. It extends the central question below the cheapest hosted model: is a model on your own hardware sufficient for this work? It also runs against a private codebase with no data that leaves the network.
 
-Harbor supports this. The documents describe it at `agent-auth-resolution.mdx`, and the repository holds a working example at `examples/configs/features/ollama-job.yaml`. The flags are `--base-url`, `--api-key-name`, `--api-format`, and `--skip-model-parsing-and-provider-mapping`. The default network mode of a task is `public`, and therefore the container reaches the host with no extra configuration.
+Harbor supports this through environment variables. For the `claude-code` adapter, set `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` under the `env:` key of the agent. Harbor then gives `model_name` to the server without change, and the server must accept that exact name. Harbor has no special flags for a local model. The default network mode of a task is `public`, and therefore the container reaches the host when the host name resolves (L7).
+
+The recommended local inference server is `llama-server` from llama.cpp. It serves the Anthropic Messages API (`/v1/messages`) directly, and therefore the local tier needs no proxy. [Issue #4](https://github.com/LeeSanderson/Assay/issues/4) makes the final selection. A Qwen model needs a changed chat template, because Claude Code sends a system message in the middle of the conversation and the default template rejects it.
+
+*Source: Harbor v0.24.0, research in [issue #2](https://github.com/LeeSanderson/Assay/issues/2) and [issue #3](https://github.com/LeeSanderson/Assay/issues/3).*
 
 #### Requirements
 
 | # | Requirement |
 |---|---|
-| L1 | One adapter serves every model arm. Two adapters confound the model with the harness, and the comparison between tiers is then void. |
-| L2 | The adapter records verbatim tool arguments, as the fidelity table above requires. The preferred adapter is `claude-code` with a proxy that speaks the Anthropic format, because it keeps the trajectory of the hosted arms unchanged. The tested alternative is `opencode` for every arm, and it loses exit codes. Phase 0 selects between the two. |
-| L3 | The local arm declares a `concurrency_group` with `n_concurrent = 1`. One local server answers one request at a time. The hosted arms keep their parallel trials. |
-| L4 | The local arm raises `timeout_multiplier`. The report gives the timeout rate for each arm. A trial that reaches the timeout is not a failure of capability. |
-| L5 | The report gives seconds for each solved task pack beside the figure in USD. Harbor records `None` for the cost of a local model, and the token counts stay correct. The agent kwarg `model_info` supplies a price where a number is necessary. |
-| L6 | The job config records the model file, the quantization, the inference server with its version, and the hardware. A model name alone is not a stable identifier, and a different quantization is a different model. |
-| L7 | On Linux the job adds `extra_hosts: ["host.docker.internal:host-gateway"]` through `--extra-docker-compose`. That overlay sets no `network_mode` and no `networks` on the `main` service. Harbor treats a service with explicit networking as outside the egress sidecar, and the allowlist then stops without a message. |
-| L8 | The local tier is one arm of the same matrix. It uses the same task packs, the same variants, and the same verifiers as the hosted arms. |
+| L1 | One adapter serves every model tier. Two adapters confound the model with the harness, and the comparison between tiers is then void. |
+| L2 | The adapter records verbatim tool arguments, as the fidelity table above requires. The preferred adapter is `claude-code` against a server that speaks the Anthropic format, because it keeps the trajectory of the hosted tiers unchanged. The tested alternative is `opencode` for every model tier, and it loses the pass or fail signal. Phase 0 selects between the two. |
+| L3 | The local tier declares a `concurrency_group` with `n_concurrent = 1`. One local server answers one request at a time. The hosted tiers keep their parallel trials. |
+| L4 | The local tier runs with a higher `timeout_multiplier`. This key applies to the full job and not to one agent, so the local tier runs as a separate job. The report gives the timeout rate for each model tier. A trial that reaches the timeout is not a failure of capability. |
+| L5 | The report gives seconds for each solved task pack beside the figure in USD. Harbor takes the cost from the `total_cost_usd` value of Claude Code. For a local model this value can be wrong, so the analyzer sets the money cost of the local tier to zero. The token counts stay correct. |
+| L6 | The results record the model file, the quantization, the chat template, the inference server with its version, and the hardware. The agent configuration rejects unknown keys, so this record goes in a file beside the job configuration. A model name alone is not a stable identifier, and a different quantization is a different model. |
+| L7 | On Linux the job adds `extra_hosts: ["host.docker.internal:host-gateway"]` through `--extra-docker-compose`. That overlay sets no `network_mode` and no `networks` on the `main` service. Harbor treats a service with explicit networking as outside the egress sidecar, and the allowlist then stops without a message. Docker also rejects `extra_hosts` on `main` when the sidecar is active, so this overlay works only while every network policy is `public`. |
+| L8 | The local tier is one model tier of the same matrix. It uses the same task packs, the same variants, and the same verifiers as the hosted tiers. |
 
 ```yaml
-# jobs/v1.yaml — the local arm
+# jobs/v1.yaml — the local tier
+timeout_multiplier: 3.0             # job level; no agent has this key
 agents:
   - name: claude-code
-    model_name: local/qwen3-coder-30b-a3b-q5_k_m
-    base_url: http://host.docker.internal:4000
-    api_format: anthropic
+    model_name: local/qwen3-coder-30b-a3b-q5_k_m   # the server receives this exact name
     concurrency_group: local-llm
     n_concurrent: 1
-    timeout_multiplier: 3.0
+    env:
+      ANTHROPIC_BASE_URL: http://host.docker.internal:9931
+      ANTHROPIC_API_KEY: dummy
     kwargs:
-      model_info:
-        input_cost_per_token: 0.0
-        output_cost_per_token: 0.0
+      version: "<pinned Claude Code version>"
 ```
 
 ### The version 1 variants
@@ -301,7 +310,7 @@ In some trials the agent never activates the artifact. The analyzer excludes the
 
 Harbor writes `agent/trajectory.json` in ATIF, the Agent Trajectory Interchange Format. ATIF is one schema that 35 Harbor agents share. Each step holds a sequential `step_id`, an ISO-8601 `timestamp`, a list of `tool_calls`, and an `observation`.
 
-Each tool call holds `function_name` and `arguments`. For Claude Code the arguments are complete and verbatim. A `Write` call holds the file path and the full content. An `Edit` call holds the old string and the new string. A `Bash` call holds the command, and the observation holds the exit code and the output. A `Skill` call appears as a tool call with that name.
+Each tool call holds `function_name` and `arguments`. For Claude Code the arguments are complete and verbatim. A `Write` call holds the file path and the full content. An `Edit` call holds the old string and the new string. A `Bash` call holds the command, and the observation holds the output and a pass or fail flag. A `Skill` call appears as a tool call with that name. The agent can also read a skill with a `Read` call on its `SKILL.md`, and the activation gate counts both.
 
 Therefore the analyzer reads the order of file writes directly from the trajectory. This metric needs no extra instrumentation.
 
@@ -318,11 +327,11 @@ A trajectory shows what the agent wrote. It does not show the state of the tests
 
 Assay recovers the test state over time in three ways. The analyzer uses the cheapest way that works for each trial.
 
-1. **The agent runs the tests.** A `Bash` call that runs the test command gives an exit code in the observation. This way is free. It works only when the agent chooses to run the tests.
+1. **The agent runs the tests.** A `Bash` call that runs the test command gives a pass or fail flag in the observation. A failed run sets `tool_result_is_error`, and its content starts with `Exit code N`. This way is free. It works only when the agent chooses to run the tests.
 2. **Offline replay.** The trajectory holds the full content of every write. `replay.py` rebuilds the repository at each step and runs the tests on each rebuilt state. This way changes nothing inside the trial. It fails for a trial that writes files through `Bash`.
 3. **A trace hook.** A `PostToolUse` hook appends one record to `/logs/artifacts/` after each write. Harbor collects that directory into the trial tree. This way gives the most complete record, and it also changes the agent environment.
 
-**Rule for the trace hook.** The hook runs in every arm, and it also runs in the control. An instrument that is present in one arm only confounds the result. The hook returns no output to the agent, and therefore it does not steer the agent.
+**Rule for the trace hook.** The hook runs in every condition, and the control is one of them. An instrument that is present in some conditions only confounds the result. The hook returns no output to the agent, and therefore it does not steer the agent.
 
 Phase 0 measures how often each way works. The result of phase 0 selects the method for the matrix.
 
@@ -382,7 +391,7 @@ Phase 0 comes first because it tests the assumption under all later phases.
 
 | # | Risk | Validation | Fallback |
 |---|---|---|---|
-| 1 | Red-to-green state is not recoverable. Write order is visible in ATIF, but the test state between writes is not. | Phase 0 measures all three recovery methods on ten trials | Use the trace hook in every arm. If the hook also fails, make the mutation score the primary process metric. |
+| 1 | Red-to-green state is not recoverable. Write order is visible in ATIF, but the test state between writes is not. | Phase 0 measures all three recovery methods on ten trials | Use the trace hook in every condition. If the hook also fails, make the mutation score the primary process metric. |
 | 2 | Agents write code through `Bash` instead of `Write`, and offline replay fails | Phase 0 reports the share of trials with a file-writing `Bash` call | Use the trace hook for the whole matrix. |
 | 3 | Frontier models solve Exercism task packs too easily | Measure the `none` condition in phase 1 | The withheld tests already make the task harder. Write one or two packs from unpublished work as a control for contamination. |
 | 4 | The agent never activates the artifact, and the result is a silent false null | The activation rate is a reported metric from phase 2 | Gate the effect calculation on activation. Report the rate as a result. |
@@ -390,8 +399,8 @@ Phase 0 comes first because it tests the assumption under all later phases.
 | 6 | The effects are smaller than the noise between trials at five repetitions | Measure the power of the phase 2 output | Add repetitions to the cells that show an effect, and not to the whole matrix. |
 | 7 | The language toolchains drift, and the results do not reproduce | Pinned images, no network access, and a dependency cache inside each image | Publish the images with the results. |
 | 8 | The hook route depends on behavior that the Harbor documents do not describe. A new version of Harbor can inspect or reject the settings object. | Phase 0 runs one trial with a hook that writes a marker file. The verifier tests for the marker. | Pin the version of Harbor. Record the version with the results. If Harbor closes this route, write the settings file with a 15-line subclass of the agent. |
-| 9 | The Anthropic-format proxy route for the local tier is not tested. | Phase 0 runs one local trial through the proxy and inspects the trajectory | Use `opencode` for every arm, including the hosted arms, and recover red-to-green by offline replay only. |
-| 10 | The local tier is slow, and wall clock replaces money as the binding constraint. | Time one local trial in phase 0, and multiply by 180 | Cut the local arm to one language, or reduce its repetitions and widen its confidence intervals. |
+| 9 | The Anthropic-format proxy route for the local tier is not tested. | Phase 0 runs one local trial through the proxy and inspects the trajectory | Use `opencode` for every model tier, including the hosted tiers, and recover red-to-green by offline replay only. |
+| 10 | The local tier is slow, and wall clock replaces money as the binding constraint. | Time one local trial in phase 0, and multiply by 180 | Cut the local tier to one language, or reduce its repetitions and widen its confidence intervals. |
 | 11 | A combination study multiplies the variant axis. Four bundle parts with two states each give 16 variants. | Count the trials before each job, and compare the count against the budget | Use a fractional design. Test each part against the control first, and test only the pairs that show an effect. |
 
 **Kill criterion.** If phase 3 shows every effect inside the noise band on all four tiers, then the instrumentation is wrong. Correct the metrics. Do not add cells to the matrix.
