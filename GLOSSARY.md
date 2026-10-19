@@ -58,3 +58,9 @@ _Avoid_: Local stack, local config
 **Reference setup**:
 The one local setup that Assay documents as guidance; any other local setup may differ from it, provided it is recorded in the same way.
 _Avoid_: Required setup, default setup
+
+### Process metrics
+
+**Test-first order**:
+Whether the agent wrote a test file before it wrote an implementation file in one trial, judged from the order of writes alone and not from whether the test failed.
+_Avoid_: Failing test first, test before implementation

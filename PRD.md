@@ -320,7 +320,7 @@ In some trials the agent never activates the artifact. The analyzer excludes the
 | Tier | Metrics | Source |
 |---|---|---|
 | Outcome | The withheld reference tests pass. `pass^k` reliability across repetitions. | `reward.json` |
-| Process | A failing test exists before the implementation. Red-to-green order. Test count. Assertion density. Mock density. | `trajectory.json` (ATIF), through the analyzer |
+| Process | Test-first order. Red-to-green order. Test count. Assertion density. Mock density. | `trajectory.json` (ATIF), through the analyzer |
 | Cost | Input tokens, output tokens, and reasoning tokens. Cost in USD. Duration. Turn count. **Cost for each solved task pack.** | `result.json` and the analyzer |
 | Quality | Mutation score of the tests that the agent wrote. Coverage delta. Lint and type check are clean. Diff size. | `reward.json` |
 
@@ -339,9 +339,47 @@ Two limits apply:
 - One step holds every tool call of one agent turn. Inside a step, the order is the order of the array. The timestamp belongs to the turn and not to each call.
 - A `Bash` call can write a file, and that write is not a `Write` call. The analyzer counts file-writing `Bash` calls and marks any trial that contains one.
 
+#### Test-first order
+
+Test-first order looks at the order of writes only. It does not look at the test state. The red-to-green order gives the test state.
+
+Use these rules:
+
+1. A write is a `Write`, `Edit`, or `MultiEdit` call. The content of the write has no effect. A stub is a write. The content of the seed repository is not a write.
+2. Only a path inside the seed repository counts. A path outside it, such as `/tmp/try.ts`, is neutral.
+3. The language of the task pack sets the class of each path:
+
+   | Language | Test file | Implementation file | Neutral |
+   |---|---|---|---|
+   | TypeScript | `*.test.ts`, `*.spec.ts` | Each other `*.ts` file, but not `*.config.*` | All other files |
+   | Go | `*_test.go` | Each other `*.go` file | All other files |
+
+4. Find the first write to a test file and the first write to an implementation file. Only these two writes decide the verdict. Writes after them have no effect.
+5. The deciding point is the step of the earlier of the two writes. If one of the two writes does not occur, the deciding point is the last step of the trial.
+6. Give the trial one verdict:
+
+   | Verdict | Rule |
+   |---|---|
+   | `undetermined` | A file-writing `Bash` call occurs at the deciding point or before it. This rule comes before all other rules. |
+   | `test-first` | The first test write is in an earlier step than the first implementation write. |
+   | `implementation-first` | The first implementation write is in an earlier step than the first test write. |
+   | `same-turn` | The two writes have the same `step_id`. In one turn, the agent cannot run the test before the implementation exists. |
+   | `no-test` | The agent writes an implementation file and writes no test file. |
+   | `no-implementation` | The agent writes no implementation file. |
+
+**How a person checks `trajectory.py`.** Phase 0 compares `trajectory.py` with a person on the ten hosted trials:
+
+1. A `jq` command, kept separate from `trajectory.py`, prints a neutral listing of each trial. Each line gives the `step_id`, the position in the array, the `function_name`, and the path or the `Bash` command. The listing gives no class and no verdict.
+2. The person labels all ten trials from the listing before `trajectory.py` runs. The person can read `trajectory.json` when the listing is not sufficient. For each trial, the labeling sheet records the first test write and the first implementation write as anchors (`step_id`, position, and path), the file-writing `Bash` calls before the deciding point, the verdict, and a note.
+3. `trajectory.py` then runs on the ten trials. The two agree on a trial when the verdict and the two anchors are the same.
+4. For each difference, the person finds the cause. If the script is wrong, fix `trajectory.py` and run it again on all ten. If the person is wrong, correct the label and write the cause in the note. If a rule is not clear, correct the rule here, and then both sides apply it again.
+5. "Agrees every time" means one full pass over the ten trials with no difference. The sheet keeps a record of each correction.
+
 ### How Assay measures red and green
 
 A trajectory shows what the agent wrote. It does not show the state of the tests after each write. Harbor runs the verifier one time, after the agent stops.
+
+A test run that does not compile is red.
 
 Assay recovers the test state over time in three ways. The analyzer uses the cheapest way that works for each trial.
 
@@ -397,7 +435,7 @@ The analyzer is the only large piece of code. Its budget is 400 to 600 lines of 
 
 | Phase | Deliverable | Acceptance criteria |
 |---|---|---|
-| 0 | Measurement spike | Over ten manual trials on the hosted model tiers: `trajectory.py` finds the test-before-implementation order, and a person who reads the same trajectory agrees every time. The report gives the share of trials that write a file through `Bash`. Every trial of this phase carries the trace hook. The hook writes a marker file, and the marker reaches the trial tree. The hosted trials cost £15 or less, and this includes each trial that runs again. One more trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
+| 0 | Measurement spike | Over ten manual trials on the hosted model tiers: `trajectory.py` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order" for the rules and the check). The report gives the share of trials that write a file through `Bash`. Every trial of this phase carries the trace hook. The hook writes a marker file, and the marker reaches the trial tree. The hosted trials cost £15 or less, and this includes each trial that runs again. One more trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
 | 1 | Corpus and conditions | Six task packs in two languages. Two variant directories and a manifest. The analyzer passes every comparability test for the derived variant. `tests/test.sh` returns the full reward for `solution/solve.sh`. It returns zero for an empty repository. |
 | 2 | Matrix run | Harbor completes 360 trials inside the budget. The repository holds the results. |
 | 3 | Analysis | `report.md` gives effect sizes with confidence intervals for four tiers. It also gives activation rates, cost for each solved task pack, and `UNSTABLE` marks. |
