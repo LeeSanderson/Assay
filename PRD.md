@@ -178,6 +178,8 @@ First, the analyzer tests the comparability rules below. A variant that declares
 
 Second, the analyzer labels each comparison in the report. A comparison between a variant and the control is always valid. A comparison between two variants is controlled only when one variant declares `derived_from` for the other. For every other pair, the report marks the comparison `UNCONTROLLED`.
 
+An entry can also declare `instrument = true`. An instrument variant holds an instrument skill. The skill makes a behavior occur, so that a person can check a measurement. The report gives no effect size for an instrument variant. The report never shows an instrument variant as an artifact under test.
+
 ### Comparability rules for a derived variant
 
 - The bundle is identical to the base bundle, part for part, except for the part that `differs_in` names.
@@ -306,6 +308,34 @@ Two comparisons come out of the table:
 - match minus mismatch gives the transfer penalty. The transfer penalty is the part of the value that depends on examples in the language of the reader.
 
 A later experiment uses the same machinery for hooks, for MCP servers, and for combinations. Such an experiment declares variants that differ in another part of the bundle.
+
+### The phase 0 instrument
+
+Phase 0 uses one instrument variant, `instrument-tdd`, for both languages. It holds a frozen copy of the `tdd` skill from `mattpocock/skills`, with changes for trials that have no user. The skill directory is `variants/instrument-tdd/tdd/`, and it holds `SKILL.md`, `tests.md`, and `mocking.md` only.
+
+```toml
+[instrument-tdd]
+label       = "Instrument: TDD skill adapted for trials with no user"
+skills      = ["variants/instrument-tdd/tdd"]
+instrument  = true
+published   = false
+source      = "mattpocock/skills"
+source_path = "skills/engineering/tdd/SKILL.md"
+source_hash = "535d1a6f3bd5bded8971e7e4ea76538907cbff6b6d32c39cf97b669869dcd383"
+edits       = [
+  "seams: the agent selects the seams and writes them down; no user confirms them",
+  "removed the paragraph that refers to codebase-design",
+  "removed the reference to code-review; the rule against refactoring in the loop stays",
+  "description: use for every task that adds or changes code",
+  "removed agents/openai.yaml",
+]
+```
+
+The record of the source and the changes stays in the manifest. A file in the skill directory goes into the container, and the agent can read it.
+
+The examples stay in TypeScript for the Go trials too. Phase 0 checks `trajectory.py`, and it does not measure the value of the skill in each language.
+
+The new description must activate the skill on a prompt that does not name TDD. The smoke trial tests this: its trajectory must hold a `Skill` call for `tdd` before the first file write. If it does not, add an instruction file that names the skill (`--extra-instruction-path`), and run the smoke trial again. Each instrument trial records whether the skill loaded.
 
 ### Paired design
 
