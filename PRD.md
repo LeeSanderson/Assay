@@ -62,7 +62,7 @@ Harbor supplies each condition to the agent through the `--skill` flag and the `
 
 ### Stage 2: The verifier writes metrics
 
-Each task pack contains a `tests/test.sh` script. The script runs the withheld reference tests inside the container. Then the script writes `reward.json`.
+Each task pack contains a `tests/test.sh` script. Harbor copies `tests/` to `/tests/` after the agent stops, and therefore the agent cannot read the reference tests. The script runs inside the container of the agent. Then the script writes `reward.json`.
 
 `reward.json` holds a dictionary of metrics. It does not hold one pass value or one fail value. Harbor records the complete agent trajectory beside it. Harbor also records the token count, the cost, and the duration of each trial.
 
@@ -124,6 +124,50 @@ Version 1 excludes these items:
 The two hosted tiers are 360 trials at £40 to £110.
 The local tier is 180 trials at no money cost, and it is the slowest model tier.
 ```
+
+### Task packs
+
+A task pack comes from one Exercism exercise. The same exercise gives one pack in TypeScript and one pack in Go. The phase 0 packs are `tasks/typescript/split-second-stopwatch/` and `tasks/go/split-second-stopwatch/`, and they go into the corpus without change.
+
+**The seed repository.** The seed repository holds the stub file of the exercise and the toolchain configuration. It holds no test file. The Dockerfile copies it to the image and makes it a git repository with one commit, `seed`. The image holds the installed dependencies.
+
+| Language | Seed repository |
+|---|---|
+| TypeScript | The stub `.ts` file, `package.json`, `yarn.lock`, `.yarnrc.yml`, `tsconfig.json`, `jest.config.cjs`, `babel.config.cjs`, `eslint.config.mjs` |
+| Go | The stub `.go` file, `go.mod` |
+
+Do not copy these parts of the Exercism directory: `.meta/` (it holds the solution), `.docs/`, `.exercism/`, `.vscode/`, `test-runner.mjs`, and each test file. A seed repository holds no `.claude/` directory, and a task image holds no `~/.claude/skills`.
+
+**The prompt.** `instruction.md` is the `.docs/instructions.md` file of the exercise without change. One footer follows it. The footer is the same in each pack, and only the file name changes:
+
+> Implement the solution in `<stub file>`. Keep the exported names and signatures as they are. Tests that you cannot see will check your solution.
+
+The footer does not tell the agent to write tests. The prompt is the same in each condition, and an instruction about tests would change the control too.
+
+**The sources.** The reference tests and the gold solution come from the Exercism track without change, at one pinned commit. Only mechanical changes are permitted: `xit` becomes `it`, and the reference test files get the prefix `assay_reference_` (Go) or `assay-reference.` (TypeScript). `solution/solve.sh` copies `.meta/proof.ci.ts` or `.meta/example.go` over the stub.
+
+**The image.** `environment/Dockerfile` starts from `node:<LTS>-bookworm` or `golang:<version>-bookworm`, pinned by digest. The versions agree with the pinned Exercism commit. A change of digest is a change of the task pack.
+
+**The provenance.** The `[metadata]` table of `task.toml` records the source repository, the commit, and the path of each copied file, each mechanical change, the file list of the seed repository, and the image digest.
+
+**The limits.** The agent timeout is 1800 seconds, and a job for a slow model tier can make it longer. The verifier timeout is 600 seconds. Each container has 2 CPUs and 4096 MB of memory. The network is open, because the agent must reach the model API.
+
+**The verifier.** `tests/test.sh` runs two passes:
+
+1. **The outcome pass.** The script copies the repository to a scratch directory and removes each test file of the agent from the copy. Then it adds the reference tests and runs them. In Go, all test files of one package compile together, and one bad test of the agent would make each reference test fail. If the agent changed a signature of the stub, the reference tests do not compile, and the reward is 0.
+2. **The agent pass.** The script runs the tests of the agent in the repository without change.
+
+In phase 0, `reward.json` holds these metrics. Each value is a number.
+
+| Metric | Value |
+|---|---|
+| `reward` | 1 if each reference test passes, else 0 |
+| `reference_compiles` | 1 or 0 |
+| `reference_passed`, `reference_total` | Counts from the outcome pass |
+| `agent_tests_compile` | 1 or 0 |
+| `agent_tests_passed`, `agent_tests_total` | Counts from the agent pass. 0 if the agent wrote no test. |
+
+Phase 1 adds the metrics of the quality tier.
 
 ### Conditions
 
@@ -431,12 +475,12 @@ Phase 0 measures how often each way works. The result of phase 0 selects the met
 
 ```
 assay/
-  tasks/<lang>/<task-id>/
+  tasks/<language>/<exercism-slug>/
     instruction.md               prompt for the agent
     task.toml                    [verifier] [agent] [environment]
     environment/Dockerfile       pinned language toolchain
     solution/solve.sh            gold solution, to calibrate the verifier
-    tests/test.sh                withheld reference tests, writes reward.json
+    tests/test.sh                withheld reference tests, two passes, writes reward.json
   variants/
     variants.toml                bundle parts and relation for each variant
     tdd-examples-ts/SKILL.md     artifact as published, TypeScript examples

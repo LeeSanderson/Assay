@@ -39,6 +39,10 @@ _Avoid_: Treatment, arm
 One self-contained task with its prompt, seed repository, pinned toolchain image, gold solution, and withheld reference tests.
 _Avoid_: Task, exercise, benchmark item
 
+**Seed repository**:
+The files an agent starts from in a trial: the task's public interface as a stub and the toolchain configuration, with no tests.
+_Avoid_: Starter code, scaffold, template
+
 **Trial**:
 One run of one agent, under one condition, on one task pack, at one model tier.
 _Avoid_: Run, episode
