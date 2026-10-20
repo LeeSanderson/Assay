@@ -28,8 +28,12 @@ _Avoid_: Installed skill
 What the agent receives in addition to the task prompt in one trial: either the control or one variant.
 
 **Control**:
-The condition in which the agent receives the task prompt and nothing else.
+The condition in which the agent receives the task prompt and nothing else; the measurement instruments still run, because they run in every condition.
 _Avoid_: None condition, baseline
+
+**Measurement instrument**:
+Something that records what happens in a trial, runs identically in every condition, stays outside every variant, and never enters the agent's context.
+_Avoid_: Probe, monitor, tracer
 
 **Variant**:
 A named, complete bundle of agent configuration (skills, settings, MCP servers, extra instructions) that is one non-control condition.

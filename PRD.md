@@ -146,7 +146,7 @@ The footer does not tell the agent to write tests. The prompt is the same in eac
 
 **The sources.** The reference tests and the gold solution come from the Exercism track without change, at one pinned commit. Only mechanical changes are permitted: `xit` becomes `it`, and the reference test files get the prefix `assay_reference_` (Go) or `assay-reference.` (TypeScript). `solution/solve.sh` copies `.meta/proof.ci.ts` or `.meta/example.go` over the stub.
 
-**The image.** `environment/Dockerfile` starts from `node:<LTS>-bookworm` or `golang:<version>-bookworm`, pinned by digest. The versions agree with the pinned Exercism commit. A change of digest is a change of the task pack.
+**The image.** `environment/Dockerfile` starts from `node:<LTS>-bookworm` or `golang:<version>-bookworm`, pinned by digest. The versions agree with the pinned Exercism commit. A change of digest is a change of the task pack. The image must hold `git`, because the trace hook needs it. The trace hook needs nothing more from the image.
 
 **The provenance.** The `[metadata]` table of `task.toml` records the source repository, the commit, and the path of each copied file, each mechanical change, the file list of the seed repository, and the image digest.
 
@@ -176,6 +176,8 @@ A condition controls one thing only. It controls what the agent receives in addi
 An experiment has one control condition and one or more artifact variants.
 
 **The control.** The agent receives the task prompt and nothing else. Harbor runs the control with none of the flags in the table below. Every effect size in the report is a difference from the control.
+
+**The measurement instruments.** A measurement instrument records what occurs in a trial. It runs in the same way in every condition, and the control is one of them. It is not a part of a variant, and it never goes into the context of the agent. The trace hook is the first measurement instrument (see "The trace hook").
 
 **A variant.** A variant is a named bundle of agent configuration. A bundle holds any combination of these four parts:
 
@@ -234,6 +236,8 @@ An entry can also declare `instrument = true`. An instrument variant holds an in
 - A person writes the changed part. Code examples compile, and they pass the linter of their language.
 
 ### Where hook scripts live
+
+This section applies to a hook that is a part of an artifact under test. The hooks of the measurement instruments use a different route (see "The trace hook").
 
 A hook command is a shell string. A short hook needs no file. A long hook needs a script, and that script must reach the container on every trial.
 
@@ -320,7 +324,7 @@ The reference setup is guidance. Another local setup can be different from it. E
 # jobs/v1.yaml — the local tier
 timeout_multiplier: 3.0             # job level; no agent has this key
 agents:
-  - name: claude-code
+  - import_path: instruments.agent:InstrumentedClaudeCode   # claude-code with the measurement instruments
     model_name: laguna-s-2.1        # the server receives this exact name
     concurrency_group: local-llm
     n_concurrent: 1
@@ -459,11 +463,56 @@ Assay recovers the test state over time in three ways. The analyzer uses the che
 
 1. **The agent runs the tests.** A `Bash` call that runs the test command gives a pass or fail flag in the observation. A failed run sets `tool_result_is_error`, and its content starts with `Exit code N`. This way is free. It works only when the agent chooses to run the tests.
 2. **Offline replay.** The trajectory holds the full content of every write. `replay.py` rebuilds the repository at each step and runs the tests on each rebuilt state. This way changes nothing inside the trial. It fails for a trial that writes files through `Bash`.
-3. **A trace hook.** A `PostToolUse` hook appends one record to `/logs/artifacts/` after each write. Harbor collects that directory into the trial tree. This way gives the most complete record, and it also changes the agent environment.
-
-**Rule for the trace hook.** The hook runs in every condition, and the control is one of them. An instrument that is present in some conditions only confounds the result. The hook returns no output to the agent, and therefore it does not steer the agent.
+3. **Replay of the trace snapshots.** After each tool call, the trace hook keeps a snapshot of the repository when the repository changed. `replay.py` runs the tests on each snapshot after the trial. This way also works for a trial that writes files through `Bash`. It adds a small delay to each tool call.
 
 Phase 0 measures how often each way works. The result of phase 0 selects the method for the matrix.
+
+#### The trace hook
+
+The trace hook is a measurement instrument. It runs in every condition, and the control is one of them. An instrument that is present in some conditions only confounds the result.
+
+**What the hook does.** The hook keeps snapshots only. It does not run tests in the trial. The tests run after the trial, on the snapshots (way 3 above).
+
+1. The hook fires on `PostToolUse` and on `PostToolUseFailure`, for every tool (matcher `*`). A failed tool can also write a file, and a `Bash` call can write a file.
+2. The hook is synchronous. Thus the agent cannot change the repository while the hook runs. The timeout of the hook is 10 seconds.
+3. On each fire, the hook compares the repository with the last snapshot. If the repository changed, the hook makes a new commit in a separate git repository, `/logs/artifacts/trace/trace.git`. This repository has its own index. The hook never reads or writes the `.git` directory of the agent.
+4. The snapshot holds each file under `/app`, the seed repository, except `.git/` and `node_modules/`. The hook ignores each `.gitignore` file, because an agent can write a `.gitignore` file that hides its own files.
+5. On each fire, the hook appends one line to `/logs/artifacts/trace/trace.jsonl`, also when the repository did not change.
+
+**The record.** Each line of `trace.jsonl` holds these fields:
+
+| Field | Value |
+|---|---|
+| `seq` | The number of the fire, from 0 |
+| `ts` | The time, in ISO-8601 |
+| `event` | `seed`, `PostToolUse`, or `PostToolUseFailure` |
+| `tool_name`, `tool_use_id` | From the input of the hook. `tool_use_id` connects the line to the tool call in ATIF. |
+| `changed` | `true` or `false`. `null` if the hook failed. |
+| `commit` | The snapshot commit, only when `changed` is `true` |
+| `paths` | The status and the path of each file that changed since the last snapshot |
+| `error` | A short cause, only when the hook failed |
+
+The record does not copy the arguments or the result of the tool. ATIF holds them.
+
+**The hook is silent.** The hook always stops with exit code 0. It writes nothing to standard output, and it returns no JSON. Thus Claude Code gives nothing from the hook to the agent, and the hook does not steer the agent. The hook writes its errors to `/logs/artifacts/trace/errors.log`. If the hook fails, it still appends its line with an `error` field. The hook sets its own git configuration: no global configuration file, `safe.directory=*`, and a fixed name and date for each commit.
+
+**How the hook gets into the container.** The hook does not go through `--skill` or through the settings object of a variant. A skill directory must hold a `SKILL.md` file, and the agent then sees the skill in each condition. Instead, every Assay job runs `instruments.agent:InstrumentedClaudeCode` through `import_path`. This class is a small subclass of the `claude-code` agent of Harbor. In `setup()`, the class does these steps:
+
+1. It uploads the directory `instruments/` to `/harbor/instruments/`. The directory holds the hook script, a static `jq` binary that the hook uses to read its input, and the class.
+2. It adds the instrument hooks to the settings object of the variant, after the hooks of the variant. The `kwargs.config` value of the job keeps the settings of the variant only, without change. The hook command is `bash /harbor/instruments/trace.sh`.
+3. It stops the job with an error if the settings of the variant contain `disableAllHooks`, or another key that stops the instrument hooks.
+4. It runs the hook script one time with `event` set to `seed`. This makes the first snapshot, the seed repository, before the agent starts.
+5. It writes `/logs/artifacts/trace/instruments.json`. This file holds the digest of `instruments/` and the full merged settings object. Harbor records the import path of the class, but not its content. This file closes that gap.
+
+**The trace check.** The analyzer runs this check on each trial, in `<trial>/artifacts/logs/artifacts/trace/`:
+
+1. `instruments.json` exists, and its digest is the same as the digest of the committed `instruments/`.
+2. A `seed` line exists.
+3. Each tool call in ATIF has exactly one line, connected by `tool_use_id`.
+4. No line has an `error` field.
+5. At least one line has `changed` set to `true`.
+
+A trial that fails the trace check is a failure of the infrastructure. It runs again in the same cell.
 
 ### Reporting rules
 
@@ -486,6 +535,10 @@ assay/
     tdd-examples-ts/SKILL.md     artifact as published, TypeScript examples
     tdd-examples-go/SKILL.md     identical prose, Go examples
     gate/settings.json           hook declaration for a combination variant
+  instruments/
+    agent.py                     InstrumentedClaudeCode: uploads instruments/, adds the instrument hooks
+    trace.sh                     the trace hook
+    jq                           static binary that the trace hook uses
   jobs/
     v1.yaml                      Harbor job configuration for the full matrix
   analyze/
@@ -509,7 +562,7 @@ The analyzer is the only large piece of code. Its budget is 400 to 600 lines of 
 
 | Phase | Deliverable | Acceptance criteria |
 |---|---|---|
-| 0 | Measurement spike | Over ten manual trials on the hosted model tiers: `trajectory.py` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order" for the rules and the check). The report gives the share of trials that write a file through `Bash`. Every trial of this phase carries the trace hook. The hook writes a marker file, and the marker reaches the trial tree. The hosted trials cost £15 or less, and this includes each trial that runs again. One more trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
+| 0 | Measurement spike | Over ten manual trials on the hosted model tiers: `trajectory.py` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order" for the rules and the check). The report gives the share of trials that write a file through `Bash`. Every trial of this phase carries the trace hook, and every trial passes the trace check (see "The trace hook"). The hosted trials cost £15 or less, and this includes each trial that runs again. One more trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
 | 1 | Corpus and conditions | Six task packs in two languages. Two variant directories and a manifest. The analyzer passes every comparability test for the derived variant. `tests/test.sh` returns the full reward for `solution/solve.sh`. It returns zero for an empty repository. |
 | 2 | Matrix run | Harbor completes 360 trials inside the budget. The repository holds the results. |
 | 3 | Analysis | `report.md` gives effect sizes with confidence intervals for four tiers. It also gives activation rates, cost for each solved task pack, and `UNSTABLE` marks. |
@@ -528,7 +581,7 @@ Phase 0 comes first because it tests the assumption under all later phases.
 | 5 | The matched token count does not remove the length confound | Compare the derived variant against a placebo variant of the same length | Add a variant that holds neutral filler text. |
 | 6 | The effects are smaller than the noise between trials at five repetitions | Measure the power of the phase 2 output | Add repetitions to the cells that show an effect, and not to the whole matrix. |
 | 7 | The language toolchains drift, and the results do not reproduce | Pinned images, no network access, and a dependency cache inside each image | Publish the images with the results. |
-| 8 | The hook route depends on behavior that the Harbor documents do not describe. A new version of Harbor can inspect or reject the settings object. | Phase 0 runs one trial with a hook that writes a marker file. The verifier tests for the marker. | Pin the version of Harbor. Record the version with the results. If Harbor closes this route, write the settings file with a 15-line subclass of the agent. |
+| 8 | The hook route depends on behavior that the Harbor documents and the Claude Code documents do not describe: hooks from `--settings` fire, and a subclass of the agent can upload files in `setup()`. A new version of Harbor can change the agent class. | Every trial of phase 0 passes the trace check. The smoke trial also confirms that the tool call ID in ATIF is the same as `tool_use_id`. | Pin the version of Harbor. Record the version with the results. If a new version breaks the subclass, change the subclass or keep the old version. |
 | 9 | The Anthropic-format route for the local tier is not tested. | Phase 0 runs one local trial against `/v1/messages` of the local server and inspects the trajectory | Use `opencode` for every model tier, including the hosted tiers, and recover red-to-green by offline replay only. |
 | 10 | The local tier is slow, and wall clock replaces money as the binding constraint. | Time one local trial in phase 0, and multiply by 180 | Cut the local tier to one language, or reduce its repetitions and widen its confidence intervals. |
 | 11 | A combination study multiplies the variant axis. Four bundle parts with two states each give 16 variants. | Count the trials before each job, and compare the count against the budget | Use a fractional design. Test each part against the control first, and test only the pairs that show an effect. |
