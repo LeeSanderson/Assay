@@ -69,6 +69,10 @@ _Avoid_: Required setup, default setup
 
 ### Process metrics
 
+**File write**:
+A change that a tool call makes to the content of a file in the seed repository, whichever tool made it; a call that leaves the content unchanged makes no file write, and deleting a file is not one.
+_Avoid_: Write call
+
 **Test-first order**:
-Whether the agent wrote a test file before it wrote an implementation file in one trial, judged from the order of writes alone and not from whether the test failed.
+Whether the agent wrote a test file before it wrote an implementation file in one trial, judged from the order of file writes alone and not from whether the test failed.
 _Avoid_: Failing test first, test before implementation

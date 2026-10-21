@@ -422,14 +422,14 @@ Harbor writes `agent/trajectory.json` in ATIF, the Agent Trajectory Interchange 
 
 Each tool call holds `function_name` and `arguments`. For Claude Code the arguments are complete and verbatim. A `Write` call holds the file path and the full content. An `Edit` call holds the old string and the new string. A `Bash` call holds the command, and the observation holds the output and a pass or fail flag. A `Skill` call appears as a tool call with that name. The agent can also read a skill with a `Read` call on its `SKILL.md`, and the activation gate counts both.
 
-Therefore the analyzer reads the order of file writes directly from the trajectory. This metric needs no extra instrumentation.
+Therefore the analyzer reads the order of the tool calls directly from the trajectory.
 
 ATIF also makes the analyzer agent-independent. A later experiment that adds a harness axis reads the same schema.
 
 Two limits apply:
 
 - One step holds every tool call of one agent turn. Inside a step, the order is the order of the array. The timestamp belongs to the turn and not to each call.
-- A `Bash` call can write a file, and that write is not a `Write` call. The analyzer counts file-writing `Bash` calls and marks any trial that contains one.
+- A `Bash` call can write a file, and ATIF does not show which file. A `Write` or `Edit` call can fail and change no file. Therefore the analyzer finds the file writes in the trace, and not in the arguments (see "The trace hook"). A file-writing `Bash` call is a `Bash` call whose trace line has `changed` set to `true`. The status and the class of the path have no effect on this rule. The analyzer marks each trial that has a file-writing `Bash` call. Offline replay cannot rebuild that trial.
 
 #### Test-first order
 
@@ -437,7 +437,7 @@ Test-first order looks at the order of writes only. It does not look at the test
 
 Use these rules:
 
-1. A write is a `Write`, `Edit`, or `MultiEdit` call. The content of the write has no effect. A stub is a write. The content of the seed repository is not a write.
+1. A write is a tool call whose trace line gives a path with the status `A` (added) or `M` (modified). The tool has no effect, and thus a `Bash` call can make a write. A path with the status `D` (deleted) is not a write. ATIF gives the order of the writes (`step_id` and the position in the array). The trace gives the paths. The content of the write has no effect. A stub is a write. The content of the seed repository is not a write.
 2. Only a path inside the seed repository counts. A path outside it, such as `/tmp/try.ts`, is neutral.
 3. The language of the task pack sets the class of each path:
 
@@ -452,7 +452,6 @@ Use these rules:
 
    | Verdict | Rule |
    |---|---|
-   | `undetermined` | A file-writing `Bash` call occurs at the deciding point or before it. This rule comes before all other rules. |
    | `test-first` | The first test write is in an earlier step than the first implementation write. |
    | `implementation-first` | The first implementation write is in an earlier step than the first test write. |
    | `same-turn` | The two writes have the same `step_id`. In one turn, the agent cannot run the test before the implementation exists. |
@@ -461,8 +460,8 @@ Use these rules:
 
 **How a person checks `trajectory.py`.** Phase 0 compares `trajectory.py` with a person on the ten hosted trials:
 
-1. A `jq` command, kept separate from `trajectory.py`, prints a neutral listing of each trial. Each line gives the `step_id`, the position in the array, the `function_name`, and the path or the `Bash` command. The listing gives no class and no verdict.
-2. The person labels all ten trials from the listing before `trajectory.py` runs. The person can read `trajectory.json` when the listing is not sufficient. For each trial, the labeling sheet records the first test write and the first implementation write as anchors (`step_id`, position, and path), the file-writing `Bash` calls before the deciding point, the verdict, and a note.
+1. A `jq` command, kept separate from `trajectory.py`, prints a neutral listing of each trial. Each line gives the `step_id`, the position in the array, the `function_name`, the path or the `Bash` command, and the `paths` value of the trace line for that tool call (joined by `tool_use_id`). The listing gives no class and no verdict.
+2. The person labels all ten trials from the listing before `trajectory.py` runs. The person can read `trajectory.json` when the listing is not sufficient. For each trial, the labeling sheet records the first test write and the first implementation write as anchors (`step_id`, position, and path), the verdict, and a note. An anchor can be a `Bash` call.
 3. `trajectory.py` then runs on the ten trials. The two agree on a trial when the verdict and the two anchors are the same.
 4. For each difference, the person finds the cause. If the script is wrong, fix `trajectory.py` and run it again on all ten. If the person is wrong, correct the label and write the cause in the note. If a rule is not clear, correct the rule here, and then both sides apply it again.
 5. "Agrees every time" means one full pass over the ten trials with no difference. The sheet keeps a record of each correction.
@@ -476,7 +475,7 @@ A test run that does not compile is red.
 Assay recovers the test state over time in three ways. The analyzer uses the cheapest way that works for each trial.
 
 1. **The agent runs the tests.** A `Bash` call that runs the test command gives a pass or fail flag in the observation. A failed run sets `tool_result_is_error`, and its content starts with `Exit code N`. This way is free. It works only when the agent chooses to run the tests.
-2. **Offline replay.** The trajectory holds the full content of every write. `replay.py` rebuilds the repository at each step and runs the tests on each rebuilt state. This way changes nothing inside the trial. It fails for a trial that writes files through `Bash`.
+2. **Offline replay.** The trajectory holds the full content of every write. `replay.py` rebuilds the repository at each step and runs the tests on each rebuilt state. This way changes nothing inside the trial. It fails for a trial with a file-writing `Bash` call.
 3. **Replay of the trace snapshots.** After each tool call, the trace hook keeps a snapshot of the repository when the repository changed. `replay.py` runs the tests on each snapshot after the trial. This way also works for a trial that writes files through `Bash`. It adds a small delay to each tool call.
 
 Phase 0 measures how often each way works. The result of phase 0 selects the method for the matrix.
@@ -503,7 +502,7 @@ The trace hook is a measurement instrument. It runs in every condition, and the 
 | `tool_name`, `tool_use_id` | From the input of the hook. `tool_use_id` connects the line to the tool call in ATIF. |
 | `changed` | `true` or `false`. `null` if the hook failed. |
 | `commit` | The snapshot commit, only when `changed` is `true` |
-| `paths` | The status and the path of each file that changed since the last snapshot |
+| `paths` | The status (`A`, `M`, or `D`) and the path of each file that changed since the last snapshot. The hook does not find renames (`--no-renames`). Thus a renamed file gives `D` for the old path and `A` for the new path. |
 | `error` | A short cause, only when the hook failed |
 
 The record does not copy the arguments or the result of the tool. ATIF holds them.
@@ -527,6 +526,7 @@ The record does not copy the arguments or the result of the tool. ATIF holds the
 5. At least one line has `changed` set to `true`.
 6. The `agent.version` value in ATIF is the same as `kwargs.version` in the `lock.json` file of the trial.
 7. The `harbor_version` value in `instruments.json` is the same as the Harbor version in the committed `uv.lock`.
+8. Each `Edit` or `MultiEdit` call that succeeded on a path in the seed repository has that path in its line. Each `Write` call that succeeded on a path in the seed repository and changed the content of the file also has that path in its line. To find a change, the analyzer compares the content of the `Write` call with the file in the previous snapshot.
 
 A trial that fails the trace check is a failure of the infrastructure. It runs again in the same cell.
 
@@ -580,7 +580,7 @@ The analyzer is the only large piece of code. Its budget is 400 to 600 lines of 
 
 | Phase | Deliverable | Acceptance criteria |
 |---|---|---|
-| 0 | Measurement spike | Over ten manual trials on the hosted model tiers: `trajectory.py` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order" for the rules and the check). The report gives the share of trials that write a file through `Bash`. Every trial of this phase carries the trace hook, and every trial passes the trace check (see "The trace hook"). The hosted trials cost £15 or less, and this includes each trial that runs again. One more trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
+| 0 | Measurement spike | Over ten manual trials on the hosted model tiers: `trajectory.py` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order" for the rules and the check). The report gives the share of trials with a file-writing `Bash` call. It also gives the share of trials in which a `Bash` call writes a test file or an implementation file. Every trial of this phase carries the trace hook, and every trial passes the trace check (see "The trace hook"). The hosted trials cost £15 or less, and this includes each trial that runs again. One more trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
 | 1 | Corpus and conditions | Six task packs in two languages. Two variant directories and a manifest. The analyzer passes every comparability test for the derived variant. `tests/test.sh` returns the full reward for `solution/solve.sh`. It returns zero for an empty repository. |
 | 2 | Matrix run | Harbor completes 360 trials inside the budget. The repository holds the results. |
 | 3 | Analysis | `report.md` gives effect sizes with confidence intervals for four tiers. It also gives activation rates, cost for each solved task pack, and `UNSTABLE` marks. |
@@ -593,14 +593,14 @@ Phase 0 comes first because it tests the assumption under all later phases.
 | # | Risk | Validation | Fallback |
 |---|---|---|---|
 | 1 | Red-to-green state is not recoverable. Write order is visible in ATIF, but the test state between writes is not. | Phase 0 measures all three recovery methods on ten trials | Use the trace hook in every condition. If the hook also fails, make the mutation score the primary process metric. |
-| 2 | Agents write code through `Bash` instead of `Write`, and offline replay fails | Phase 0 reports the share of trials with a file-writing `Bash` call | Use the trace hook for the whole matrix. |
+| 2 | Agents write code through `Bash` instead of `Write`, and offline replay fails | Phase 0 reports the share of trials with a file-writing `Bash` call, from the trace | Use replay of the trace snapshots for the whole matrix. |
 | 3 | Frontier models solve Exercism task packs too easily | Measure the `none` condition in phase 1 | The withheld tests already make the task harder. Write one or two packs from unpublished work as a control for contamination. |
 | 4 | The agent never activates the artifact, and the result is a silent false null | The activation rate is a reported metric from phase 2 | Gate the effect calculation on activation. Report the rate as a result. |
 | 5 | The matched token count does not remove the length confound | Compare the derived variant against a placebo variant of the same length | Add a variant that holds neutral filler text. |
 | 6 | The effects are smaller than the noise between trials at five repetitions | Measure the power of the phase 2 output | Add repetitions to the cells that show an effect, and not to the whole matrix. |
 | 7 | The language toolchains drift, and the results do not reproduce | Pinned images, no network access, and a dependency cache inside each image | Publish the images with the results. |
 | 8 | The hook route depends on behavior that the Harbor documents and the Claude Code documents do not describe: hooks from `--settings` fire, and a subclass of the agent can upload files in `setup()`. A new version of Harbor can change the agent class. | Every trial of phase 0 passes the trace check. The smoke trial also confirms that the tool call ID in ATIF is the same as `tool_use_id`. | Pin the version of Harbor in `uv.lock`. Record the version in each trial (see "Version pins"). If a new version breaks the subclass, change the subclass or keep the old version. |
-| 9 | The Anthropic-format route for the local tier is not tested. | Phase 0 runs one local trial against `/v1/messages` of the local server and inspects the trajectory | Use `opencode` for every model tier, including the hosted tiers, and recover red-to-green by offline replay only. |
+| 9 | The Anthropic-format route for the local tier is not tested. | Phase 0 runs one local trial against `/v1/messages` of the local server and inspects the trajectory | Use `opencode` for every model tier, including the hosted tiers, and recover red-to-green by offline replay only. Test-first order and the rule for offline replay need the trace, and Claude Code hooks do not run under `opencode`. Therefore make an equivalent trace instrument for `opencode` before the trials run again. |
 | 10 | The local tier is slow, and wall clock replaces money as the binding constraint. | Time one local trial in phase 0, and multiply by 180 | Cut the local tier to one language, or reduce its repetitions and widen its confidence intervals. |
 | 11 | A combination study multiplies the variant axis. Four bundle parts with two states each give 16 variants. | Count the trials before each job, and compare the count against the budget | Use a fractional design. Test each part against the control first, and test only the pairs that show an effect. |
 
