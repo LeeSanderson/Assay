@@ -257,10 +257,24 @@ Put the settings object inline in the job configuration, and not as a file path.
 | Slash commands from a plugin | No mechanism exists. An experiment that needs commands needs a different runner. |
 | The ACP agent path (`--agent acp:<id>`) | This path does not copy skills. Use a native adapter for every Assay trial. |
 | A terminal recording | Only the Terminus-2 agent writes `recording.cast`. The Claude Code adapter does not write one. |
-| The version of Claude Code | Harbor installs the latest Claude Code in each trial. Set `--ak version=<x.y.z>` to pin it. All model tiers use the same version. |
+| The version of Claude Code | Harbor installs the latest Claude Code in each trial. Set `--ak version=<x.y.z>` to pin it. All model tiers use the same version (see "Version pins"). |
 | Skills or settings from the task | The adapter also copies any `~/.claude/skills` in the task image. Claude Code also reads a `.claude/settings.json` in the seed repository. A task image and a seed repository must hold neither. |
 | Per-test results | `ctrf.json` is a convention of the task and not a product of Harbor. The task writes it from the test runner. |
 | More than one verifier pass | Harbor runs `tests/test.sh` one time. The script itself runs the tests as many times as the task needs, and it writes one file for each pass. |
+
+### Version pins
+
+Harbor releases a new version every two to four weeks, often with breaking changes. Claude Code releases a new version almost every day. Thus each trial must use pinned versions of both, and each trial must record them ([issue #10](https://github.com/LeeSanderson/Assay/issues/10)).
+
+**Harbor.** The file `pyproject.toml` at the root of the repository pins `harbor==0.24.0` exactly. The repository commits `uv.lock`. Each job runs as `uv run harbor`. Both harness hosts use the same lock file. A change of the Harbor version is a commit to `uv.lock`.
+
+**Claude Code.** On the day of the smoke trial, read the version of the `stable` channel of Claude Code. Write this version as `kwargs.version` in all three job files, in one commit, before the smoke trial runs. Do not change it for the remaining trials of phase 0.
+
+**A change of the Claude Code version.** If the pinned version fails, use the same rule to find a new pin: the version of the `stable` channel on the day of the change. Run again each phase 0 trial that used the old version. These trials count against the limit of £15. Change the version first only if the failure is a known regression of Claude Code. For other failures of the local route, Risk 9 applies.
+
+**The install route.** Harbor installs the pinned Claude Code in each trial through its bootstrap script. A task image never holds Claude Code, because a change of the image digest is a change of the task pack. When agents have no network access, the install route changes. Phase 1 decides that route.
+
+**The record.** `instruments.json` holds the Harbor version of each trial (see "The trace hook"). The `lock.json` file of each trial holds the requested Claude Code version in `kwargs.version`. The ATIF trajectory holds the Claude Code version that ran, in `agent.version`. The trace check compares these values. The analyzer stops with an error if the trials of one job do not use one Claude Code version (L1).
 
 ### Adapter choice and trajectory fidelity
 
@@ -502,7 +516,7 @@ The record does not copy the arguments or the result of the tool. ATIF holds the
 2. It adds the instrument hooks to the settings object of the variant, after the hooks of the variant. The `kwargs.config` value of the job keeps the settings of the variant only, without change. The hook command is `bash /harbor/instruments/trace.sh`.
 3. It stops the job with an error if the settings of the variant contain `disableAllHooks`, or another key that stops the instrument hooks.
 4. It runs the hook script one time with `event` set to `seed`. This makes the first snapshot, the seed repository, before the agent starts.
-5. It writes `/logs/artifacts/trace/instruments.json`. This file holds the digest of `instruments/` and the full merged settings object. Harbor records the import path of the class, but not its content. This file closes that gap.
+5. It writes `/logs/artifacts/trace/instruments.json`. This file holds the digest of `instruments/`, the full merged settings object, and the Harbor version (`harbor_version`, from the installed package). Harbor records the import path of the class, but not its content. Harbor records its own version only in the job lock, and not in the trial. This file closes these gaps.
 
 **The trace check.** The analyzer runs this check on each trial, in `<trial>/artifacts/logs/artifacts/trace/`:
 
@@ -511,6 +525,8 @@ The record does not copy the arguments or the result of the tool. ATIF holds the
 3. Each tool call in ATIF has exactly one line, connected by `tool_use_id`.
 4. No line has an `error` field.
 5. At least one line has `changed` set to `true`.
+6. The `agent.version` value in ATIF is the same as `kwargs.version` in the `lock.json` file of the trial.
+7. The `harbor_version` value in `instruments.json` is the same as the Harbor version in the committed `uv.lock`.
 
 A trial that fails the trace check is a failure of the infrastructure. It runs again in the same cell.
 
@@ -524,6 +540,8 @@ A trial that fails the trace check is a failure of the infrastructure. It runs a
 
 ```
 assay/
+  pyproject.toml                 pins harbor==0.24.0
+  uv.lock                        committed; every job runs as `uv run harbor`
   tasks/<language>/<exercism-slug>/
     instruction.md               prompt for the agent
     task.toml                    [verifier] [agent] [environment]
@@ -581,7 +599,7 @@ Phase 0 comes first because it tests the assumption under all later phases.
 | 5 | The matched token count does not remove the length confound | Compare the derived variant against a placebo variant of the same length | Add a variant that holds neutral filler text. |
 | 6 | The effects are smaller than the noise between trials at five repetitions | Measure the power of the phase 2 output | Add repetitions to the cells that show an effect, and not to the whole matrix. |
 | 7 | The language toolchains drift, and the results do not reproduce | Pinned images, no network access, and a dependency cache inside each image | Publish the images with the results. |
-| 8 | The hook route depends on behavior that the Harbor documents and the Claude Code documents do not describe: hooks from `--settings` fire, and a subclass of the agent can upload files in `setup()`. A new version of Harbor can change the agent class. | Every trial of phase 0 passes the trace check. The smoke trial also confirms that the tool call ID in ATIF is the same as `tool_use_id`. | Pin the version of Harbor. Record the version with the results. If a new version breaks the subclass, change the subclass or keep the old version. |
+| 8 | The hook route depends on behavior that the Harbor documents and the Claude Code documents do not describe: hooks from `--settings` fire, and a subclass of the agent can upload files in `setup()`. A new version of Harbor can change the agent class. | Every trial of phase 0 passes the trace check. The smoke trial also confirms that the tool call ID in ATIF is the same as `tool_use_id`. | Pin the version of Harbor in `uv.lock`. Record the version in each trial (see "Version pins"). If a new version breaks the subclass, change the subclass or keep the old version. |
 | 9 | The Anthropic-format route for the local tier is not tested. | Phase 0 runs one local trial against `/v1/messages` of the local server and inspects the trajectory | Use `opencode` for every model tier, including the hosted tiers, and recover red-to-green by offline replay only. |
 | 10 | The local tier is slow, and wall clock replaces money as the binding constraint. | Time one local trial in phase 0, and multiply by 180 | Cut the local tier to one language, or reduce its repetitions and widen its confidence intervals. |
 | 11 | A combination study multiplies the variant axis. Four bundle parts with two states each give 16 variants. | Count the trials before each job, and compare the count against the budget | Use a fractional design. Test each part against the control first, and test only the pairs that show an effect. |
