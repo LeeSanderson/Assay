@@ -291,7 +291,7 @@ Harbor records what the adapter converts, and the adapters do not convert the sa
 Two rules come out of the table:
 
 - Assay uses an adapter that gives verbatim tool arguments. A terminal-only adapter breaks the process tier and offline replay together.
-- Red-to-green method 1 needs a pass or fail signal for each test run. Under `opencode`, use offline replay instead.
+- The cross-check with the test runs of the agent needs a pass or fail signal for each test run. Under `opencode`, this check is not available. Replay of the trace snapshots needs an equivalent trace instrument (see Risk 9).
 
 ### Model tiers, and the local tier
 
@@ -472,13 +472,69 @@ A trajectory shows what the agent wrote. It does not show the state of the tests
 
 A test run that does not compile is red.
 
-Assay recovers the test state over time in three ways. The analyzer uses the cheapest way that works for each trial.
+The test state is the result of the tests of the agent on one state of the repository. It has four values: `pass`, `fail`, `red-compile` (the tests do not compile), and `no-tests`. The value `no-tests` is not green.
+
+Three ways can recover the test state over time:
 
 1. **The agent runs the tests.** A `Bash` call that runs the test command gives a pass or fail flag in the observation. A failed run sets `tool_result_is_error`, and its content starts with `Exit code N`. This way is free. It works only when the agent chooses to run the tests.
-2. **Offline replay.** The trajectory holds the full content of every write. `replay.py` rebuilds the repository at each step and runs the tests on each rebuilt state. This way changes nothing inside the trial. It fails for a trial with a file-writing `Bash` call.
-3. **Replay of the trace snapshots.** After each tool call, the trace hook keeps a snapshot of the repository when the repository changed. `replay.py` runs the tests on each snapshot after the trial. This way also works for a trial that writes files through `Bash`. It adds a small delay to each tool call.
+2. **Offline replay.** The trajectory holds the full content of every write. A script can rebuild the repository at each step and run the tests on each rebuilt state. This way fails for a trial with a file-writing `Bash` call. Assay does not build this way. It is a fallback if the trace hook fails. Phase 0 gives only the share of trials where it can work: the trials without a file-writing `Bash` call (Risk 2).
+3. **Replay of the trace snapshots.** After each tool call, the trace hook keeps a snapshot of the repository when the repository changed. `replay.py` runs the tests on each snapshot after the trial. This way also works for a trial that writes files through `Bash`.
 
-Phase 0 measures how often each way works. The result of phase 0 selects the method for the matrix.
+Replay of the trace snapshots is the only source of the test state, for every trial. All conditions thus use the same method. The test runs of the agent are a cross-check only.
+
+#### Replay of the trace snapshots
+
+For each trial, `replay.py` does these steps on each snapshot in `trace.git`:
+
+1. It starts a new container from the image of the task pack (pinned by digest), with no network. The timeout is the `timeout_sec` value of the verifier.
+2. It puts the snapshot in `/app` and runs `tests/test.sh` of the task pack without change. Both passes run.
+3. It keeps all the fields of the `reward.json` file that `test.sh` writes. The fields of the agent pass give the test state:
+
+   | Test state | Rule |
+   |---|---|
+   | `no-tests` | `agent_tests_total` is 0 |
+   | `red-compile` | `agent_tests_compile` is 0 |
+   | `fail` | `agent_tests_passed` is less than `agent_tests_total` |
+   | `pass` | All the tests of the agent pass |
+
+   Apply the rules from the top. The first rule that is true gives the state.
+
+Replay works on a trial when all of these conditions are true:
+
+1. Each snapshot gives a test state. A replay timeout or an error of the container or the infrastructure is a failure. A test that does not compile is not a failure, because `red-compile` is a test state.
+2. The replay of the last snapshot gives a `reward.json` file that is the same, field for field, as the `reward.json` file of the verifier in the trial.
+3. `replay.py` runs two times on all the trials of the job. The two runs give the same test state and the same fields for each snapshot.
+
+Replay runs on the laptop host. It needs the images of the task packs only, and not the model server.
+
+**The output.** `replay.py` writes its output to `analysis/<job-id>/<trial>/`, and never to `results/`. The file `replay.jsonl` holds one line for each snapshot: `seq` and `commit` from `trace.jsonl`, the `tool_use_id` and the `step_id` of the tool call that made the snapshot, all the fields of `reward.json`, the test state, the duration, and an `error` field when the replay failed.
+
+#### The cross-check with the test runs of the agent
+
+A `Bash` call is a test run when its command agrees with the pattern for the language of the task pack:
+
+| Language | Test run |
+|---|---|
+| TypeScript | `jest`, `npx jest`, `npm test`, `npm run test`, `yarn test`, `pnpm test`. Make this list agree with the test runner of the task pack. |
+| Go | `go test` |
+
+Use these rules:
+
+1. A test run that selects some of the tests (for example `go test -run X`, `jest <file>`, or `-t`) is `partial`.
+2. A test run that does not run in the seed repository (for example after `cd /tmp/...`) is not a test run.
+3. Each test run applies to the last snapshot before it.
+4. The run agrees with the replay when both give a pass, or both do not give a pass. The observation gives only an exit code. Thus `fail` and `red-compile` are the same for this check.
+
+The file `analysis/<job-id>/<trial>/agent-runs.jsonl` holds one line for each test run: `tool_use_id`, the `partial` flag, the exit code, the snapshot, the test state of the snapshot from the replay, and the agreement. A `partial` run has no agreement value.
+
+Phase 0 gives two values for this way:
+
+- **Coverage.** The share of snapshots that have a test run after them and before the next snapshot.
+- **Agreement.** The share of test runs that are not `partial` and agree with the replay.
+
+For each difference, a person finds the cause. The cause can be the pattern, the observation, or the replay. Only a replay that does not give the environment of the trial is a failure of the replay.
+
+The red-to-green order uses the test state of each snapshot.
 
 #### The trace hook
 
@@ -561,11 +617,12 @@ assay/
     v1.yaml                      Harbor job configuration for the full matrix
   analyze/
     trajectory.py                ATIF trajectory to process metrics
-    replay.py                    rebuilds the repository at each step, runs the tests
+    replay.py                    runs test.sh on each trace snapshot, gives the test state
     variants.py                  reads variants.toml, builds Harbor flags, tests comparability
     pairs.py                     paired deltas and bootstrap CIs
     report.py                    metric table, UNSTABLE marks, cost for each solve
   results/<job-id>/              output tree of Harbor, committed without change
+  analysis/<job-id>/<trial>/     output of replay.py (replay.jsonl, agent-runs.jsonl)
 ```
 
 A skill directory holds a `SKILL.md` file, because the `--skill` flag of Harbor takes a directory. The control names no parts. Harbor runs the control with none of the variant flags.
@@ -580,7 +637,7 @@ The analyzer is the only large piece of code. Its budget is 400 to 600 lines of 
 
 | Phase | Deliverable | Acceptance criteria |
 |---|---|---|
-| 0 | Measurement spike | Over ten manual trials on the hosted model tiers: `trajectory.py` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order" for the rules and the check). The report gives the share of trials with a file-writing `Bash` call. It also gives the share of trials in which a `Bash` call writes a test file or an implementation file. Every trial of this phase carries the trace hook, and every trial passes the trace check (see "The trace hook"). The hosted trials cost £15 or less, and this includes each trial that runs again. One more trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
+| 0 | Measurement spike | Over ten manual trials on the hosted model tiers: `trajectory.py` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order" for the rules and the check). The report gives the share of trials with a file-writing `Bash` call. It also gives the share of trials in which a `Bash` call writes a test file or an implementation file. Every trial of this phase carries the trace hook, and every trial passes the trace check (see "The trace hook"). Replay of the trace snapshots works on all eleven trials (see "Replay of the trace snapshots"). For each failure, find the cause, fix it, and replay all eleven trials again. The report gives the coverage and the agreement of the test runs of the agent. It gives no result for a red-to-green order. The hosted trials cost £15 or less, and this includes each trial that runs again. One more trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
 | 1 | Corpus and conditions | Six task packs in two languages. Two variant directories and a manifest. The analyzer passes every comparability test for the derived variant. `tests/test.sh` returns the full reward for `solution/solve.sh`. It returns zero for an empty repository. |
 | 2 | Matrix run | Harbor completes 360 trials inside the budget. The repository holds the results. |
 | 3 | Analysis | `report.md` gives effect sizes with confidence intervals for four tiers. It also gives activation rates, cost for each solved task pack, and `UNSTABLE` marks. |
@@ -592,15 +649,15 @@ Phase 0 comes first because it tests the assumption under all later phases.
 
 | # | Risk | Validation | Fallback |
 |---|---|---|---|
-| 1 | Red-to-green state is not recoverable. Write order is visible in ATIF, but the test state between writes is not. | Phase 0 measures all three recovery methods on ten trials | Use the trace hook in every condition. If the hook also fails, make the mutation score the primary process metric. |
-| 2 | Agents write code through `Bash` instead of `Write`, and offline replay fails | Phase 0 reports the share of trials with a file-writing `Bash` call, from the trace | Use replay of the trace snapshots for the whole matrix. |
+| 1 | Red-to-green state is not recoverable. Write order is visible in ATIF, but the test state between writes is not. | Phase 0 replays the trace snapshots of all eleven trials. It also gives the coverage and the agreement of the test runs of the agent, and the share of trials where offline replay can work. | If the replay cannot give the environment of the trial, and the cause cannot be fixed, make the mutation score the primary process metric. |
+| 2 | Agents write code through `Bash` instead of `Write`, and offline replay fails | Phase 0 reports the share of trials with a file-writing `Bash` call, from the trace | No fallback is necessary. Replay of the trace snapshots is the method for the whole matrix, and it does not use offline replay. |
 | 3 | Frontier models solve Exercism task packs too easily | Measure the `none` condition in phase 1 | The withheld tests already make the task harder. Write one or two packs from unpublished work as a control for contamination. |
 | 4 | The agent never activates the artifact, and the result is a silent false null | The activation rate is a reported metric from phase 2 | Gate the effect calculation on activation. Report the rate as a result. |
 | 5 | The matched token count does not remove the length confound | Compare the derived variant against a placebo variant of the same length | Add a variant that holds neutral filler text. |
 | 6 | The effects are smaller than the noise between trials at five repetitions | Measure the power of the phase 2 output | Add repetitions to the cells that show an effect, and not to the whole matrix. |
 | 7 | The language toolchains drift, and the results do not reproduce | Pinned images, no network access, and a dependency cache inside each image | Publish the images with the results. |
 | 8 | The hook route depends on behavior that the Harbor documents and the Claude Code documents do not describe: hooks from `--settings` fire, and a subclass of the agent can upload files in `setup()`. A new version of Harbor can change the agent class. | Every trial of phase 0 passes the trace check. The smoke trial also confirms that the tool call ID in ATIF is the same as `tool_use_id`. | Pin the version of Harbor in `uv.lock`. Record the version in each trial (see "Version pins"). If a new version breaks the subclass, change the subclass or keep the old version. |
-| 9 | The Anthropic-format route for the local tier is not tested. | Phase 0 runs one local trial against `/v1/messages` of the local server and inspects the trajectory | Use `opencode` for every model tier, including the hosted tiers, and recover red-to-green by offline replay only. Test-first order and the rule for offline replay need the trace, and Claude Code hooks do not run under `opencode`. Therefore make an equivalent trace instrument for `opencode` before the trials run again. |
+| 9 | The Anthropic-format route for the local tier is not tested. | Phase 0 runs one local trial against `/v1/messages` of the local server and inspects the trajectory | Use `opencode` for every model tier, including the hosted tiers. Test-first order and replay of the trace snapshots need the trace, and Claude Code hooks do not run under `opencode`. Therefore make an equivalent trace instrument for `opencode` before the trials run again. |
 | 10 | The local tier is slow, and wall clock replaces money as the binding constraint. | Time one local trial in phase 0, and multiply by 180 | Cut the local tier to one language, or reduce its repetitions and widen its confidence intervals. |
 | 11 | A combination study multiplies the variant axis. Four bundle parts with two states each give 16 variants. | Count the trials before each job, and compare the count against the budget | Use a fractional design. Test each part against the control first, and test only the pairs that show an effect. |
 

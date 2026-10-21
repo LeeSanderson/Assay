@@ -76,3 +76,7 @@ _Avoid_: Write call
 **Test-first order**:
 Whether the agent wrote a test file before it wrote an implementation file in one trial, judged from the order of file writes alone and not from whether the test failed.
 _Avoid_: Failing test first, test before implementation
+
+**Test state**:
+The result of the agent's own tests on one state of the repository: they pass, they fail, they do not compile, or there are none; a state with no tests is not green.
+_Avoid_: Test result, red/green status
