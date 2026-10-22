@@ -25,7 +25,7 @@ package = true
 
 [tool.uv.build-backend]
 module-root = ""
-module-name = ["instruments"]
+module-name = ["instruments", "analyze"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
