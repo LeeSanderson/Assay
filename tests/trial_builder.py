@@ -37,6 +37,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # Harbor version in uv.lock, so it passes those two trace checks.
 COMMITTED_DIGEST = instruments_digest(REPO_ROOT / "instruments")
 
+# One reward.json for each test state, for write_replay.
+_REFERENCE = {"reward": 0, "reference_compiles": 1, "reference_passed": 0, "reference_total": 29}
+REPLAY_REWARDS: dict[str, dict[str, int]] = {
+    "no-tests": {**_REFERENCE, "agent_tests_compile": 1, "agent_tests_passed": 0, "agent_tests_total": 0},
+    "red-compile": {**_REFERENCE, "agent_tests_compile": 0, "agent_tests_passed": 0, "agent_tests_total": 1},
+    "fail": {**_REFERENCE, "agent_tests_compile": 1, "agent_tests_passed": 0, "agent_tests_total": 1},
+    "pass": {**_REFERENCE, "agent_tests_compile": 1, "agent_tests_passed": 1, "agent_tests_total": 1},
+}
+
 
 class StepBuilder:
     def __init__(self, trial: TrialBuilder, step: dict):
@@ -52,7 +61,7 @@ class StepBuilder:
         function_name: str,
         arguments: dict | None = None,
         *,
-        files: dict[str, str] | None = None,
+        files: dict[str, str | bytes] | None = None,
         delete: list[str] | None = None,
         result: str | None = "ok",
         is_error: bool | None = False,
@@ -132,7 +141,7 @@ class TrialBuilder:
 
     # --- building the history -------------------------------------------
 
-    def seed(self, files: dict[str, str] | None = None, *, trace: dict | None = None) -> None:
+    def seed(self, files: dict[str, str | bytes] | None = None, *, trace: dict | None = None) -> None:
         """Writes the seed repository and makes the seed fire."""
         self._change(files or {}, [])
         self._fire("seed", None, None, trace or {})
@@ -175,6 +184,54 @@ class TrialBuilder:
         )
         return self.dir
 
+    def write_replay(
+        self,
+        states: dict[str | None, str | None] | None = None,
+        *,
+        analysis_dir: Path | None = None,
+        errors: dict[str | None, str] | None = None,
+    ) -> Path:
+        """Writes a replay.jsonl for the snapshots made so far, as replay.py does.
+
+        states maps a tool_use_id (None for the seed) to its snapshot's test
+        state; a snapshot not named gets "no-tests". errors maps a tool_use_id
+        to an error, which makes that snapshot a failed line (no state, no
+        reward fields). The reward fields follow from the state. The file goes
+        to analysis_dir, by default <root>/analysis/job/<trial name>/; the
+        folder is returned.
+        """
+        states = dict(states or {})
+        errors = errors or {}
+        snapshots = [line for line in self._lines if line.get("commit")]
+        unknown = (set(states) | set(errors)) - {line["tool_use_id"] for line in snapshots}
+        if unknown:
+            raise ValueError(f"no snapshot for {sorted(map(str, unknown))}")
+        step_ids = {
+            call["tool_call_id"]: step["step_id"]
+            for step in self.steps for call in step.get("tool_calls") or []
+        }
+        out = analysis_dir or self.dir.parent / "analysis" / "job" / self.dir.name
+        out.mkdir(parents=True, exist_ok=True)
+        lines = []
+        for snapshot in snapshots:
+            tool_use_id = snapshot["tool_use_id"]
+            line: dict[str, Any] = {
+                "seq": snapshot["seq"],
+                "commit": snapshot["commit"],
+                "tool_use_id": tool_use_id,
+                "step_id": step_ids.get(tool_use_id),
+            }
+            if tool_use_id in errors:
+                line.update(test_state=None, duration_sec=1.0, error=errors[tool_use_id])
+            else:
+                state = states.get(tool_use_id, "no-tests")
+                line.update(REPLAY_REWARDS[state], test_state=state, duration_sec=1.0)
+            lines.append(line)
+        (out / "replay.jsonl").write_text(
+            "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+        )
+        return out
+
     # --- internals ---------------------------------------------------------
 
     def _next_id(self) -> str:
@@ -186,11 +243,11 @@ class TrialBuilder:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-    def _change(self, files: dict[str, str], delete: list[str]) -> None:
+    def _change(self, files: dict[str, str | bytes], delete: list[str]) -> None:
         for rel, content in files.items():
             path = self.app / rel
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content.encode("utf-8"))
+            path.write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
         for rel in delete:
             (self.app / rel).unlink()
 
