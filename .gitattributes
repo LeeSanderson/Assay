@@ -1,2 +1,3 @@
 *.sh text eol=lf
 instruments/jq binary
+tasks/** text eol=lf
