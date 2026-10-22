@@ -280,6 +280,16 @@ def test_changed_stub_signature_fails_the_reference_compile(image, tmp_path):
 
 
 @pytest.mark.slow
+def test_a_type_error_in_a_file_the_reference_tests_do_not_import_leaves_the_reward(image, tmp_path):
+    reward = _verify(image, tmp_path, {
+        STUB: _proof(),
+        "scratch.ts": "export const broken: number = 'x'\n",
+    })
+    assert reward["reference_compiles"] == 1
+    assert reward["reward"] == 1
+
+
+@pytest.mark.slow
 def test_no_agent_tests_gives_zero_agent_tests_total(image, tmp_path):
     reward = _verify(image, tmp_path, {STUB: _proof()})
     assert reward["agent_tests_total"] == 0
