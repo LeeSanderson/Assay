@@ -18,7 +18,7 @@ agents:
     model_name: anthropic/claude-haiku-5-5
     kwargs:
       # Claude Code version: the same value in all three job files (PRD "Version pins").
-      version: &claude_code_version "SET-ON-SMOKE-TRIAL-DAY"
+      version: &claude_code_version "2.1.308"
     env: &hosted_env
       DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"   # every model tier (L9)
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
