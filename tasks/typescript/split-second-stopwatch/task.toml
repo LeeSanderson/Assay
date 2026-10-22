@@ -1,0 +1,66 @@
+schema_version = "1.4"
+
+[metadata]
+language = "typescript"
+exercise = "split-second-stopwatch"
+source_repo = "https://github.com/exercism/typescript"
+source_commit = "a24e6ae756c61932165bb7d0a2703417a8291af3"
+# Each copied path, relative to the source repository, mapped to its place in this pack.
+copied_paths = [
+    "exercises/practice/split-second-stopwatch/.docs/instructions.md",
+    "exercises/practice/split-second-stopwatch/split-second-stopwatch.ts",
+    "exercises/practice/split-second-stopwatch/package.json",
+    "exercises/practice/split-second-stopwatch/.yarnrc.yml",
+    "exercises/practice/split-second-stopwatch/tsconfig.json",
+    "exercises/practice/split-second-stopwatch/jest.config.cjs",
+    "exercises/practice/split-second-stopwatch/babel.config.cjs",
+    "exercises/practice/split-second-stopwatch/eslint.config.mjs",
+    "exercises/practice/split-second-stopwatch/split-second-stopwatch.test.ts",
+    "exercises/practice/split-second-stopwatch/.meta/proof.ci.ts",
+]
+copied_to = [
+    "instruction.md",
+    "environment/seed/split-second-stopwatch.ts",
+    "environment/seed/package.json",
+    "environment/seed/.yarnrc.yml",
+    "environment/seed/tsconfig.json",
+    "environment/seed/jest.config.cjs",
+    "environment/seed/babel.config.cjs",
+    "environment/seed/eslint.config.mjs",
+    "tests/assay-reference.split-second-stopwatch.test.ts",
+    "solution/proof.ci.ts",
+]
+mechanical_changes = [
+    "split-second-stopwatch.test.ts: xit( -> it( (28 tests)",
+    "split-second-stopwatch.test.ts renamed to assay-reference.split-second-stopwatch.test.ts",
+    "instruction.md: the fixed Assay footer appended after .docs/instructions.md",
+    "package.json: the `test` script `corepack yarn node test-runner.mjs` -> `corepack yarn lint:types && corepack yarn test:implementation`; test-runner.mjs is a track-level file that needs .meta/config.json, and these are the steps it runs for this exercise (tsc, then jest; tstyche is off)",
+    "yarn.lock: the source file is empty; the pack holds the lock that `corepack yarn install` (yarn 4.5.1) wrote in the base image",
+]
+seed_files = [
+    "split-second-stopwatch.ts",
+    "package.json",
+    "yarn.lock",
+    ".yarnrc.yml",
+    "tsconfig.json",
+    "jest.config.cjs",
+    "babel.config.cjs",
+    "eslint.config.mjs",
+]
+# tests/test.sh: agent tests compile only if tsc passes and every Jest suite
+# loads. When agent test files (`*.test.ts`, `*.spec.ts`) exist but do not
+# compile, agent_tests_passed is 0 and agent_tests_total is max(counted tests,
+# agent test files), so replay labels the snapshot red-compile, not no-tests.
+red_compile_rule = "agent test files exist and do not compile: agent_tests_passed = 0, agent_tests_total = max(counted tests, agent test files)"
+base_image = "node:22.23.4-bookworm@sha256:63538dfe497cc29dfafdda25ada09b46db68a3f4cc205abf1f5d6bf0913f3384"
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 600.0
+
+[environment]
+cpus = 2
+memory_mb = 4096
+network_mode = "public"
