@@ -22,8 +22,17 @@ class LanguageRules:
     test_files: tuple[str, ...]
     implementation_files: tuple[str, ...]
     not_implementation: tuple[str, ...]  # never an implementation file, e.g. config
-    # Commands that make a Bash call a test run (for the agent-run cross-check).
+    # Commands that make a Bash call a test run (for the agent-run cross-check),
+    # matched word for word against the start of each simple command.
     test_runs: tuple[str, ...]
+    # A test run is partial (selects a subset of the tests) when an argument
+    # after the pattern is one of these flags (as --flag, --flag value or
+    # --flag=value), or, with positional_selects, any argument that is not a flag.
+    selecting_flags: tuple[str, ...]
+    positional_selects: bool
+    # Flags that take their value as the next argument, so that value is not
+    # read as a positional argument.
+    value_flags: tuple[str, ...]
 
 
 LANGUAGES: dict[str, LanguageRules] = {
@@ -31,13 +40,34 @@ LANGUAGES: dict[str, LanguageRules] = {
         test_files=("*.test.ts", "*.spec.ts"),
         implementation_files=("*.ts",),
         not_implementation=("*.config.*",),
-        test_runs=("jest", "npx jest", "npm test", "npm run test", "yarn test", "pnpm test"),
+        # The task pack runs jest through Yarn (PnP); test:implementation is
+        # its package.json script that runs jest.
+        test_runs=(
+            "jest", "npx jest", "npm test", "npm run test", "yarn test", "pnpm test",
+            "yarn jest", "corepack yarn jest", "corepack yarn test",
+            "yarn test:implementation", "corepack yarn test:implementation",
+            "npm run test:implementation",
+        ),
+        selecting_flags=(
+            "-t", "--testNamePattern", "--testPathPattern", "--testPathPatterns",
+            "--findRelatedTests", "-o", "--onlyChanged", "-f", "--onlyFailures",
+            "--changedSince", "--lastCommit", "--selectProjects",
+        ),
+        positional_selects=True,  # jest <file or pattern>
+        value_flags=(
+            "-c", "--config", "--testTimeout", "-w", "--maxWorkers", "--reporters",
+            "--outputFile", "--rootDir", "--roots", "--testMatch", "--testRegex",
+            "--coverageDirectory", "--cacheDirectory", "--seed", "--shard",
+        ),
     ),
     "go": LanguageRules(
         test_files=("*_test.go",),
         implementation_files=("*.go",),
         not_implementation=(),
         test_runs=("go test",),
+        selecting_flags=("-run", "--run", "-skip", "--skip"),
+        positional_selects=False,  # go test <packages> runs all tests of each package
+        value_flags=(),
     ),
 }
 
