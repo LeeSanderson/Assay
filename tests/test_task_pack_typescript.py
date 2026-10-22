@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from analyze.languages import TEST, classify
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACK = REPO_ROOT / "tasks" / "typescript" / "split-second-stopwatch"
 SEED = PACK / "environment" / "seed"
@@ -25,9 +27,6 @@ REWARD_KEYS = {
     "agent_tests_compile", "agent_tests_passed", "agent_tests_total",
 }
 REFERENCE_TEST_COUNT = 29
-
-# The PRD's TypeScript test-file class (§5, "Test-first order").
-TS_TEST_FILE = re.compile(r"\.(test|spec)\.ts$")
 
 
 def _metadata() -> dict:
@@ -42,7 +41,7 @@ def _seed_files() -> list[str]:
 
 
 def test_reference_tests_carry_the_prefix_and_no_xit():
-    tests = [p.name for p in (PACK / "tests").iterdir() if TS_TEST_FILE.search(p.name)]
+    tests = [p.name for p in (PACK / "tests").iterdir() if classify("typescript", p.name) == TEST]
     assert tests == [REFERENCE_TEST]
     text = (PACK / "tests" / REFERENCE_TEST).read_text(encoding="utf-8")
     assert not re.search(r"\bxit\(", text)
@@ -120,6 +119,7 @@ describe('agent', () => {
   it('is wrong on purpose', () => {
     expect(new SplitSecondStopwatch().state).toBe('running')
   })
+  it.skip('is skipped', () => {})
 })
 """
 
@@ -202,17 +202,22 @@ def test_agent_pass_counts_the_prd_test_file_class_only(image, tmp_path):
     # `__tests__/*.ts` and `*.test.js` match Jest's default patterns but not the
     # PRD's TypeScript test-file class (`*.test.ts`, `*.spec.ts`), so the
     # agent pass must not count them.
-    reward = _verify(image, tmp_path, {
+    files = {
         STUB: _proof(),
         "split-second-stopwatch.test.ts": PASSING_AGENT_TESTS,
         "nested/laps.spec.ts": NESTED_SPEC,
         "__tests__/extra.ts": NESTED_SPEC,
         "other.test.js": "it('x', () => {})\n",
-    })
+    }
+    # The analyzer's table is the source of the class; test.sh must agree with it.
+    assert [f for f in files if classify("typescript", f) == TEST] == [
+        "split-second-stopwatch.test.ts", "nested/laps.spec.ts"]
+    reward = _verify(image, tmp_path, files)
     assert reward == {
         "reward": 1, "reference_compiles": 1,
         "reference_passed": REFERENCE_TEST_COUNT, "reference_total": REFERENCE_TEST_COUNT,
-        "agent_tests_compile": 1, "agent_tests_passed": 2, "agent_tests_total": 3,
+        # A skipped test counts in the total but not as passed.
+        "agent_tests_compile": 1, "agent_tests_passed": 2, "agent_tests_total": 4,
     }
 
 
@@ -242,7 +247,16 @@ def test_changed_stub_signature_fails_the_reference_compile(image, tmp_path):
 def test_no_agent_tests_gives_zero_agent_tests_total(image, tmp_path):
     reward = _verify(image, tmp_path, {STUB: _proof()})
     assert reward["agent_tests_total"] == 0
+    assert reward["agent_tests_compile"] == 1
     assert reward["reward"] == 1
+
+
+@pytest.mark.slow
+def test_no_agent_tests_and_code_that_does_not_build_gives_zero_compile(image, tmp_path):
+    reward = _verify(image, tmp_path, {STUB: _proof() + "\nconst broken: number = 'x'\n"})
+    assert reward["agent_tests_total"] == 0
+    assert reward["agent_tests_compile"] == 0
+    assert reward["reference_compiles"] == 0
 
 
 @pytest.mark.slow
