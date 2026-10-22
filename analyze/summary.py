@@ -21,6 +21,11 @@ from analyze.trial import Trial, read_job, read_json, share
 
 
 SUMMARY_NAME = "phase0-summary"
+# PRD section 7: the hosted trials cost 15 GBP or less. Claude Code gives USD;
+# this one assumed rate converts it. Change it to the rate on the day.
+CAP_GBP = 15
+USD_PER_GBP = 1.27
+BY_HAND = "record by hand from the server log"
 
 
 def summarize(job_dirs: list[Path | str], analysis_root: Path | str) -> dict:
@@ -29,17 +34,45 @@ def summarize(job_dirs: list[Path | str], analysis_root: Path | str) -> dict:
     Raises MixedClaudeCodeVersions if the trials of one job ran more than one
     Claude Code version (L1).
     """
-    trials, versions = [], {}
+    trials, local, versions = [], [], {}
     for job_dir in map(Path, job_dirs):
         job = read_job(job_dir)
         versions[job_dir.name] = job_claude_code_version(job)
         trials += [_trial(job_dir, trial, Path(analysis_root)) for trial in job]
+        local += [_local_trial(job_dir, trial) for trial in job if trial.local]
+    hosted_usd = sum(t["cost"]["cost_usd"] or 0 for t in trials if not t["local"])
     return {
         "claude_code_versions": versions,
         "trials": trials,
         "shares": _shares(trials),
         "agent_test_runs": _pooled(trials),
         "cost": _cost(trials),
+        "hosted_cost": {
+            "total_usd": hosted_usd, "total_gbp": hosted_usd / USD_PER_GBP,
+            "usd_per_gbp": USD_PER_GBP, "cap_gbp": CAP_GBP,
+            "within_cap": hosted_usd / USD_PER_GBP <= CAP_GBP,
+        },
+        "local_trials": local,
+    }
+
+
+def _local_trial(job_dir: Path, trial: Trial) -> dict:
+    """The local trial's Phase 0 values that its folder gives (Risk 9 and 10).
+    The prefix cache hits come from ATIF only when the server reports cached
+    tokens; the background requests are not in the folder at all."""
+    first_agent = next((c.step_id for c in trial.tool_calls), None)
+    system = next((s for s in trial.system_step_ids
+                   if first_agent is not None and s > first_agent), None)
+    cached = list(trial.cached_tokens)
+    return {
+        "job": job_dir.name,
+        "trial": trial.name,
+        "duration_sec": trial.duration_sec,
+        "tool_calls_after_system_message": None if system is None
+        else sum(1 for c in trial.tool_calls if c.step_id > system),
+        "tool_arguments_present": bool(trial.tool_calls)
+        and all(c.arguments for c in trial.tool_calls),
+        "cached_tokens_per_turn": cached if any(c is not None for c in cached) else None,
     }
 
 
@@ -201,6 +234,24 @@ def render_markdown(summary: dict) -> str:
             f"| {name} | {c['trials']} | {num(c['total_cost_usd'], 2)} | {num(p['cost_usd'], 2)} "
             f"| {num(p['input_tokens'])} | {num(p['cache_tokens'])} | {num(p['output_tokens'])} "
             f"| {num(p['duration_sec'])} | {num(p['turns'], 1)} |")
+    h = summary["hosted_cost"]
+    lines += ["", f"Hosted trials: {num(h['total_usd'], 2)} USD = £{h['total_gbp']:.2f} of the "
+              f"£{h['cap_gbp']} cap ({'within' if h['within_cap'] else 'over'} the cap; "
+              f"1 GBP = {h['usd_per_gbp']} USD assumed). Each trial that ran again counts "
+              "only if its job is in this summary."]
+    for t in summary["local_trials"]:
+        after = t["tool_calls_after_system_message"]
+        cached = t["cached_tokens_per_turn"]
+        lines += ["", f"## Local trial {t['job']}/{t['trial']}", "",
+                  f"- Time: {num(t['duration_sec'])} seconds.",
+                  f"- Tool arguments present in the trajectory: "
+                  f"{'yes' if t['tool_arguments_present'] else 'no'}.",
+                  "- Tool calls after a system message in the middle of the conversation: "
+                  + (f"none in the trajectory; {BY_HAND}." if after is None else f"{after}."),
+                  "- Prefix cache hits for each turn: "
+                  + (f"{BY_HAND}." if cached is None
+                     else f"cached tokens {', '.join(num(c) for c in cached)} (ATIF)."),
+                  f"- Background requests: {BY_HAND}."]
     return "\n".join(lines) + "\n"
 
 

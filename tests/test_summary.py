@@ -6,7 +6,7 @@ import json
 import pytest
 
 from analyze.agent_runs import cross_check_job
-from analyze.summary import summarize, write_summary
+from analyze.summary import USD_PER_GBP, render_markdown, summarize, write_summary
 from analyze.trace_check import MixedClaudeCodeVersions
 from tests.trial_builder import TrialBuilder
 
@@ -210,6 +210,83 @@ def test_the_local_tier_money_cost_is_zero_and_its_tokens_are_unchanged(tmp_path
         "output_tokens": 900, "duration_sec": 1800, "turns": 1,
     }
     assert summary["trials"][0]["cost"]["cost_usd"] == 0
+
+
+def test_the_hosted_trials_cost_is_shown_in_pounds_against_the_cap(tmp_path):
+    cross = Job(tmp_path, "phase0-cross")
+    for cost in (5.0, 7.7):
+        cross.trial(cost=cost).build()
+    local = Job(tmp_path, "phase0-local")
+    local.trial(model="laguna-s-2.1", local=True, cost=100.0).build()
+
+    summary = summarize([cross.dir, local.dir], cross.analysis)
+
+    hosted = summary["hosted_cost"]
+    assert hosted["total_usd"] == pytest.approx(12.7)
+    assert hosted["total_gbp"] == pytest.approx(12.7 / USD_PER_GBP)
+    assert (hosted["cap_gbp"], hosted["usd_per_gbp"]) == (15, USD_PER_GBP)
+    assert hosted["within_cap"] is (12.7 / USD_PER_GBP <= 15)
+    text = render_markdown(summary)
+    assert f"£{12.7 / USD_PER_GBP:.2f} of the £15 cap" in text
+    assert f"1 GBP = {USD_PER_GBP} USD" in text
+
+
+def local_trial(tmp_path, **kwargs):
+    local = Job(tmp_path, "phase0-local")
+    b = local.trial(model="laguna-s-2.1", local=True, seconds=1500, **kwargs)
+    b.step().call("Read", {"file_path": "/app/stopwatch.go"})
+    b.step("system")  # Claude Code's system message in the middle of the conversation
+    b.step().call("Write", {"file_path": "/app/stopwatch_test.go"},
+                  files={"stopwatch_test.go": GO_TEST})
+    b.step().call("Bash", {"command": "go test ./..."}, result="ok\n")
+    b.build()
+    return local
+
+
+def test_the_local_trial_gives_its_time_tool_calls_after_a_system_message_and_arguments(tmp_path):
+    local = local_trial(tmp_path)
+
+    summary = summarize([local.dir], local.analysis)
+
+    (trial,) = summary["local_trials"]
+    assert trial["duration_sec"] == 1500
+    assert trial["tool_calls_after_system_message"] == 2
+    assert trial["tool_arguments_present"] is True
+    # ATIF gives no cached tokens here and never the background requests.
+    assert trial["cached_tokens_per_turn"] is None
+    text = render_markdown(summary)
+    assert "Tool calls after a system message in the middle of the conversation: 2." in text
+    assert "Prefix cache hits for each turn: record by hand from the server log." in text
+    assert "Background requests: record by hand from the server log." in text
+
+
+def test_the_local_trial_gives_cached_tokens_for_each_turn_when_atif_has_them(tmp_path):
+    local = Job(tmp_path, "phase0-local")
+    b = local.trial(model="laguna-s-2.1", local=True)
+    for cached in (0, 900):
+        b.step().call("Read", {"file_path": "/app/stopwatch.go"})
+        b.steps[-1]["metrics"] = {"cached_tokens": cached}
+    b.build()
+
+    summary = summarize([local.dir], local.analysis)
+
+    assert summary["local_trials"][0]["cached_tokens_per_turn"] == [0, 900]
+    assert "Prefix cache hits for each turn: cached tokens 0, 900 (ATIF)." in render_markdown(summary)
+
+
+def test_a_local_trial_with_no_system_message_says_to_record_it_by_hand(tmp_path):
+    local = Job(tmp_path, "phase0-local")
+    b = local.trial(model="laguna-s-2.1", local=True)
+    b.step().call("Read", {}, result="ok")
+    b.build()
+
+    summary = summarize([local.dir], local.analysis)
+
+    (trial,) = summary["local_trials"]
+    assert trial["tool_calls_after_system_message"] is None
+    assert trial["tool_arguments_present"] is False
+    assert ("Tool calls after a system message in the middle of the conversation: "
+            "none in the trajectory; record by hand from the server log.") in render_markdown(summary)
 
 
 def files_under(folder):
