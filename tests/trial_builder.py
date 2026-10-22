@@ -190,20 +190,23 @@ class TrialBuilder:
         *,
         analysis_dir: Path | None = None,
         errors: dict[str | None, str] | None = None,
+        totals: dict[str | None, int] | None = None,
     ) -> Path:
         """Writes a replay.jsonl for the snapshots made so far, as replay.py does.
 
         states maps a tool_use_id (None for the seed) to its snapshot's test
         state; a snapshot not named gets "no-tests". errors maps a tool_use_id
         to an error, which makes that snapshot a failed line (no state, no
-        reward fields). The reward fields follow from the state. The file goes
-        to analysis_dir, by default <root>/analysis/job/<trial name>/; the
-        folder is returned.
+        reward fields). The reward fields follow from the state; totals maps a
+        tool_use_id to its agent_tests_total (1 when not named; a pass passes
+        all of them). The file goes to analysis_dir, by default
+        <root>/analysis/job/<trial name>/; the folder is returned.
         """
         states = dict(states or {})
         errors = errors or {}
+        totals = totals or {}
         snapshots = [line for line in self._lines if line.get("commit")]
-        unknown = (set(states) | set(errors)) - {line["tool_use_id"] for line in snapshots}
+        unknown = (set(states) | set(errors) | set(totals)) - {line["tool_use_id"] for line in snapshots}
         if unknown:
             raise ValueError(f"no snapshot for {sorted(map(str, unknown))}")
         step_ids = {
@@ -226,6 +229,10 @@ class TrialBuilder:
             else:
                 state = states.get(tool_use_id, "no-tests")
                 line.update(REPLAY_REWARDS[state], test_state=state, duration_sec=1.0)
+                if tool_use_id in totals and state != "no-tests":
+                    total = totals[tool_use_id]
+                    line.update(agent_tests_total=total,
+                                agent_tests_passed=total if state == "pass" else 0)
             lines.append(line)
         (out / "replay.jsonl").write_text(
             "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"

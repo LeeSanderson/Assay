@@ -70,6 +70,8 @@ def test_main_prints_one_json_line_per_trial(make_trial, capsys):
                 "first_test_write": {"step_id": 2, "position": 0, "path": "stopwatch_test.go"},
                 "first_implementation_write": None,
             },
+            "red_to_green_order": None,
+            "tdd_loop": None,
             "bash": {"file_writing_bash": False, "bash_writes_test_or_implementation": False},
         },
         {
@@ -80,6 +82,8 @@ def test_main_prints_one_json_line_per_trial(make_trial, capsys):
                 "first_test_write": None,
                 "first_implementation_write": None,
             },
+            "red_to_green_order": None,
+            "tdd_loop": None,
             "bash": {"file_writing_bash": False, "bash_writes_test_or_implementation": False},
         },
     ]
