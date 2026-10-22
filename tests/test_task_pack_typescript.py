@@ -234,6 +234,41 @@ def test_non_compiling_agent_tests_leave_the_outcome_pass_unaffected(image, tmp_
     assert reward["agent_tests_compile"] == 0
 
 
+# Type-checks, but throws while Jest loads the suite, so it has no test.
+AGENT_TEST_THAT_FAILS_TO_LOAD = """\
+import { it } from '@jest/globals'
+
+throw new Error('broken suite')
+
+it('never registered', () => {})
+"""
+
+
+@pytest.mark.slow
+def test_agent_tests_that_do_not_compile_count_their_files_and_pass_none(image, tmp_path):
+    # Replay reads agent_tests_total 0 as `no-tests`, so a red compile must count.
+    reward = _verify(image, tmp_path, {
+        STUB: _proof(),
+        "split-second-stopwatch.test.ts": NON_COMPILING_AGENT_TEST,
+        "nested/broken.spec.ts": NON_COMPILING_AGENT_TEST.replace("'./", "'../"),
+    })
+    assert reward["agent_tests_compile"] == 0
+    assert reward["agent_tests_passed"] == 0
+    assert reward["agent_tests_total"] == 2
+
+
+@pytest.mark.slow
+def test_agent_suite_that_fails_to_load_does_not_compile(image, tmp_path):
+    reward = _verify(image, tmp_path, {
+        STUB: _proof(),
+        "split-second-stopwatch.test.ts": AGENT_TEST_THAT_FAILS_TO_LOAD,
+    })
+    assert reward["reward"] == 1
+    assert reward["agent_tests_compile"] == 0
+    assert reward["agent_tests_passed"] == 0
+    assert reward["agent_tests_total"] == 1
+
+
 @pytest.mark.slow
 def test_changed_stub_signature_fails_the_reference_compile(image, tmp_path):
     changed = _proof().replace("advanceTime(duration: string)", "advanceTime(duration: number)")

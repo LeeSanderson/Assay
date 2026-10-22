@@ -208,6 +208,27 @@ def test_agent_test_that_does_not_compile_leaves_outcome_pass_unaffected(
     assert reward["agent_tests_passed"] == 0
 
 
+@pytest.mark.slow
+def test_agent_test_that_does_not_compile_counts_its_files_so_replay_sees_red_compile(
+    image, tmp_path
+):
+    # Replay reads agent_tests_total 0 as `no-tests`; a build failure emits no
+    # test events, so the verifier counts the agent test files instead.
+    reward = run_verifier(
+        image,
+        tmp_path,
+        {
+            STUB: GOLD,
+            "stopwatch_test.go": AGENT_TESTS_NOT_COMPILING,
+            "more_test.go": AGENT_TESTS_ONE_FAILING.replace("TestNewIsReady", "TestMore")
+            .replace("TestStates", "TestMoreStates"),
+        },
+    )
+    assert reward["agent_tests_compile"] == 0
+    assert reward["agent_tests_passed"] == 0
+    assert reward["agent_tests_total"] == 2
+
+
 def harbor_reward(agent, tmp_path):
     """Run the pack through Harbor with `agent` and return the trial's rewards."""
     job = f"go-sss-{agent}"
