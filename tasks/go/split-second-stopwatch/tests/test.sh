@@ -4,6 +4,8 @@
 # 1. Outcome pass: copy the repository to a scratch directory, remove every
 #    agent test file (`*_test.go`), add the reference tests, and run them.
 # 2. Agent pass: run the agent's tests in the repository without change.
+#    If agent test files exist but do not compile, agent_tests_passed is 0 and
+#    agent_tests_total is at least the number of agent test files.
 #
 # Both passes go into one /logs/verifier/reward.json with seven numeric fields.
 # The script always writes that file, whatever happens to the passes.
@@ -87,6 +89,19 @@ run_go_tests "$APP" ./... "$OUT/agent.json"
 agent_tests_compile=$compiles
 agent_tests_passed=$passed
 agent_tests_total=$total
+# Red-compile rule (same in every pack): when agent test files exist but do not
+# compile, no test passes and agent_tests_total is at least the number of agent
+# test files, so replay labels the snapshot red-compile and not no-tests.
+# A build failure emits no test events, so the counted total is often 0.
+if [ "$agent_tests_compile" -eq 0 ]; then
+  agent_test_files=$(cd "$APP" && find . -name .git -prune -o -type f -name '*_test.go' -print | wc -l)
+  if [ "$agent_test_files" -gt 0 ]; then
+    agent_tests_passed=0
+    if [ "$agent_tests_total" -lt "$agent_test_files" ]; then
+      agent_tests_total=$agent_test_files
+    fi
+  fi
+fi
 write_reward
 
 cat "$OUT/reward.json"

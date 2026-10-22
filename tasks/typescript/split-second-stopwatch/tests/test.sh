@@ -8,7 +8,10 @@
 #      runs the reference tests.
 #   2. The agent pass runs the tests of the agent on the repository as it is.
 #      Skipped tests count in the total but not as passed. With no agent
-#      tests, agent_tests_compile says whether the code builds.
+#      tests, agent_tests_compile says whether the code builds. Agent tests
+#      compile only if tsc passes and every suite loads; if they do not,
+#      agent_tests_passed is 0 and agent_tests_total is at least the number
+#      of agent test files.
 # It always writes one reward.json with seven numeric fields. It uses no
 # network, so replay runs it without change on each trace snapshot.
 
@@ -46,12 +49,13 @@ typecheck() {
     if (cd "$1" && timeout "$TSC_TIMEOUT" corepack yarn tsc --noEmit -p "$2") >"$3" 2>&1; then echo 1; else echo 0; fi
 }
 
-# jest_counts <json>: prints "<passed> <total>" from a Jest --json file.
+# jest_counts <json>: prints "<passed> <total> <suites that failed to load>"
+# from a Jest --json file.
 jest_counts() {
     node -e '
         let r = {};
         try { r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); } catch {}
-        console.log(`${r.numPassedTests || 0} ${r.numTotalTests || 0}`);
+        console.log(`${r.numPassedTests || 0} ${r.numTotalTests || 0} ${r.numRuntimeErrorTestSuites || 0}`);
     ' "$1"
 }
 
@@ -63,7 +67,7 @@ cp "$TESTS_DIR/$REFERENCE_TEST" "$OUTCOME/"
 reference_compiles=$(typecheck "$OUTCOME" tsconfig.json "$OUT_DIR/outcome-tsc.log")
 (cd "$OUTCOME" && timeout "$JEST_TIMEOUT" corepack yarn jest --ci --no-cache --json --outputFile="$WORK/outcome.json" \
     --runTestsByPath "./$REFERENCE_TEST") >"$OUT_DIR/outcome-jest.log" 2>&1
-read -r reference_passed reference_total < <(jest_counts "$WORK/outcome.json")
+read -r reference_passed reference_total _ < <(jest_counts "$WORK/outcome.json")
 
 reward=0
 if [ "$reference_compiles" = 1 ] && [ "$reference_total" -gt 0 ] \
@@ -90,7 +94,21 @@ else
     agent_tests_compile=$(typecheck "$AGENT" tsconfig.assay-agent-tests.json "$OUT_DIR/agent-tsc.log")
     (cd "$AGENT" && timeout "$JEST_TIMEOUT" corepack yarn jest --ci --no-cache --json --outputFile="$WORK/agent.json" \
         --passWithNoTests --testMatch '**/*.test.ts' '**/*.spec.ts') >"$OUT_DIR/agent-jest.log" 2>&1
-    read -r agent_tests_passed agent_tests_total < <(jest_counts "$WORK/agent.json")
+    read -r agent_tests_passed agent_tests_total load_errors < <(jest_counts "$WORK/agent.json")
+    # A suite that throws while it loads does not compile.
+    if [ "$load_errors" -gt 0 ]; then
+        agent_tests_compile=0
+    fi
+    # Red-compile rule (same in every pack): when agent test files exist but do
+    # not compile, no test passes and agent_tests_total is at least the number
+    # of agent test files, so replay labels the snapshot red-compile and not
+    # no-tests. A suite that fails to load drops out of Jest's total.
+    if [ "$agent_tests_compile" = 0 ]; then
+        agent_tests_passed=0
+        if [ "$agent_tests_total" -lt "${#agent_tests[@]}" ]; then
+            agent_tests_total=${#agent_tests[@]}
+        fi
+    fi
 fi
 
 cat >"$OUT_DIR/reward.json" <<EOF
