@@ -149,7 +149,8 @@ def _proof() -> str:
 
 
 def _docker(*args: str, **kwargs) -> subprocess.CompletedProcess:
-    return subprocess.run(["docker", *args], capture_output=True, text=True, **kwargs)
+    return subprocess.run(["docker", *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", **kwargs)
 
 
 @pytest.fixture(scope="module")
@@ -312,6 +313,35 @@ def test_verifier_leaves_the_repository_unchanged(image, tmp_path):
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[0] == "?? split-second-stopwatch.test.ts"
     assert REFERENCE_TEST not in result.stdout
+
+
+ONE_PASSING_AGENT_TEST = """\
+import { expect, it } from '@jest/globals'
+import { SplitSecondStopwatch } from './split-second-stopwatch.ts'
+
+it('starts ready', () => {
+  expect(new SplitSecondStopwatch().state).toBe('ready')
+})
+"""
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("command", ["corepack yarn test", "npm test"])
+def test_package_test_script_runs_the_agent_tests(image, tmp_path, command):
+    # `yarn test` / `npm test` is the agent's most natural test command.
+    test_file = "split-second-stopwatch.test.ts"
+    passing = _run_in_image(image, f"cd /app && {command}",
+                            {STUB: _proof(), test_file: ONE_PASSING_AGENT_TEST},
+                            tmp_path / "pass")
+    assert passing.returncode == 0, passing.stdout + passing.stderr
+    assert "1 passed" in passing.stdout + passing.stderr
+
+    failing = _run_in_image(image, f"cd /app && {command}",
+                            {STUB: _proof(),
+                             test_file: ONE_PASSING_AGENT_TEST.replace("'ready'", "'running'")},
+                            tmp_path / "fail")
+    assert failing.returncode != 0
+    assert "1 failed" in failing.stdout + failing.stderr
 
 
 @pytest.mark.slow

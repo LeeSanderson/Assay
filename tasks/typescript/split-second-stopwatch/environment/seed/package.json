@@ -27,7 +27,7 @@
     "typescript-eslint": "^8.10.0"
   },
   "scripts": {
-    "test": "corepack yarn node test-runner.mjs",
+    "test": "corepack yarn lint:types && corepack yarn test:implementation",
     "test:types": "corepack yarn tstyche",
     "test:implementation": "corepack yarn jest --no-cache --passWithNoTests",
     "lint": "corepack yarn lint:types && corepack yarn lint:ci",
