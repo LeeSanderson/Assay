@@ -11,14 +11,13 @@ analysis/phase0-summary.json. It writes nothing else.
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
 
 from analyze.agent_runs import CROSS_CHECK_FILE
 from analyze.replay import REPO_ROOT
 from analyze.trace_check import MixedClaudeCodeVersions, job_claude_code_version, trace_check
 from analyze.trajectory import analyze_folder
-from analyze.trial import Trial, read_trial
+from analyze.trial import Trial, read_job, read_json, share
 
 
 SUMMARY_NAME = "phase0-summary"
@@ -32,7 +31,7 @@ def summarize(job_dirs: list[Path | str], analysis_root: Path | str) -> dict:
     """
     trials, versions = [], {}
     for job_dir in map(Path, job_dirs):
-        job = [read_trial(p) for p in sorted(job_dir.iterdir()) if (p / "lock.json").is_file()]
+        job = read_job(job_dir)
         versions[job_dir.name] = job_claude_code_version(job)
         trials += [_trial(job_dir, trial, Path(analysis_root)) for trial in job]
     return {
@@ -56,7 +55,7 @@ def _cost(trials: list[dict]) -> dict:
         per_trial = {}
         for key in costs[0]:
             values = [c[key] for c in costs if c[key] is not None]
-            per_trial[key] = _ratio(sum(values), len(values))
+            per_trial[key] = share(sum(values), len(values))
         out[tier] = {
             "local": any(t["local"] for t in group),
             "trials": len(group),
@@ -75,10 +74,10 @@ def _pooled(trials: list[dict]) -> dict:
     return {
         "snapshots": totals["snapshots"],
         "covered_snapshots": totals["covered_snapshots"],
-        "coverage": _ratio(totals["covered_snapshots"], totals["snapshots"]),
+        "coverage": share(totals["covered_snapshots"], totals["snapshots"]),
         "compared_runs": totals["compared_runs"],
         "agreeing_runs": totals["agreeing_runs"],
-        "agreement": _ratio(totals["agreeing_runs"], totals["compared_runs"]),
+        "agreement": share(totals["agreeing_runs"], totals["compared_runs"]),
     }
 
 
@@ -87,63 +86,44 @@ def _shares(trials: list[dict]) -> dict:
     call writes a test or implementation file. Offline replay cannot rebuild
     a trial of the second kind, so the second share also gives where offline
     replay applies (Risk 1)."""
-    def share(key: str) -> dict:
+    def counted(key: str) -> dict:
         count = sum(1 for t in trials if t["bash"][key])
-        return {"count": count, "share": _ratio(count, len(trials))}
+        return {"count": count, "share": share(count, len(trials))}
 
     return {
         "trials": len(trials),
-        "file_writing_bash": share("file_writing_bash"),
-        "bash_writes_test_or_implementation": share("bash_writes_test_or_implementation"),
+        "file_writing_bash": counted("file_writing_bash"),
+        "bash_writes_test_or_implementation": counted("bash_writes_test_or_implementation"),
     }
-
-
-def _ratio(part: float, whole: float) -> float | None:
-    return part / whole if whole else None
 
 
 def _trial(job_dir: Path, trial: Trial, analysis_root: Path) -> dict:
     out = analysis_root / job_dir.name / trial.name
     metrics = analyze_folder(trial.path, analysis_root)
     failed = trace_check(trial)
-    agent = (trial.lock or {}).get("agent") or {}
-    # The local tier points the agent at a local model server (L10).
-    local = "ANTHROPIC_BASE_URL" in (agent.get("env") or {})
-    result = trial.result or {}
-    usage = result.get("agent_result") or {}
+    usage = trial.usage
     return {
         "job": job_dir.name,
         "trial": trial.name,
         "trace_check": {"passed": not failed, "failed_checks": failed},
-        "replay": _json(out / "replay-works.json"),
+        "replay": read_json(out / "replay-works.json"),
         "test_first_order": metrics["test_first_order"]["verdict"],
         "red_to_green_order": (metrics["red_to_green_order"] or {}).get("verdict"),
         "tdd_loop": metrics["tdd_loop"],
         "bash": metrics["bash"],
-        "agent_test_runs": _json(out / CROSS_CHECK_FILE),
-        "model_tier": agent.get("model_name"),
-        "local": local,
+        "agent_test_runs": read_json(out / CROSS_CHECK_FILE),
+        "model_tier": trial.model_tier,
+        "local": trial.local,
         "cost": {
             # L5: Claude Code's total_cost_usd is not a money cost for a local model.
-            "cost_usd": 0 if local else usage.get("cost_usd"),
-            "input_tokens": usage.get("n_input_tokens"),
-            "cache_tokens": usage.get("n_cache_tokens"),
-            "output_tokens": usage.get("n_output_tokens"),
-            "duration_sec": _seconds(result.get("started_at"), result.get("finished_at")),
-            "turns": sum(1 for s in (trial.trajectory or {}).get("steps", [])
-                         if s.get("source") == "agent"),
+            "cost_usd": 0 if trial.local else usage.cost_usd,
+            "input_tokens": usage.input_tokens,
+            "cache_tokens": usage.cache_tokens,
+            "output_tokens": usage.output_tokens,
+            "duration_sec": trial.duration_sec,
+            "turns": trial.turns,
         },
     }
-
-
-def _seconds(start: str | None, end: str | None) -> float | None:
-    if not start or not end:
-        return None
-    return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()
-
-
-def _json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
 
 def write_summary(job_dirs: list[Path | str], analysis_root: Path | str) -> tuple[Path, Path]:

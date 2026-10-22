@@ -18,7 +18,7 @@ import tomllib
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 
-from analyze.trial import Trial, read_trial
+from analyze.trial import Trial, read_job
 from instruments.digest import instruments_digest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -91,7 +91,7 @@ def _file_writes(trial: Trial) -> bool:
             return False
         before = trial.snapshot_before(line)
         content = call.arguments.get("content")
-        old = before and trial.snapshot_file(before, path)
+        old = before and trial.snapshot_file(before.commit, path)
         if content is None or old != content.encode("utf-8"):
             return False
     return True
@@ -150,8 +150,7 @@ def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print("usage: python -m analyze.trace_check <job folder>", file=sys.stderr)
         return 2
-    job = Path(argv[0])
-    trials = [read_trial(p) for p in sorted(job.iterdir()) if (p / "lock.json").is_file()]
+    trials = read_job(argv[0])
     try:
         job_claude_code_version(trials)
     except MixedClaudeCodeVersions as error:

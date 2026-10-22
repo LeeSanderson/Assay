@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
@@ -56,21 +57,39 @@ class TraceLine:
 
 
 @dataclass(frozen=True)
+class Usage:
+    """result.json agent_result: Claude Code's token counts and total_cost_usd."""
+
+    cost_usd: float | None
+    input_tokens: int | None
+    cache_tokens: int | None
+    output_tokens: int | None
+
+
+@dataclass(frozen=True)
 class Trial:
     path: Path
     name: str
-    language: str | None  # from the task path tasks/<language>/<slug>
-    trajectory: dict | None  # the raw ATIF document
+    task_path: tuple[str, ...]  # lock.json task.path: tasks/<language>/<slug>
     tool_calls: tuple[ToolCall, ...]  # in ATIF order: step_id, then position
     last_step_id: int | None
+    turns: int  # ATIF steps whose source is the agent
+    system_step_ids: tuple[int, ...]  # ATIF steps whose source is "system"
+    cached_tokens: tuple[int | None, ...]  # metrics.cached_tokens of each agent step
     agent_version: str | None  # ATIF agent.version: the Claude Code that ran
     requested_version: str | None  # lock.json agent.kwargs.version: the pin
-    lock: dict | None
-    result: dict | None
+    model_tier: str | None  # lock.json agent.model_name
+    local: bool  # the agent points at a local model server (L10)
+    usage: Usage
+    duration_sec: float | None  # result.json started_at to finished_at
     reward: dict | None
     instruments: dict | None
     trace: tuple[TraceLine, ...]
     trace_dir: Path  # holds trace.git
+
+    @property
+    def language(self) -> str | None:
+        return self.task_path[-2] if len(self.task_path) >= 2 else None
 
     @property
     def trace_git(self) -> Path:
@@ -79,10 +98,10 @@ class Trial:
     def trace_lines_for(self, tool_use_id: str) -> list[TraceLine]:
         return [line for line in self.trace if line.tool_use_id == tool_use_id]
 
-    def snapshot_before(self, line: TraceLine) -> str | None:
-        """The commit of the last snapshot taken before this line, or None."""
-        commits = [l.commit for l in self.trace if l.seq < line.seq and l.commit]
-        return commits[-1] if commits else None
+    def snapshot_before(self, line: TraceLine) -> TraceLine | None:
+        """The last trace line with a snapshot (a commit) before this line, or None."""
+        before = [l for l in self.trace if l.seq < line.seq and l.commit]
+        return before[-1] if before else None
 
     def snapshot_file(self, commit: str, path: str) -> bytes | None:
         """A file's content in a snapshot of trace.git; None when it has no such file."""
@@ -94,47 +113,75 @@ class Trial:
         return done.stdout if done.returncode == 0 else None
 
 
+def read_job(job_dir: Path | str) -> list[Trial]:
+    """Each trial folder of a job (a folder with a lock.json), in name order."""
+    return [read_trial(p) for p in sorted(Path(job_dir).iterdir()) if (p / "lock.json").is_file()]
+
+
 def read_trial(path: Path | str) -> Trial:
     path = Path(path)
-    trajectory = _json(path / "agent" / "trajectory.json")
-    lock = _json(path / "lock.json")
-    steps = (trajectory or {}).get("steps", [])
+    trajectory = read_json(path / "agent" / "trajectory.json") or {}
+    lock = read_json(path / "lock.json") or {}
+    result = read_json(path / "result.json") or {}
+    agent = lock.get("agent") or {}
+    usage = result.get("agent_result") or {}
+    steps = sorted(trajectory.get("steps", []), key=lambda s: s["step_id"])
+    agent_steps = [s for s in steps if s.get("source") == "agent"]
+    task_path = (lock.get("task") or {}).get("path")
     trace_dir = path / TRACE_FOLDER
     return Trial(
         path=path,
         name=path.name,
-        language=_language(lock),
-        trajectory=trajectory,
+        # Harbor keeps host separators, so a Windows path uses backslashes.
+        task_path=PureWindowsPath(task_path).parts if task_path else (),
         tool_calls=tuple(_tool_calls(steps)),
-        last_step_id=max((s["step_id"] for s in steps), default=None),
-        agent_version=((trajectory or {}).get("agent") or {}).get("version"),
-        requested_version=(((lock or {}).get("agent") or {}).get("kwargs") or {}).get("version"),
-        lock=lock,
-        result=_json(path / "result.json"),
-        reward=_json(path / "verifier" / "reward.json"),
-        instruments=_json(trace_dir / "instruments.json"),
-        trace=tuple(_trace(trace_dir / "trace.jsonl")),
+        last_step_id=steps[-1]["step_id"] if steps else None,
+        turns=len(agent_steps),
+        system_step_ids=tuple(s["step_id"] for s in steps if s.get("source") == "system"),
+        cached_tokens=tuple((s.get("metrics") or {}).get("cached_tokens") for s in agent_steps),
+        agent_version=(trajectory.get("agent") or {}).get("version"),
+        requested_version=(agent.get("kwargs") or {}).get("version"),
+        model_tier=agent.get("model_name"),
+        local="ANTHROPIC_BASE_URL" in (agent.get("env") or {}),
+        usage=Usage(usage.get("cost_usd"), usage.get("n_input_tokens"),
+                    usage.get("n_cache_tokens"), usage.get("n_output_tokens")),
+        duration_sec=_seconds(result.get("started_at"), result.get("finished_at")),
+        reward=read_json(path / "verifier" / "reward.json"),
+        instruments=read_json(trace_dir / "instruments.json"),
+        trace=tuple(_trace_line(raw) for raw in read_jsonl(trace_dir / "trace.jsonl")),
         trace_dir=trace_dir,
     )
 
 
-def _json(path: Path) -> Any:
+def read_json(path: Path) -> Any:
+    """A JSON file's content, or None when there is no such file."""
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    """The lines of a JSON-lines file; an empty list when there is no such file."""
     if not path.is_file():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
+        return []
+    return [json.loads(t) for t in path.read_text(encoding="utf-8").splitlines() if t.strip()]
 
 
-def _language(lock: dict | None) -> str | None:
-    task_path = ((lock or {}).get("task") or {}).get("path")
-    if not task_path:
+def write_jsonl(path: Path, lines: list[dict]) -> None:
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+
+
+def share(part: float, whole: float) -> float | None:
+    """part / whole, or None when whole is 0."""
+    return part / whole if whole else None
+
+
+def _seconds(start: str | None, end: str | None) -> float | None:
+    if not start or not end:
         return None
-    # Harbor keeps host separators, so a Windows path uses backslashes.
-    parts = PureWindowsPath(task_path).parts
-    return parts[-2] if len(parts) >= 2 else None
+    return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()
 
 
 def _tool_calls(steps: list[dict]):
-    for step in sorted(steps, key=lambda s: s["step_id"]):
+    for step in steps:
         results = {
             r.get("source_call_id"): r
             for r in (step.get("observation") or {}).get("results", [])
@@ -153,21 +200,15 @@ def _tool_calls(steps: list[dict]):
             )
 
 
-def _trace(path: Path):
-    if not path.is_file():
-        return
-    for text in path.read_text(encoding="utf-8").splitlines():
-        if not text.strip():
-            continue
-        raw = json.loads(text)
-        yield TraceLine(
-            seq=raw.get("seq"),
-            event=raw.get("event"),
-            tool_name=raw.get("tool_name"),
-            tool_use_id=raw.get("tool_use_id"),
-            changed=raw.get("changed"),
-            commit=raw.get("commit"),
-            paths=tuple(PathChange(p["status"], p["path"]) for p in raw.get("paths") or []),
-            error=raw.get("error"),
-            raw=raw,
-        )
+def _trace_line(raw: dict) -> TraceLine:
+    return TraceLine(
+        seq=raw.get("seq"),
+        event=raw.get("event"),
+        tool_name=raw.get("tool_name"),
+        tool_use_id=raw.get("tool_use_id"),
+        changed=raw.get("changed"),
+        commit=raw.get("commit"),
+        paths=tuple(PathChange(p["status"], p["path"]) for p in raw.get("paths") or []),
+        error=raw.get("error"),
+        raw=raw,
+    )

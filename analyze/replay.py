@@ -18,10 +18,10 @@ import time
 import tomllib
 import uuid
 from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Protocol
 
-from analyze.trial import Trial, read_trial
+from analyze.trial import Trial, read_job, read_jsonl, write_jsonl
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REPLAY_FILE = "replay.jsonl"
@@ -234,9 +234,10 @@ def replay_job(
     """
     job_dir = Path(job_dir)
     verdicts = {}
-    for trial_dir in sorted(p for p in job_dir.iterdir() if (p / "lock.json").is_file()):
-        trial = read_trial(trial_dir)
-        pack = _pack(trial, Path(tasks_root))
+    for trial in read_job(job_dir):
+        if not trial.task_path:
+            raise ValueError(f"{trial.path}: lock.json gives no task path")
+        pack = Path(tasks_root).joinpath(*trial.task_path)
         image = runner.image(pack)
         timeout = _verifier_timeout(pack)
         first = replay_trial(trial, runner, image, timeout)
@@ -266,16 +267,7 @@ def read_replay(trial_out: Path | str) -> list[dict]:
     the reward.json fields, test_state (None on a failure), duration_sec, and
     error on a failure only.
     """
-    path = Path(trial_out) / REPLAY_FILE
-    return [json.loads(t) for t in path.read_text(encoding="utf-8").splitlines() if t.strip()]
-
-
-def _pack(trial: Trial, tasks_root: Path) -> Path:
-    task_path = ((trial.lock or {}).get("task") or {}).get("path")
-    if not task_path:
-        raise ValueError(f"{trial.path}: lock.json gives no task path")
-    # Harbor keeps host separators, so a Windows path uses backslashes.
-    return tasks_root.joinpath(*PureWindowsPath(task_path).parts)
+    return read_jsonl(Path(trial_out) / REPLAY_FILE)
 
 
 def _verifier_timeout(pack: Path) -> float:
