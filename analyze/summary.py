@@ -83,17 +83,18 @@ def _pooled(trials: list[dict]) -> dict:
 
 def _shares(trials: list[dict]) -> dict:
     """Risk 2: trials with a file-writing Bash call, and trials where a Bash
-    call writes a test or implementation file. Offline replay cannot rebuild
-    a trial of the second kind, so the second share also gives where offline
-    replay applies (Risk 1)."""
-    def counted(key: str) -> dict:
-        count = sum(1 for t in trials if t["bash"][key])
+    call writes a test or implementation file. Risk 1: offline replay applies
+    to the trials with no file-writing Bash call (PRD section 5)."""
+    def counted(test) -> dict:
+        count = sum(1 for t in trials if test(t["bash"]))
         return {"count": count, "share": share(count, len(trials))}
 
     return {
         "trials": len(trials),
-        "file_writing_bash": counted("file_writing_bash"),
-        "bash_writes_test_or_implementation": counted("bash_writes_test_or_implementation"),
+        "file_writing_bash": counted(lambda b: b["file_writing_bash"]),
+        "bash_writes_test_or_implementation":
+            counted(lambda b: b["bash_writes_test_or_implementation"]),
+        "offline_replay_applies": counted(lambda b: not b["file_writing_bash"]),
     }
 
 
@@ -166,14 +167,18 @@ def render_markdown(summary: dict) -> str:
             f"| {pct(runs.get('coverage'))} | {pct(runs.get('agreement'))} |")
 
     shares = summary["shares"]
-    fwb, bto = shares["file_writing_bash"], shares["bash_writes_test_or_implementation"]
+
+    def counted(text, key):
+        s = shares[key]
+        return f"- {text}: {s['count']} of {shares['trials']} ({pct(s['share'])})."
+
     runs = summary["agent_test_runs"]
     lines += ["", "## Bash file writes", "",
-              f"- Trials with a file-writing `Bash` call: {fwb['count']} of {shares['trials']} "
-              f"({pct(fwb['share'])}).",
-              f"- Trials where a `Bash` call writes a test or implementation file: {bto['count']} "
-              f"of {shares['trials']} ({pct(bto['share'])}). Offline replay cannot rebuild these "
-              "trials.",
+              counted("Trials with a file-writing `Bash` call", "file_writing_bash"),
+              counted("Trials where a `Bash` call writes a test or implementation file",
+                      "bash_writes_test_or_implementation"),
+              counted("Trials where offline replay applies (no file-writing `Bash` call)",
+                      "offline_replay_applies"),
               "", "## Agent test runs", "",
               f"- Coverage: {runs['covered_snapshots']} of {runs['snapshots']} snapshots "
               f"({pct(runs['coverage'])}).",

@@ -114,6 +114,21 @@ def test_the_shares_count_trials_with_file_writing_bash_and_bash_test_or_impleme
     assert shares["trials"] == 3
     assert shares["file_writing_bash"] == {"count": 2, "share": pytest.approx(2 / 3)}
     assert shares["bash_writes_test_or_implementation"] == {"count": 1, "share": pytest.approx(1 / 3)}
+    # Risk 1: offline replay applies to a trial with no file-writing Bash call.
+    assert shares["offline_replay_applies"] == {"count": 1, "share": pytest.approx(1 / 3)}
+
+
+def test_the_markdown_gives_where_offline_replay_applies_as_trials_without_file_writing_bash(tmp_path):
+    job = Job(tmp_path, "phase0-cross")
+    job.trial().build()
+    other = job.trial()
+    other.step().call("Bash", {"command": "go mod tidy"}, files={"go.sum": "x\n"})
+    other.build()
+
+    markdown, _ = write_summary([job.dir], job.analysis)
+
+    text = markdown.read_text(encoding="utf-8")
+    assert "Trials where offline replay applies (no file-writing `Bash` call): 1 of 2 (50%)." in text
 
 
 def test_agent_test_runs_give_coverage_and_agreement_for_each_trial_and_pooled(tmp_path):
