@@ -244,10 +244,15 @@ class PackRunner(FakeRunner):
         return f"image-of:{pack.as_posix()}"
 
 
+BASE_IMAGE = "golang:1@sha256:abc"
+
+
 def _fake_pack(root: Path, timeout: float) -> Path:
     pack = root / "tasks" / "go" / "split-second-stopwatch"
     pack.mkdir(parents=True)
-    (pack / "task.toml").write_text(f"[verifier]\ntimeout_sec = {timeout}\n", encoding="utf-8")
+    (pack / "task.toml").write_text(
+        f'[metadata]\nbase_image = "{BASE_IMAGE}"\n[verifier]\ntimeout_sec = {timeout}\n',
+        encoding="utf-8")
     return pack
 
 
@@ -275,8 +280,10 @@ def test_replay_job_writes_replay_jsonl_and_the_verdict_under_analysis_only(tmp_
     good_lines = read_replay(out / "good__a")
     assert states(good_lines) == ["no-tests", "pass"]
     assert read_replay(out / "bad__b")[0]["error"] == "timeout after 42 s"
+    # The verdict records the image replay ran and the pack's pinned base image.
     assert json.loads((out / "good__a" / "replay-works.json").read_text(encoding="utf-8")) == {
-        "works": True, "causes": []}
+        "works": True, "causes": [], "image": f"image-of:{pack.as_posix()}",
+        "base_image": BASE_IMAGE}
     assert json.loads((out / "bad__b" / "replay-works.json").read_text(encoding="utf-8"))[
         "works"] is False
     # Each trial runs twice, with the pack's image and its verifier timeout.

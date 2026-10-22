@@ -4,6 +4,11 @@ PRD section 5, "Replay of the trace snapshots". For each snapshot, the task
 pack's unchanged test.sh runs in a fresh container from the pack's image,
 with no network and the verifier timeout. The agent-pass fields of the
 reward.json it writes give the test state.
+
+The PRD pins the replay image by digest. Harbor deletes each trial's task
+image, so replay cannot run that exact image: it rebuilds it from the
+pack's Dockerfile, whose base image is pinned by digest, and records both
+the rebuilt image ID and that base image in replay-works.json.
 """
 
 from __future__ import annotations
@@ -239,15 +244,18 @@ def replay_job(
             raise ValueError(f"{trial.path}: lock.json gives no task path")
         pack = Path(tasks_root).joinpath(*trial.task_path)
         image = runner.image(pack)
-        timeout = _verifier_timeout(pack)
+        config = tomllib.loads((pack / "task.toml").read_text(encoding="utf-8"))
+        timeout = float(config["verifier"]["timeout_sec"])
         first = replay_trial(trial, runner, image, timeout)
         second = replay_trial(trial, runner, image, timeout)
         verdict = replay_works(trial, first, second)
         out = Path(analysis_root) / job_dir.name / trial.name
         write_replay(out, first)
-        (out / "replay-works.json").write_text(
-            json.dumps({"works": verdict.works, "causes": verdict.causes}, indent=2) + "\n",
-            encoding="utf-8")
+        # Provenance: the image replay ran, and the pack's base image pinned by digest.
+        (out / "replay-works.json").write_text(json.dumps({
+            "works": verdict.works, "causes": verdict.causes, "image": image,
+            "base_image": config.get("metadata", {}).get("base_image"),
+        }, indent=2) + "\n", encoding="utf-8")
         verdicts[trial.name] = verdict
     return verdicts
 
@@ -255,9 +263,8 @@ def replay_job(
 def write_replay(trial_out: Path, lines: list[dict]) -> Path:
     """Writes replay.jsonl into a trial's analysis folder."""
     trial_out.mkdir(parents=True, exist_ok=True)
-    path = trial_out / REPLAY_FILE
-    path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
-    return path
+    write_jsonl(trial_out / REPLAY_FILE, lines)
+    return trial_out / REPLAY_FILE
 
 
 def read_replay(trial_out: Path | str) -> list[dict]:
@@ -268,11 +275,6 @@ def read_replay(trial_out: Path | str) -> list[dict]:
     error on a failure only.
     """
     return read_jsonl(Path(trial_out) / REPLAY_FILE)
-
-
-def _verifier_timeout(pack: Path) -> float:
-    config = tomllib.loads((pack / "task.toml").read_text(encoding="utf-8"))
-    return float(config["verifier"]["timeout_sec"])
 
 
 def _export(git_dir: Path, commit: str, target: Path) -> None:
