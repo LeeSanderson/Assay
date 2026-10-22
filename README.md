@@ -30,11 +30,13 @@ Phase 0 has six stages. Do them in this order, one job at a time for stages 2 to
 | Stage | Command | Reads | Writes |
 |---|---|---|---|
 | 1. Run the jobs | `uv run assay run` | `jobs/*.yaml` | `results/<job-id>/<trial>/` |
-| 2. Check the trace | `analyze.trace_check` | `results/<job-id>/` | the console only |
-| 3. Replay the trace snapshots | `analyze.replay` | `results/<job-id>/`, the task packs | `analysis/<job-id>/<trial>/replay.jsonl`, `replay-works.json` |
-| 4. Cross-check the agent's test runs | `analyze.agent_runs` | `results/`, `replay.jsonl` | `analysis/<job-id>/<trial>/agent-runs.jsonl`, `cross-check.json` |
-| 5. Check `trajectory.py` by hand | `jq`, `analyze.trajectory`, `analyze.compare_labels` | `results/`, `analysis/`, the labeling sheet | `analysis/<job-id>/<trial>/listing.txt`, `analysis/trajectory.jsonl` |
-| 6. Write the Phase 0 summary | `analyze.summary` | `results/`, `analysis/` | `analysis/phase0-summary.md`, `phase0-summary.json` |
+| 2. Check the trace | `uv run assay trace-check` | `results/<job-id>/` | the console only |
+| 3. Replay the trace snapshots | `uv run assay replay` | `results/<job-id>/`, the task packs | `analysis/<job-id>/<trial>/replay.jsonl`, `replay-works.json` |
+| 4. Cross-check the agent's test runs | `uv run assay agent-runs` | `results/`, `replay.jsonl` | `analysis/<job-id>/<trial>/agent-runs.jsonl`, `cross-check.json` |
+| 5. Check `trajectory.py` by hand | `jq`, `uv run assay trajectory`, `uv run assay compare-labels` | `results/`, `analysis/`, the labeling sheet | `analysis/<job-id>/<trial>/listing.txt`, `analysis/trajectory.jsonl` |
+| 6. Write the Phase 0 summary | `uv run assay summary` | `results/`, `analysis/` | `analysis/phase0-summary.md`, `phase0-summary.json` |
+
+`assay` is the one tool for every stage except the `jq` listing of stage 5. `uv run assay` with no subcommand lists the subcommands, and `uv run assay <subcommand> --help` shows the arguments of one.
 
 `<job-id>` is the folder name of the job in `results/`, for example `phase0-cross`. A trial folder is a folder in `results/<job-id>/` that holds a `lock.json`. Git ignores `results/` and `analysis/`, so the commands below also keep the filled labeling sheet and the corrections in `analysis/`.
 
@@ -101,17 +103,17 @@ uv run assay run -c jobs/phase0-local.yaml -y --debug
 The trace check makes sure that the trace hook worked in each trial (PRD section 5, "The trace check"). It prints one JSON line for each trial, with the names of the checks that the trial fails:
 
 ```powershell
-uv run python -m analyze.trace_check results\$job
+uv run assay trace-check results\$job
 ```
 
 An empty `failed_checks` list means that the trial passes. A trial that fails is a failure of the infrastructure: run it again in the same cell. The command stops with exit code 2 if the trials of the job do not share one Claude Code version.
 
 ### Stage 3: Replay the trace snapshots
 
-`replay.py` runs the task pack's `test.sh` on each snapshot in the trial's `trace.git`, in a fresh container with no network. It replays each trial two times. Docker must be running.
+`assay replay` runs the task pack's `test.sh` on each snapshot in the trial's `trace.git`, in a fresh container with no network. It replays each trial two times. Docker must be running.
 
 ```powershell
-uv run python -m analyze.replay results\$job
+uv run assay replay results\$job
 ```
 
 For each trial, the command prints `replay works` or `replay does not work` and the causes. It exits with 1 when replay does not work on a trial. It writes `analysis/<job-id>/<trial>/replay.jsonl` (one line for each snapshot) and `replay-works.json` (the verdict).
@@ -120,10 +122,10 @@ Harbor deletes each trial's task image, so replay rebuilds it from the pack's Do
 
 ### Stage 4: Cross-check the agent's test runs
 
-`agent_runs.py` finds each test run of the agent and compares its exit code with the replay of the same snapshot. Run it after stage 3:
+`assay agent-runs` finds each test run of the agent and compares its exit code with the replay of the same snapshot. Run it after stage 3:
 
 ```powershell
-uv run python -m analyze.agent_runs results\$job
+uv run assay agent-runs results\$job
 ```
 
 It prints one JSON line for each trial, with the coverage and the agreement. It writes `analysis/<job-id>/<trial>/agent-runs.jsonl` and `cross-check.json`.
@@ -153,13 +155,13 @@ A person labels the ten hosted trials and compares the labels with `trajectory.p
    Copy-Item labeling\sheet-template.csv analysis\sheet.csv
    ```
 
-3. Run `trajectory.py` on the trials of both hosted jobs, then compare. PowerShell does not expand a wildcard for `python`, so the first command lists the trial folders. `compare_labels` prints each difference and exits with 1 when any trial differs:
+3. Run `assay trajectory` on the trials of both hosted jobs, then compare. PowerShell does not expand a wildcard for `assay`, so the first command lists the trial folders. `assay compare-labels` prints each difference and exits with 1 when any trial differs:
 
    ```powershell
    $trials = Get-ChildItem results\phase0-cross, results\phase0-extra -Directory |
      Where-Object { Test-Path "$_\lock.json" }
-   uv run python -m analyze.trajectory $trials.FullName > analysis\trajectory.jsonl
-   uv run python -m analyze.compare_labels analysis\sheet.csv analysis\trajectory.jsonl
+   uv run assay trajectory $trials.FullName > analysis\trajectory.jsonl
+   uv run assay compare-labels analysis\sheet.csv analysis\trajectory.jsonl
    ```
 
 4. For each difference, find the cause and fix the script, the label, or the rule in the PRD. Record each correction in a copy of `labeling/corrections-template.csv` (`corrected` is `script`, `label`, or `rule`). Repeat until one full pass over the ten trials gives no difference for each metric.
@@ -173,7 +175,7 @@ A person labels the ten hosted trials and compares the labels with `trajectory.p
 After stages 3 and 4 have run on each job, write the summary of every Phase 0 acceptance value. It goes to `analysis/phase0-summary.md` (for a person) and `analysis/phase0-summary.json`, and the command writes nothing else:
 
 ```powershell
-uv run python -m analyze.summary results\phase0-cross results\phase0-extra results\phase0-local
+uv run assay summary results\phase0-cross results\phase0-extra results\phase0-local
 ```
 
 ## Run the tests

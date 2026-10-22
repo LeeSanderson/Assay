@@ -9,6 +9,8 @@ The PRD pins the replay image by digest. Harbor deletes each trial's task
 image, so replay cannot run that exact image: it rebuilds it from the
 pack's Dockerfile, whose base image is pinned by digest, and records both
 the rebuilt image ID and that base image in replay-works.json.
+
+    uv run assay replay results/<job-id>
 """
 
 from __future__ import annotations
@@ -289,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="python -m analyze.replay",
+        prog="assay replay",
         description="Replay the trace snapshots of each trial in a job folder.")
     parser.add_argument("job_dir", type=Path, help="results/<job-id>")
     parser.add_argument("--analysis", type=Path, default=REPO_ROOT / "analysis",
@@ -301,7 +303,3 @@ def main(argv: list[str] | None = None) -> int:
         for cause in verdict.causes:
             print(f"  - {cause}")
     return 0 if all(v.works for v in verdicts.values()) else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

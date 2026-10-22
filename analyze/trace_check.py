@@ -1,6 +1,6 @@
 """The trace check (PRD section 5, "The trace check").
 
-    uv run python -m analyze.trace_check <job folder>
+    uv run assay trace-check results/<job-id>
 
 checks each trial of one job and prints one JSON line per trial with its
 failed checks. An empty list means the trial passes. A trial that fails is a
@@ -144,12 +144,16 @@ def job_claude_code_version(trials: Iterable[Trial]) -> str | None:
     return versions[0] if versions else None
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Checks every trial folder of one job folder; exit 2 on mixed versions."""
-    if len(argv) != 1:
-        print("usage: python -m analyze.trace_check <job folder>", file=sys.stderr)
-        return 2
-    trials = read_job(argv[0])
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="assay trace-check",
+        description="Check the trace of each trial in a job folder.")
+    parser.add_argument("job_dir", type=Path, help="results/<job-id>")
+    args = parser.parse_args(argv)
+    trials = read_job(args.job_dir)
     try:
         job_claude_code_version(trials)
     except MixedClaudeCodeVersions as error:
@@ -158,7 +162,3 @@ def main(argv: list[str]) -> int:
     for trial in trials:
         print(json.dumps({"trial": trial.name, "failed_checks": trace_check(trial)}))
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

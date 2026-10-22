@@ -1,8 +1,8 @@
 """Compares the labeling sheet with trajectory.py's output (PRD section 5,
 "How a person checks trajectory.py" and its red-to-green extension).
 
-    uv run python -m analyze.trajectory <trial folder>... > trajectory.jsonl
-    uv run python -m analyze.compare_labels <sheet.csv> trajectory.jsonl
+    uv run assay trajectory <trial folder>... > trajectory.jsonl
+    uv run assay compare-labels <sheet.csv> trajectory.jsonl
 
 The sheet is a filled copy of labeling/sheet-template.csv. The two agree on a
 trial, for each metric, when every field of that metric is the same: for
@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import csv
 import json
-import sys
 from pathlib import Path
 
 # Each sheet column and the path of its value in a trajectory.py output line.
@@ -97,10 +96,10 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="python -m analyze.compare_labels",
+        prog="assay compare-labels",
         description="Compare the labeling sheet with trajectory.py's output.")
     parser.add_argument("sheet", type=Path, help="a filled copy of labeling/sheet-template.csv")
-    parser.add_argument("output", type=Path, help="the JSON lines that analyze.trajectory prints")
+    parser.add_argument("output", type=Path, help="the JSON lines that assay trajectory prints")
     args = parser.parse_args(argv)
 
     report = compare(args.sheet, args.output)
@@ -118,7 +117,3 @@ def main(argv: list[str] | None = None) -> int:
     every = report["agrees_every_time"]
     print("agrees every time: " + "  ".join(f"{m}={every[m]}" for m in METRICS))
     return 0 if all(every.values()) else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())

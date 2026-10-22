@@ -266,3 +266,60 @@ def test_a_job_with_a_claude_code_version_runs(tmp_path):
     assert main(["run", "-c", str(job), "-y"], run_harbor=harbor) == 0
 
     assert harbor.calls == [["-c", str(job), "-y"]]
+
+
+# The analysis tools as assay subcommands (issue #32).
+
+TOOLS = {
+    "trace-check": "analyze.trace_check",
+    "replay": "analyze.replay",
+    "agent-runs": "analyze.agent_runs",
+    "trajectory": "analyze.trajectory",
+    "compare-labels": "analyze.compare_labels",
+    "summary": "analyze.summary",
+}
+
+
+@pytest.mark.parametrize("subcommand,module", TOOLS.items())
+def test_each_tool_gets_the_remaining_arguments_and_gives_its_exit_code(
+        subcommand, module, monkeypatch):
+    calls = []
+
+    def tool_main(argv):
+        calls.append(list(argv))
+        return 7
+
+    monkeypatch.setattr(f"{module}.main", tool_main)
+
+    assert main([subcommand, "results/phase0-cross", "--analysis", "out"]) == 7
+    assert calls == [["results/phase0-cross", "--analysis", "out"]]
+
+
+@pytest.mark.parametrize("subcommand", TOOLS)
+def test_each_tools_help_names_the_assay_subcommand(subcommand, capsys):
+    with pytest.raises(SystemExit) as exited:
+        main([subcommand, "--help"])
+
+    assert exited.value.code == 0
+    assert capsys.readouterr().out.startswith(f"usage: assay {subcommand}")
+
+
+@pytest.mark.parametrize("argv", [[], ["bogus"], ["--help"]])
+def test_the_usage_lists_every_subcommand(argv, capsys):
+    assert main(argv) == 2
+
+    usage = capsys.readouterr().err
+    for subcommand in ["run", *TOOLS]:
+        assert f"assay {subcommand}" in usage
+
+
+def test_compare_labels_runs_end_to_end_through_assay(tmp_path, capsys):
+    from tests.test_compare_labels import AGREEING_ROW, SCRIPT_LINE, write_output, write_sheet
+
+    row = {**AGREEING_ROW, "test_first_verdict": "same-turn"}
+
+    code = main(["compare-labels", str(write_sheet(tmp_path, [row])),
+                 str(write_output(tmp_path, [SCRIPT_LINE]))])
+
+    assert code == 1
+    assert "test_first_verdict" in capsys.readouterr().out

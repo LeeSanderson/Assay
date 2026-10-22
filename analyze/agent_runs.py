@@ -4,7 +4,7 @@ A Bash call is a test run when its command matches a test-run pattern of the
 task pack's language (analyze.languages) and runs in the seed repository.
 It runs after replay.py, from the replay.jsonl of each trial:
 
-    uv run python -m analyze.agent_runs results/<job-id>
+    uv run assay agent-runs results/<job-id>
 
 writes analysis/<job-id>/<trial>/agent-runs.jsonl and cross-check.json.
 """
@@ -184,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="python -m analyze.agent_runs",
+        prog="assay agent-runs",
         description="Cross-check the agent's test runs with the replay, for each trial of a job.")
     parser.add_argument("job_dir", type=Path, help="results/<job-id>")
     parser.add_argument("--analysis", type=Path, default=REPO_ROOT / "analysis",
@@ -193,11 +193,6 @@ def main(argv: list[str] | None = None) -> int:
     for name, summary in cross_check_job(args.job_dir, args.analysis).items():
         print(json.dumps({"trial": name, **summary}))
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-
 
 
 def _partial(rules: LanguageRules, args: list[str]) -> bool:

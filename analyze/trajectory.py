@@ -1,17 +1,16 @@
 """Process metrics from one trial: pure functions over the trial reader's data.
 
-    uv run python -m analyze.trajectory [--analysis analysis] <trial folder>...
+    uv run assay trajectory [--analysis analysis] <trial folder>...
 
 prints one JSON line per trial, to compare with the labeling sheet. Red-to-green
 order and the TDD loop need analysis/<job-id>/<trial>/replay.jsonl and
-agent-runs.jsonl (from analyze.replay and analyze.agent_runs); without them
+agent-runs.jsonl (from assay replay and assay agent-runs); without them
 both are null.
 """
 
 from __future__ import annotations
 
 import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -221,10 +220,10 @@ def analyze_folder(folder: Path | str, analysis_root: Path | str) -> dict:
     return analyze_trial(trial)
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    parser = argparse.ArgumentParser(prog="python -m analyze.trajectory",
+    parser = argparse.ArgumentParser(prog="assay trajectory",
                                      description="Process metrics of each trial, one JSON line each.")
     parser.add_argument("trials", nargs="*", type=Path, help="results/<job-id>/<trial>")
     parser.add_argument("--analysis", type=Path, default=REPO_ROOT / "analysis",
@@ -233,7 +232,3 @@ def main(argv: list[str]) -> int:
     for folder in args.trials:
         print(json.dumps(analyze_folder(folder, args.analysis)))
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

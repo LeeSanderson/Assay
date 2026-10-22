@@ -1,6 +1,8 @@
-"""The `assay` command, the one supported way to start an Assay job (ADR 0002).
+"""The `assay` command, the one supported way to start an Assay job (ADR 0002)
+and the one way to run the analysis tools on its results.
 
     uv run assay run -c jobs/<file>.yaml -y [--overwrite] [harbor run options]
+    uv run assay <subcommand> [args]   (each analysis tool's `main` in the `analyze` package)
 
 `assay run` takes only `--overwrite`; every other argument goes to
 `harbor run` unchanged and in the same order. Before Harbor starts, it stops
@@ -17,6 +19,7 @@ finds the job's results folder, <jobs_dir>/<job_name>/, and:
 
 from __future__ import annotations
 
+import importlib
 import os
 import shutil
 import stat
@@ -24,6 +27,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 import yaml
 from harbor.models.job.config import JobConfig, migrate_legacy_job_config
@@ -31,7 +35,29 @@ from harbor.skills import resolve_skill_sources
 
 from instruments.agent import IMPORT_PATH, VersionNotSetError, check_version_set
 
-USAGE = "usage: assay run -c jobs/<file>.yaml [--overwrite] [harbor run options]"
+class Tool(NamedTuple):
+    module: str  # in `analyze`; `assay` calls its main(argv)
+    about: str
+
+
+# Each analysis tool by its subcommand, in the order of the analysis process.
+TOOLS = {
+    "trace-check": Tool("analyze.trace_check", "check the trace of each trial of a job"),
+    "replay": Tool("analyze.replay", "replay the trace snapshots of a job's trials"),
+    "agent-runs": Tool("analyze.agent_runs", "cross-check the agent's test runs with the replay"),
+    "trajectory": Tool("analyze.trajectory", "measure test-first and red-to-green order"),
+    "compare-labels": Tool("analyze.compare_labels",
+                           "compare the labeling sheet with trajectory's output"),
+    "summary": Tool("analyze.summary", "write the Phase 0 summary"),
+}
+USAGE = "\n".join([
+    "usage: assay run -c jobs/<file>.yaml [--overwrite] [harbor run options]",
+    "       assay <subcommand> [args]   (assay <subcommand> --help shows its arguments)",
+    "",
+    "subcommands:",
+    "  assay run             start a job with harbor run",
+    *(f"  assay {name:<15} {tool.about}" for name, tool in TOOLS.items()),
+])
 OVERWRITE = "--overwrite"
 
 HarborRunner = Callable[[Sequence[str]], int]
@@ -148,10 +174,12 @@ def run(args: Sequence[str], run_harbor: HarborRunner = run_harbor) -> int:
 
 def main(argv: Sequence[str] | None = None, run_harbor: HarborRunner = run_harbor) -> int:
     command, *args = list(sys.argv[1:] if argv is None else argv) or [""]
-    if command != "run":
-        print(USAGE, file=sys.stderr)
-        return 2
-    return run(args, run_harbor)
+    if command == "run":
+        return run(args, run_harbor)
+    if command in TOOLS:
+        return importlib.import_module(TOOLS[command].module).main(args)
+    print(USAGE, file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """The Phase 0 summary (PRD section 7, Phase 0).
 
-    uv run python -m analyze.summary results/<job-id>... [--analysis analysis]
+    uv run assay summary results/<job-id>... [--analysis analysis]
 
 reads the trial folders of one or more Phase 0 jobs and their analysis/
 outputs (replay-works.json, replay.jsonl, agent-runs.jsonl, cross-check.json),
@@ -259,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
     import sys
 
     parser = argparse.ArgumentParser(
-        prog="python -m analyze.summary",
+        prog="assay summary",
         description="Write the Phase 0 summary of one or more jobs, as markdown and JSON.")
     parser.add_argument("job_dirs", nargs="+", type=Path, help="results/<job-id>")
     parser.add_argument("--analysis", type=Path, default=REPO_ROOT / "analysis",
@@ -272,7 +272,3 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(f"wrote {markdown} and {data}")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
