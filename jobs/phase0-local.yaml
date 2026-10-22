@@ -6,7 +6,7 @@
 # (the server address lives in that one setting only, L10):
 #   PowerShell:  $env:ASSAY_LOCAL_BASE_URL = "http://192.168.1.252:8080"
 #   bash:        export ASSAY_LOCAL_BASE_URL=http://192.168.1.252:8080
-#   uv run assay run -c jobs/phase0-local.yaml -y
+#   uv run assay run -c jobs/phase0-local.yaml -y --debug
 # The value is the server root: no trailing slash and no /v1, because Claude
 # Code adds /v1/messages itself. Use an address the container can reach (a LAN
 # address, not localhost or host.docker.internal, L7). The server must serve

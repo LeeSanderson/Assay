@@ -1,7 +1,7 @@
 # Phase 0, the cross job: Haiku and Sonnet x control and instrument-tdd
 # x TypeScript and Go, at -k 1. 8 trials.
 #
-# Launch from the repository root:  uv run assay run -c jobs/phase0-cross.yaml -y
+# Launch from the repository root:  uv run assay run -c jobs/phase0-cross.yaml -y --debug
 # See README.md, "Run the Phase 0 jobs".
 
 job_name: phase0-cross

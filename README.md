@@ -32,16 +32,22 @@ Launch each job from the repository root with `assay run`, the only supported wa
 
 ```sh
 uv run assay run -c jobs/phase0-cross.yaml --dry-run   # check: 8 trials, nothing runs
-uv run assay run -c jobs/phase0-cross.yaml -y
-uv run assay run -c jobs/phase0-extra.yaml -y
+uv run assay run -c jobs/phase0-cross.yaml -y --debug
+uv run assay run -c jobs/phase0-extra.yaml -y --debug
 ```
 
 The hosted jobs read `ANTHROPIC_API_KEY` from the host environment.
 
+`--debug` shows Harbor's debug log on the console. Harbor writes the same log, at debug level, to `results/<job_name>/job.log` and `<trial>/trial.log` with or without the flag. The console shows only "Running agent" while Claude Code works; to follow the agent, tail `results/<job_name>/<trial>/agent/claude-code.txt`, which Harbor writes while the agent runs (one JSON event per line):
+
+```powershell
+Get-Content results\phase0-cross\*\agent\claude-code.txt -Wait -Tail 20
+```
+
 **Re-running a job.** A re-run with the same job file resumes the job in `results/<job_name>/`: Harbor keeps the finished trials and runs the rest. Harbor cannot resume a job whose job file has changed. In that case `assay run` stops before Harbor starts and names the folder. To delete the folder and start fresh, add `--overwrite`:
 
 ```sh
-uv run assay run -c jobs/phase0-cross.yaml -y --overwrite   # deletes results/phase0-cross/ without asking, then runs
+uv run assay run -c jobs/phase0-cross.yaml -y --debug --overwrite   # deletes results/phase0-cross/ without asking, then runs
 uv run assay run -c jobs/phase0-cross.yaml --overwrite --dry-run   # says what it would delete; deletes nothing
 ```
 
@@ -55,7 +61,7 @@ uv run assay run -c jobs/phase0-cross.yaml --overwrite --dry-run   # says what i
 
 ```sh
 export ASSAY_LOCAL_BASE_URL=http://<server address>:<port>
-uv run assay run -c jobs/phase0-local.yaml -y
+uv run assay run -c jobs/phase0-local.yaml -y --debug
 ```
 
 ## Check `trajectory.py` by hand

@@ -1,7 +1,7 @@
 # Phase 0, the extra job: Haiku x instrument-tdd x each language, at -k 1.
 # 2 trials.
 #
-# Launch from the repository root:  uv run assay run -c jobs/phase0-extra.yaml -y
+# Launch from the repository root:  uv run assay run -c jobs/phase0-extra.yaml -y --debug
 # See README.md, "Run the Phase 0 jobs".
 
 job_name: phase0-extra
