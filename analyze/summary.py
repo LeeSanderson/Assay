@@ -112,6 +112,7 @@ def _trial(job_dir: Path, trial: Trial, analysis_root: Path) -> dict:
         "red_to_green_order": (metrics["red_to_green_order"] or {}).get("verdict"),
         "tdd_loop": metrics["tdd_loop"],
         "bash": metrics["bash"],
+        "skill_load": metrics["skill_load"],
         "agent_test_runs": read_json(out / CROSS_CHECK_FILE),
         "model_tier": trial.model_tier,
         "local": trial.local,
@@ -150,8 +151,8 @@ def render_markdown(summary: dict) -> str:
              "## Trials", "",
              "| Job | Trial | Model tier | Trace check | Replay | Test-first order "
              "| Red-to-green order | TDD loop (cycles / never seen red / refactor steps) "
-             "| Coverage | Agreement |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+             "| Coverage | Agreement | Skill loaded |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     for t in summary["trials"]:
         check = "pass" if t["trace_check"]["passed"] else \
             "fail: " + ", ".join(t["trace_check"]["failed_checks"])
@@ -161,10 +162,13 @@ def render_markdown(summary: dict) -> str:
         loop = "-" if loop is None else \
             f"{loop['cycles']} / {loop['tests_never_seen_red']} / {loop['refactor_steps']}"
         runs = t["agent_test_runs"] or {}
+        skill = t["skill_load"]
+        skill = ("before first file write" if skill["before_first_file_write"]
+                 else "after first file write" if skill["loaded"] else "no")
         lines.append(
             f"| {t['job']} | {t['trial']} | {t['model_tier']} | {check} | {replay} "
             f"| {t['test_first_order']} | {t['red_to_green_order'] or '-'} | {loop} "
-            f"| {pct(runs.get('coverage'))} | {pct(runs.get('agreement'))} |")
+            f"| {pct(runs.get('coverage'))} | {pct(runs.get('agreement'))} | {skill} |")
 
     shares = summary["shares"]
 

@@ -89,6 +89,22 @@ def bash_marks(trial: Trial) -> dict:
     return {"file_writing_bash": file_writing, "bash_writes_test_or_implementation": classed}
 
 
+INSTRUMENT_SKILL = "tdd"
+
+
+def skill_load(trial: Trial) -> dict:
+    """Whether a successful Skill call loaded the instrument skill, and whether
+    it came before the first file write (PRD section 5, "The phase 0 instrument")."""
+    call = next((c for c in trial.tool_calls if c.function_name == "Skill"
+                 and c.arguments.get("skill") == INSTRUMENT_SKILL and c.is_error is not True), None)
+    first = next(iter(file_writes(trial)), None)
+    return {
+        "loaded": call is not None,
+        "before_first_file_write": call is not None and (
+            first is None or (call.step_id, call.position) < (first.step_id, first.position)),
+    }
+
+
 SEEN_RED = "red"
 SEEN_GREEN = "green"
 
@@ -186,6 +202,7 @@ def analyze_trial(trial: Trial, replay: list[dict] | None = None,
         "red_to_green_order": None,
         "tdd_loop": None,
         "bash": bash_marks(trial),
+        "skill_load": skill_load(trial),
     }
     if replay is not None and runs is not None:
         seen = seen_states(replay, runs)

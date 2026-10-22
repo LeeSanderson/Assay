@@ -80,6 +80,21 @@ def test_each_trial_gives_its_trace_check_replay_and_order_verdicts(tmp_path):
     assert trial["tdd_loop"] == {"cycles": 1, "tests_never_seen_red": 0, "refactor_steps": 0}
 
 
+def test_each_trial_records_whether_the_skill_loaded_before_the_first_file_write(tmp_path):
+    job = Job(tmp_path, "phase0-cross")
+    b = job.trial()
+    b.step().call("Skill", {"skill": "tdd"}, result="Launching skill: tdd")
+    b.step().call("Write", {"file_path": "/app/stopwatch_test.go"},
+                  files={"stopwatch_test.go": GO_TEST})
+    b.build()
+
+    markdown, data = write_summary([job.dir], job.analysis)
+
+    trial = json.loads(data.read_text(encoding="utf-8"))["trials"][0]
+    assert trial["skill_load"] == {"loaded": True, "before_first_file_write": True}
+    assert "| Skill loaded |" in markdown.read_text(encoding="utf-8")
+
+
 def test_a_failing_trial_lists_its_failed_checks_and_a_trial_not_replayed_has_no_replay(tmp_path):
     job = Job(tmp_path, "phase0-cross")
     b = job.trial()
