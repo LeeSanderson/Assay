@@ -80,3 +80,15 @@ _Avoid_: Failing test first, test before implementation
 **Test state**:
 The result of the agent's own tests on one state of the repository: they pass, they fail, they do not compile, or there are none; a state with no tests is not green.
 _Avoid_: Test result, red/green status
+
+**Seen state**:
+A test state the agent saw: the agent ran its tests, and what the run showed agrees with the test state of the repository at that moment; it is either seen red or seen green.
+_Avoid_: Observation, observed state
+
+**Red-to-green order**:
+Whether the first test state the agent saw in one trial was red and a later one was green, so that the tests were seen failing before they were seen passing.
+_Avoid_: Red-green, failing test first
+
+**TDD loop**:
+How often one trial repeats the red, green, refactor cycle, given as counts of cycles, of tests never seen red, and of refactor steps, all judged from seen states.
+_Avoid_: TDD cycle score, red-green-refactor rate

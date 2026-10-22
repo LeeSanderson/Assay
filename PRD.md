@@ -412,7 +412,7 @@ In some trials the agent never activates the artifact. The analyzer excludes the
 | Tier | Metrics | Source |
 |---|---|---|
 | Outcome | The withheld reference tests pass. `pass^k` reliability across repetitions. | `reward.json` |
-| Process | Test-first order. Red-to-green order. Test count. Assertion density. Mock density. | `trajectory.json` (ATIF), through the analyzer |
+| Process | Test-first order. Red-to-green order. TDD loop. Test count. Assertion density. Mock density. | `trajectory.json` (ATIF), through the analyzer |
 | Cost | Input tokens, output tokens, and reasoning tokens. Cost in USD. Duration. Turn count. **Cost for each solved task pack.** | `result.json` and the analyzer |
 | Quality | Mutation score of the tests that the agent wrote. Coverage delta. Lint and type check are clean. Diff size. | `reward.json` |
 
@@ -534,7 +534,46 @@ Phase 0 gives two values for this way:
 
 For each difference, a person finds the cause. The cause can be the pattern, the observation, or the replay. Only a replay that does not give the environment of the trial is a failure of the replay.
 
-The red-to-green order uses the test state of each snapshot.
+#### Red-to-green order and the TDD loop
+
+These two metrics use the test runs of the agent together with the test state of each snapshot. Each metric needs a test that the agent ran, and not only a test that the agent wrote. `trajectory.py` calculates the two metrics from `replay.jsonl`, `agent-runs.jsonl`, and the trace.
+
+**A seen state.** A seen state is a test run of the agent that agrees with the replay. A `partial` test run can give a seen state.
+
+| Seen state | Rule |
+|---|---|
+| Seen red | The exit code is not 0, and the test state of the snapshot is `fail` or `red-compile`. |
+| Seen green | The exit code is 0, and the test state of the snapshot is `pass`. |
+
+A test run that does not agree with the replay is not a seen state. For example, `go test -run TestNew` passes, but the replay of the snapshot gives `fail`. A test run on a `no-tests` snapshot is not a seen state, whatever its exit code.
+
+**Red-to-green order.** Only the first seen states decide the verdict. Give the trial one verdict:
+
+| Verdict | Rule |
+|---|---|
+| `red-to-green` | The first seen state is seen red, and a later seen state is seen green. |
+| `green-first` | The first seen state is seen green. The agent did not see the tests fail. |
+| `never-green` | The trial has seen states, and all of them are seen red. |
+| `not-observed` | The trial has no seen state. |
+
+Red-to-green order and test-first order are two different metrics. No rule connects them. For example, a trial can be `implementation-first` and `red-to-green`. The analysis can compare the two.
+
+**The TDD loop.** The TDD loop looks at all the seen states of the trial, in order. Two or more seen states of the same color, one after the other, count as one. The trial gives three counts:
+
+1. **Cycles.** The count of the changes from seen red to seen green.
+2. **Tests never seen red.** Find each two seen green states, one after the other, with no seen red between them. Add the increase of `agent_tests_total` between them. A test that was red when the agent did not run the tests counts here.
+3. **Refactor steps.** Find each two seen green states, one after the other, with no seen red between them. Count the gap when it has a write to a test file or an implementation file (see "Test-first order"), and `agent_tests_total` does not change. A gap that adds tests is not a refactor step.
+
+For example, the seen states red, green with 1 test, green with 1 test after an edit of the implementation, red, green with 2 tests, green with 2 tests after an edit of the test file, give 2 cycles, 0 tests never seen red, and 2 refactor steps.
+
+These metrics use the test state of the whole suite, and not of each test. Thus, when the agent adds two failing tests and makes them both pass, this counts as one cycle. The snapshots stay in `trace.git`. Thus a later version of `test.sh` can give the result of each test, and replay can run again with no new trial.
+
+**How a person checks the two metrics.** Phase 0 compares `trajectory.py` with a person on the ten hosted trials. The person labels these metrics in the same pass as test-first order, and uses the same procedure (see "How a person checks `trajectory.py`"), with these changes:
+
+1. The `jq` listing also gives the `partial` flag and the exit code of each test run of the agent. For each tool call that made a snapshot, it gives the test state from the replay and `agent_tests_total`. The listing gives no seen state, no verdict, and no count.
+2. For each trial, the labeling sheet also records the red-to-green verdict, two anchors (the `tool_use_id` of the first seen red and of the first seen green), the three counts of the TDD loop, and a note.
+3. The two agree on a trial when the verdict, the two anchors, and the three counts are the same.
+4. "Agrees every time" means one full pass over the ten trials with no difference, for each metric.
 
 #### The trace hook
 
@@ -637,7 +676,7 @@ The analyzer is the only large piece of code. Its budget is 400 to 600 lines of 
 
 | Phase | Deliverable | Acceptance criteria |
 |---|---|---|
-| 0 | Measurement spike | Over ten manual trials on the hosted model tiers: `trajectory.py` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order" for the rules and the check). The report gives the share of trials with a file-writing `Bash` call. It also gives the share of trials in which a `Bash` call writes a test file or an implementation file. Every trial of this phase carries the trace hook, and every trial passes the trace check (see "The trace hook"). Replay of the trace snapshots works on all eleven trials (see "Replay of the trace snapshots"). For each failure, find the cause, fix it, and replay all eleven trials again. The report gives the coverage and the agreement of the test runs of the agent. It gives no result for a red-to-green order. The hosted trials cost £15 or less, and this includes each trial that runs again. One more trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
+| 0 | Measurement spike | Over ten manual trials on the hosted model tiers: `trajectory.py` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order" for the rules and the check). The report gives the share of trials with a file-writing `Bash` call. It also gives the share of trials in which a `Bash` call writes a test file or an implementation file. Every trial of this phase carries the trace hook, and every trial passes the trace check (see "The trace hook"). Replay of the trace snapshots works on all eleven trials (see "Replay of the trace snapshots"). For each failure, find the cause, fix it, and replay all eleven trials again. The report gives the coverage and the agreement of the test runs of the agent. Over the same ten hosted trials, `trajectory.py` finds the red-to-green order and the three counts of the TDD loop, and a person agrees every time (see "Red-to-green order and the TDD loop"). The hosted trials cost £15 or less, and this includes each trial that runs again. One more trial runs the preferred adapter against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation. **This phase blocks all other phases.** |
 | 1 | Corpus and conditions | Six task packs in two languages. Two variant directories and a manifest. The analyzer passes every comparability test for the derived variant. `tests/test.sh` returns the full reward for `solution/solve.sh`. It returns zero for an empty repository. |
 | 2 | Matrix run | Harbor completes 360 trials inside the budget. The repository holds the results. |
 | 3 | Analysis | `report.md` gives effect sizes with confidence intervals for four tiers. It also gives activation rates, cost for each solved task pack, and `UNSTABLE` marks. |
