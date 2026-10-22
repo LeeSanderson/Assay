@@ -17,7 +17,9 @@ finds the job's results folder, <jobs_dir>/<job_name>/, and:
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -82,6 +84,16 @@ def job_config(job_file: Path, args: Sequence[str]) -> JobConfig:
     return config
 
 
+def delete_folder(folder: Path) -> None:
+    """Delete the folder and all in it, read-only files too: Git writes its
+    objects read-only (the agent's trace.git), and Windows will not delete a
+    read-only file."""
+    def make_writable_and_retry(function, path, _exc):
+        os.chmod(path, stat.S_IWRITE)
+        function(path)
+    shutil.rmtree(folder, onexc=make_writable_and_retry)
+
+
 def error(message: str) -> int:
     """Print the error; return the exit code that stops the run."""
     print(f"error: assay run: {message}", file=sys.stderr)
@@ -118,7 +130,7 @@ def run(args: Sequence[str], run_harbor: HarborRunner = run_harbor) -> int:
             print(f"would delete {folder}" if folder.exists()
                   else f"nothing to delete: {folder} does not exist")
         elif folder.exists():
-            shutil.rmtree(folder)
+            delete_folder(folder)
             print(f"deleted {folder}")
     elif (folder / "config.json").exists():
         # Harbor resumes a job only when its saved config equals the new one

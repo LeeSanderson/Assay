@@ -100,6 +100,21 @@ def test_overwrite_deletes_the_results_folder_then_runs_harbor(tmp_path, capsys)
     assert f"deleted {Path('results/phase0-test')}" in capsys.readouterr().out
 
 
+def test_overwrite_deletes_read_only_files_in_the_results_folder(tmp_path):
+    # Git writes its objects read-only, as in the agent's trace.git, and
+    # Windows refuses to delete a read-only file.
+    job = job_file(tmp_path)
+    folder = earlier_job(tmp_path / "results" / "phase0-test")
+    git_object = folder / "trial__1" / "trace.git" / "objects" / "0a" / "ba1a59"
+    git_object.parent.mkdir(parents=True)
+    git_object.write_bytes(b"object")
+    git_object.chmod(0o444)
+
+    assert main(["run", "-c", str(job), "--overwrite"], run_harbor=Harbor()) == 0
+
+    assert not folder.exists()
+
+
 def test_overwrite_with_no_results_folder_deletes_nothing_and_runs(tmp_path):
     job = job_file(tmp_path)
     other = earlier_job(tmp_path / "results" / "another-job")
