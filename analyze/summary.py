@@ -14,10 +14,9 @@ import json
 from pathlib import Path
 
 from analyze.agent_runs import CROSS_CHECK_FILE
-from analyze.replay import REPO_ROOT
 from analyze.trace_check import MixedClaudeCodeVersions, job_claude_code_version, trace_check
 from analyze.trajectory import analyze_folder
-from analyze.trial import Trial, read_job, read_json, share
+from analyze.trial import REPO_ROOT, Trial, read_job, read_json, share
 
 
 SUMMARY_NAME = "phase0-summary"

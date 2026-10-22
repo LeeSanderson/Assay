@@ -18,10 +18,9 @@ import tomllib
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 
-from analyze.trial import Trial, read_job
+from analyze.trial import REPO_ROOT, Trial, read_job
 from instruments.digest import instruments_digest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 APP = "/app"  # the seed repository in the container
 SNAPSHOT_EXCLUDED = frozenset({".git", "node_modules"})  # the trace hook leaves these out
 EDIT_TOOLS = ("Edit", "MultiEdit")

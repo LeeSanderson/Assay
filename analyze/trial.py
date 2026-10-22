@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 TRACE_FOLDER = Path("artifacts", "logs", "artifacts", "trace")
 
 
@@ -47,12 +48,10 @@ class PathChange:
 class TraceLine:
     seq: int
     event: str | None  # "seed", "PostToolUse" or "PostToolUseFailure"
-    tool_name: str | None
     tool_use_id: str | None
     changed: bool | None
     commit: str | None
     paths: tuple[PathChange, ...]
-    error: str | None
     raw: dict
 
 
@@ -72,7 +71,6 @@ class Trial:
     name: str
     task_path: tuple[str, ...]  # lock.json task.path: tasks/<language>/<slug>
     tool_calls: tuple[ToolCall, ...]  # in ATIF order: step_id, then position
-    last_step_id: int | None
     turns: int  # ATIF steps whose source is the agent
     system_step_ids: tuple[int, ...]  # ATIF steps whose source is "system"
     cached_tokens: tuple[int | None, ...]  # metrics.cached_tokens of each agent step
@@ -85,15 +83,11 @@ class Trial:
     reward: dict | None
     instruments: dict | None
     trace: tuple[TraceLine, ...]
-    trace_dir: Path  # holds trace.git
+    trace_git: Path
 
     @property
     def language(self) -> str | None:
         return self.task_path[-2] if len(self.task_path) >= 2 else None
-
-    @property
-    def trace_git(self) -> Path:
-        return self.trace_dir / "trace.git"
 
     def trace_lines_for(self, tool_use_id: str) -> list[TraceLine]:
         return [line for line in self.trace if line.tool_use_id == tool_use_id]
@@ -135,7 +129,6 @@ def read_trial(path: Path | str) -> Trial:
         # Harbor keeps host separators, so a Windows path uses backslashes.
         task_path=PureWindowsPath(task_path).parts if task_path else (),
         tool_calls=tuple(_tool_calls(steps)),
-        last_step_id=steps[-1]["step_id"] if steps else None,
         turns=len(agent_steps),
         system_step_ids=tuple(s["step_id"] for s in steps if s.get("source") == "system"),
         cached_tokens=tuple((s.get("metrics") or {}).get("cached_tokens") for s in agent_steps),
@@ -149,7 +142,7 @@ def read_trial(path: Path | str) -> Trial:
         reward=read_json(path / "verifier" / "reward.json"),
         instruments=read_json(trace_dir / "instruments.json"),
         trace=tuple(_trace_line(raw) for raw in read_jsonl(trace_dir / "trace.jsonl")),
-        trace_dir=trace_dir,
+        trace_git=trace_dir / "trace.git",
     )
 
 
@@ -204,11 +197,9 @@ def _trace_line(raw: dict) -> TraceLine:
     return TraceLine(
         seq=raw.get("seq"),
         event=raw.get("event"),
-        tool_name=raw.get("tool_name"),
         tool_use_id=raw.get("tool_use_id"),
         changed=raw.get("changed"),
         commit=raw.get("commit"),
         paths=tuple(PathChange(p["status"], p["path"]) for p in raw.get("paths") or []),
-        error=raw.get("error"),
         raw=raw,
     )

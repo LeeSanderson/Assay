@@ -26,9 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from analyze.trial import Trial, read_job, read_jsonl, write_jsonl
+from analyze.trial import REPO_ROOT, Trial, read_job, read_jsonl, write_jsonl
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 REPLAY_FILE = "replay.jsonl"
 
 NO_TESTS = "no-tests"
@@ -51,8 +50,6 @@ class Runner(Protocol):
         """
         ...
 
-
-class JobRunner(Runner, Protocol):
     def image(self, pack: Path) -> str:
         """The image of a task pack (its folder), ready to run."""
         ...
@@ -229,7 +226,7 @@ def _comparable(line: dict) -> dict:
 
 
 def replay_job(
-    job_dir: Path | str, analysis_root: Path | str, runner: JobRunner,
+    job_dir: Path | str, analysis_root: Path | str, runner: Runner,
     *, tasks_root: Path | str = REPO_ROOT,
 ) -> dict[str, ReplayVerdict]:
     """Replays each trial of a job two times and writes the results.

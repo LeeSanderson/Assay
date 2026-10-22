@@ -17,8 +17,8 @@ from pathlib import Path
 
 from analyze.agent_runs import AGENT_RUNS_FILE, read_agent_runs
 from analyze.languages import IMPLEMENTATION, TEST, classify
-from analyze.replay import FAIL, PASS, RED_COMPILE, REPLAY_FILE, REPO_ROOT, read_replay
-from analyze.trial import Trial, read_trial
+from analyze.replay import FAIL, PASS, RED_COMPILE, REPLAY_FILE, read_replay
+from analyze.trial import REPO_ROOT, Trial, read_trial
 
 WRITE_STATUSES = ("A", "M")
 

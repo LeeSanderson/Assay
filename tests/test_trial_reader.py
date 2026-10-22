@@ -26,7 +26,6 @@ def test_reader_joins_each_tool_call_with_its_observation_in_atif_order(make_tri
     assert (t.tool_calls[0].is_error, t.tool_calls[2].result, t.tool_calls[2].is_error) == (
         False, None, None,
     )
-    assert t.last_step_id == 3
 
 
 def test_reader_gives_trace_lines_joined_by_tool_use_id_and_a_real_trace_git(make_trial):
