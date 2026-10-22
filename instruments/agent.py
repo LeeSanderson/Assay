@@ -22,6 +22,7 @@ INSTRUMENTS_DIR = Path(__file__).resolve().parent
 REMOTE_DIR = "/harbor/instruments/"
 TRACE_DIR = "/logs/artifacts/trace"
 HOOK_COMMAND = "bash /harbor/instruments/trace.sh"
+IMPORT_PATH = "instruments.agent:InstrumentedClaudeCode"  # the job files' `import_path`
 HOOK_EVENTS = ("PostToolUse", "PostToolUseFailure")
 BLOCKING_KEYS = ("disableAllHooks", "allowManagedHooksOnly")
 VERSION_PLACEHOLDER = "SET-ON-SMOKE-TRIAL-DAY"

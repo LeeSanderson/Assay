@@ -8,6 +8,7 @@ import yaml
 from harbor.models.job.config import JobConfig
 
 from assay.cli import main
+from instruments.agent import IMPORT_PATH as INSTRUMENTED
 
 
 class Harbor:
@@ -221,8 +222,6 @@ def test_overwrite_deletes_even_when_the_configs_match(tmp_path):
 
     assert not folder.exists()
 
-
-INSTRUMENTED = "instruments.agent:InstrumentedClaudeCode"
 
 
 @pytest.mark.parametrize("options", [["-y"], ["--dry-run"]])

@@ -5,7 +5,8 @@
 `assay run` takes only `--overwrite`; every other argument goes to
 `harbor run` unchanged and in the same order. Before Harbor starts, it finds
 the job's Claude Code version, and stops when an InstrumentedClaudeCode agent
-has no version or the placeholder (with --dry-run too). Then it finds the
+has no version or the placeholder (with --dry-run too). It reads the version
+from the job file only, not from --ak. Then it finds the
 job's results folder, <jobs_dir>/<job_name>/, and:
 
 - with --overwrite, deletes the folder (with --dry-run, says it would);
@@ -26,11 +27,10 @@ import yaml
 from harbor.models.job.config import JobConfig, migrate_legacy_job_config
 from harbor.skills import resolve_skill_sources
 
-from instruments.agent import VersionNotSetError, check_version_set
+from instruments.agent import IMPORT_PATH, VersionNotSetError, check_version_set
 
 USAGE = "usage: assay run -c jobs/<file>.yaml [--overwrite] [harbor run options]"
 OVERWRITE = "--overwrite"
-INSTRUMENTED_AGENT = "instruments.agent:InstrumentedClaudeCode"
 
 HarborRunner = Callable[[Sequence[str]], int]
 
@@ -104,7 +104,7 @@ def run(args: Sequence[str], run_harbor: HarborRunner = run_harbor) -> int:
     # builds the task image.
     try:
         for agent in config.agents:
-            if agent.import_path == INSTRUMENTED_AGENT:
+            if agent.import_path == IMPORT_PATH:
                 check_version_set(agent.kwargs.get("version"))
     except VersionNotSetError as e:
         return error(str(e))
