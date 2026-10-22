@@ -79,8 +79,8 @@ def test_a_missing_job_file_stops_the_run_before_harbor(capsys):
     assert "missing.yaml" in capsys.readouterr().err
 
 
-def earlier_run(folder, config=None):
-    """A results folder left by an earlier `harbor run`, with one trial."""
+def earlier_job(folder, config=None):
+    """The results folder of an earlier `harbor run` of the job, with one trial."""
     (folder / "trial__1").mkdir(parents=True)
     if config is not None:
         (folder / "config.json").write_text(config.model_dump_json(), encoding="utf-8")
@@ -89,7 +89,7 @@ def earlier_run(folder, config=None):
 
 def test_overwrite_deletes_the_results_folder_then_runs_harbor(tmp_path, capsys):
     job = job_file(tmp_path)
-    folder = earlier_run(tmp_path / "results" / "phase0-test")
+    folder = earlier_job(tmp_path / "results" / "phase0-test")
     harbor = Harbor()
 
     assert main(["run", "-c", str(job), "-y", "--overwrite"], run_harbor=harbor) == 0
@@ -101,7 +101,7 @@ def test_overwrite_deletes_the_results_folder_then_runs_harbor(tmp_path, capsys)
 
 def test_overwrite_with_no_results_folder_deletes_nothing_and_runs(tmp_path):
     job = job_file(tmp_path)
-    other = earlier_run(tmp_path / "results" / "another-job")
+    other = earlier_job(tmp_path / "results" / "another-job")
     harbor = Harbor()
 
     assert main(["run", "-c", str(job), "--overwrite"], run_harbor=harbor) == 0
@@ -112,7 +112,7 @@ def test_overwrite_with_no_results_folder_deletes_nothing_and_runs(tmp_path):
 
 def test_overwrite_with_dry_run_reports_the_folder_and_deletes_nothing(tmp_path, capsys):
     job = job_file(tmp_path)
-    folder = earlier_run(tmp_path / "results" / "phase0-test")
+    folder = earlier_job(tmp_path / "results" / "phase0-test")
     harbor = Harbor()
 
     main(["run", "-c", str(job), "--overwrite", "--dry-run"], run_harbor=harbor)
@@ -128,12 +128,13 @@ def test_overwrite_with_dry_run_reports_the_folder_and_deletes_nothing(tmp_path,
     (["--jobs-dir", "elsewhere"], "elsewhere/phase0-test"),
     (["--jobs-dir=elsewhere"], "elsewhere/phase0-test"),
     (["-o", "elsewhere"], "elsewhere/phase0-test"),
+    (["-oelsewhere"], "elsewhere/phase0-test"),  # Click's attached short form
     (["-o", "elsewhere", "--job-name", "renamed"], "elsewhere/renamed"),
 ])
 def test_command_line_job_name_and_jobs_dir_win_over_the_job_file(tmp_path, options, folder):
     job = job_file(tmp_path)
-    from_file = earlier_run(tmp_path / "results" / "phase0-test")
-    from_command_line = earlier_run(tmp_path / folder)
+    from_file = earlier_job(tmp_path / "results" / "phase0-test")
+    from_command_line = earlier_job(tmp_path / folder)
 
     main(["run", "-c", str(job), "--overwrite", *options], run_harbor=Harbor())
 
@@ -148,9 +149,9 @@ def config_of(job, **overrides):
     return JobConfig.model_validate(data)
 
 
-def test_an_earlier_run_with_a_different_config_stops_with_the_overwrite_hint(tmp_path, capsys):
+def test_an_earlier_job_with_a_different_config_stops_with_the_overwrite_hint(tmp_path, capsys):
     job = job_file(tmp_path, n_attempts=1)
-    folder = earlier_run(tmp_path / "results" / "phase0-test", config_of(job, n_attempts=3))
+    folder = earlier_job(tmp_path / "results" / "phase0-test", config_of(job, n_attempts=3))
     harbor = Harbor()
 
     assert main(["run", "-c", str(job), "-y"], run_harbor=harbor) != 0
@@ -162,9 +163,9 @@ def test_an_earlier_run_with_a_different_config_stops_with_the_overwrite_hint(tm
     assert "--overwrite" in err
 
 
-def test_an_earlier_run_with_the_same_config_resumes(tmp_path):
+def test_an_earlier_job_with_the_same_config_resumes(tmp_path):
     job = job_file(tmp_path)
-    folder = earlier_run(tmp_path / "results" / "phase0-test", config_of(job))
+    folder = earlier_job(tmp_path / "results" / "phase0-test", config_of(job))
     harbor = Harbor()
 
     assert main(["run", "-c", str(job), "-y"], run_harbor=harbor) == 0
@@ -173,14 +174,26 @@ def test_an_earlier_run_with_the_same_config_resumes(tmp_path):
     assert (folder / "trial__1").exists()
 
 
-def test_an_earlier_run_of_a_job_with_skills_resumes(tmp_path):
+def test_a_dry_run_after_a_job_file_change_warns_and_still_runs(tmp_path, capsys):
+    # Harbor's dry run never reads the job folder, so the check only warns.
+    job = job_file(tmp_path, n_attempts=1)
+    earlier_job(tmp_path / "results" / "phase0-test", config_of(job, n_attempts=3))
+    harbor = Harbor()
+
+    assert main(["run", "-c", str(job), "--dry-run"], run_harbor=harbor) == 0
+
+    assert harbor.calls == [["-c", str(job), "--dry-run"]]
+    assert "--overwrite" in capsys.readouterr().err
+
+
+def test_an_earlier_job_with_skills_resumes(tmp_path):
     # Harbor saves each local skill path as str(Path(value)) (harbor/skills.py),
     # so on Windows the saved config holds back slashes.
     (tmp_path / "variants" / "tdd").mkdir(parents=True)
     job = job_file(tmp_path, agents=[{"name": "oracle", "skills": ["variants/tdd"]}])
     saved = config_of(job)
     saved.agents[0].skills = [str(Path("variants/tdd"))]
-    earlier_run(tmp_path / "results" / "phase0-test", saved)
+    earlier_job(tmp_path / "results" / "phase0-test", saved)
     harbor = Harbor()
 
     assert main(["run", "-c", str(job)], run_harbor=harbor) == 0
@@ -190,7 +203,7 @@ def test_an_earlier_run_of_a_job_with_skills_resumes(tmp_path):
 
 def test_the_comparison_uses_the_command_line_job_name_and_jobs_dir(tmp_path):
     job = job_file(tmp_path)
-    folder = earlier_run(tmp_path / "elsewhere" / "renamed",
+    folder = earlier_job(tmp_path / "elsewhere" / "renamed",
                          config_of(job, job_name="renamed", jobs_dir="elsewhere"))
     harbor = Harbor()
 
@@ -202,7 +215,7 @@ def test_the_comparison_uses_the_command_line_job_name_and_jobs_dir(tmp_path):
 
 def test_overwrite_deletes_even_when_the_configs_match(tmp_path):
     job = job_file(tmp_path)
-    folder = earlier_run(tmp_path / "results" / "phase0-test", config_of(job))
+    folder = earlier_job(tmp_path / "results" / "phase0-test", config_of(job))
 
     main(["run", "-c", str(job), "--overwrite"], run_harbor=Harbor())
 

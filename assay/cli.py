@@ -7,8 +7,9 @@
 the job's results folder, <jobs_dir>/<job_name>/, and:
 
 - with --overwrite, deletes the folder (with --dry-run, says it would);
-- without, stops with a hint when the folder holds a run that Harbor cannot
-  resume because its config differs. A run with the same config resumes.
+- without, stops with a hint when the folder holds results that Harbor cannot
+  resume because the config differs (with --dry-run, only warns). Results
+  with the same config resume.
 """
 
 from __future__ import annotations
@@ -43,14 +44,16 @@ def run_harbor(args: Sequence[str]) -> int:
 
 
 def option_values(args: Sequence[str], *names: str) -> list[str]:
-    """Every value given to the option `names`, in order, in both the
-    `--opt value` and the `--opt=value` form."""
+    """Every value given to the option `names`, in order, read as Click reads
+    it: `--opt value`, `--opt=value`, `-o value` and `-ovalue`."""
     values = []
     for i, arg in enumerate(args):
         if arg in names and i + 1 < len(args):
             values.append(args[i + 1])
-        elif "=" in arg and arg.split("=", 1)[0] in names:
+        elif arg.startswith("--") and arg.split("=", 1)[0] in names:
             values.append(arg.split("=", 1)[1])
+        elif not arg.startswith("--") and arg[:2] in names and len(arg) > 2:
+            values.append(arg[2:])
     return values
 
 
@@ -60,8 +63,9 @@ def job_config(job_file: Path, args: Sequence[str]) -> JobConfig:
     build_job_config) and its skills resolved (harbor/job.py, Job.create), so it
     equals the config Harbor compares with an earlier run's config.json."""
     config = migrate_legacy_job_config(yaml.safe_load(job_file.read_text()) or {})
-    for key in ("agents", "retry", "environment", "verifier"):
-        config.setdefault(key, [{}] if key == "agents" else {})
+    defaults: dict[str, object] = {"agents": [{}], "retry": {}, "environment": {}, "verifier": {}}
+    for key, default in defaults.items():
+        config.setdefault(key, default)
     if job_names := option_values(args, "--job-name"):
         config["job_name"] = job_names[-1]
     if jobs_dirs := option_values(args, "-o", "--jobs-dir"):
@@ -74,6 +78,7 @@ def job_config(job_file: Path, args: Sequence[str]) -> JobConfig:
 
 
 def error(message: str) -> int:
+    """Print the error; return the exit code that stops the run."""
     print(f"error: assay run: {message}", file=sys.stderr)
     return 2
 
@@ -92,9 +97,11 @@ def run(args: Sequence[str], run_harbor: HarborRunner = run_harbor) -> int:
         return error(f"cannot read job file {job_files[0]}: {e}")
     folder = config.jobs_dir / config.job_name
 
+    # Harbor's dry run never creates or reads the job folder, so a dry run
+    # deletes nothing and only warns.
+    dry_run = "--dry-run" in harbor_args
     if overwrite:
-        # Harbor's dry run never creates or reads the job folder.
-        if "--dry-run" in harbor_args:
+        if dry_run:
             print(f"would delete {folder}" if folder.exists()
                   else f"nothing to delete: {folder} does not exist")
         elif folder.exists():
@@ -105,8 +112,12 @@ def run(args: Sequence[str], run_harbor: HarborRunner = run_harbor) -> int:
         # (harbor/job.py, _maybe_init_existing_job); say what to do when not.
         existing = JobConfig.model_validate_json((folder / "config.json").read_text())
         if existing != config:
-            return error(f"{folder} holds a run with a different config, so Harbor cannot "
-                         f"resume it. Re-run with --overwrite to delete {folder} and start fresh.")
+            message = (f"{folder} holds results of this job with a different config, so "
+                       f"Harbor cannot resume it. Re-run with --overwrite to delete "
+                       f"{folder} and start fresh.")
+            if not dry_run:
+                return error(message)
+            print(f"warning: assay run: {message}", file=sys.stderr)
     return run_harbor(harbor_args)
 
 

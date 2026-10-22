@@ -2,7 +2,8 @@
 
 PRD section 5, "Model tiers, and the local tier" and "Version pins". The
 smoke trial exercises the job files end to end; these tests only check that
-Harbor accepts each file and expands it to the planned trials.
+Harbor accepts each file and expands it to the planned trials. The slow test
+also launches a job file through `assay run` (issue #31, ADR 0002).
 """
 
 import asyncio
@@ -121,7 +122,7 @@ def test_server_address_appears_only_in_the_host_setting():
 
 
 @pytest.mark.slow
-def test_a_job_file_trial_delivers_the_trace_to_the_trial_artifacts(tmp_path):
+def test_a_job_file_trial_through_assay_delivers_the_trace_and_resumes_on_a_re_run(tmp_path):
     # The extra job, cut to its TypeScript task, with the agent swapped for the
     # same class minus the install and the model run. Everything else (skills,
     # kwargs, env) comes from the committed job file.
