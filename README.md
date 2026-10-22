@@ -74,6 +74,14 @@ A person labels the ten hosted trials and compares the labels with `trajectory.p
 
 5. For each difference, find the cause and fix the script, the label, or the rule in the PRD. Record each correction in a copy of `labeling/corrections-template.csv` (`corrected` is `script`, `label`, or `rule`). Repeat until one full pass over the ten trials gives no difference for each metric.
 
+## Write the Phase 0 summary
+
+After `replay.py` and `agent_runs.py` have run on each job, write the summary of every Phase 0 acceptance value. It goes to `analysis/phase0-summary.md` (for a person) and `analysis/phase0-summary.json`, and the command writes nothing else:
+
+```sh
+uv run python -m analyze.summary results/phase0-cross results/phase0-extra results/phase0-local
+```
+
 ## Run the tests
 
 ```sh
