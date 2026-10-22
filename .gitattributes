@@ -4,3 +4,5 @@ instruments/jq binary
 instruments/** -text
 instruments/*.sh text eol=lf
 instruments/*.py text eol=lf
+# Task packs are copied into Linux images as they are, so they must keep LF.
+tasks/** text eol=lf
