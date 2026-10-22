@@ -4,8 +4,8 @@
 # Two passes, each on a scratch copy of the repository, so the repository
 # itself never changes:
 #   1. The outcome pass removes each test file of the agent, adds the reference
-#      tests, type-checks the copy (`tsc`, because babel-jest does not), and
-#      runs the reference tests.
+#      tests, type-checks them and the files they import (`tsc`, because
+#      babel-jest does not), and runs the reference tests.
 #   2. The agent pass runs the tests of the agent on the repository as it is.
 #      Skipped tests count in the total but not as passed. With no agent
 #      tests, agent_tests_compile says whether the code builds. Agent tests
@@ -34,10 +34,16 @@ OUTCOME=$(mktemp -d "$(dirname "$APP_DIR")/.assay-outcome.XXXXXX")
 AGENT=$(mktemp -d "$(dirname "$APP_DIR")/.assay-agent.XXXXXX")
 trap 'rm -rf "$WORK" "$OUTCOME" "$AGENT"' EXIT
 
-# The PRD's TypeScript test-file class: `*.test.ts` and `*.spec.ts`.
+# The test-file class. It must equal `test_files` for typescript in
+# analyze/languages.py; tests/test_test_file_patterns.py checks it.
+TEST_FILE_PATTERNS=('*.test.ts' '*.spec.ts')
+name_tests=()
+for pattern in "${TEST_FILE_PATTERNS[@]}"; do name_tests+=(-o -name "$pattern"); done
+name_tests=("${name_tests[@]:1}")
+
 agent_test_files() {
     (cd "$1" && find . \( -name .git -o -name node_modules -o -name .yarn \) -prune \
-        -o -type f \( -name '*.test.ts' -o -name '*.spec.ts' \) -print | sed 's|^\./||' | sort)
+        -o -type f \( "${name_tests[@]}" \) -print | sed 's|^\./||' | sort)
 }
 
 copy_repository() {
@@ -64,7 +70,11 @@ copy_repository "$APP_DIR" "$OUTCOME"
 agent_test_files "$OUTCOME" | (cd "$OUTCOME" && xargs -r -d '\n' rm -f --)
 cp "$TESTS_DIR/$REFERENCE_TEST" "$OUTCOME/"
 
-reference_compiles=$(typecheck "$OUTCOME" tsconfig.json "$OUT_DIR/outcome-tsc.log")
+# Type-check the reference test and the files it imports only, so a type error
+# in a file the reference tests never load does not zero the reward.
+printf '{"extends": "./tsconfig.json", "files": ["%s"], "include": []}\n' "$REFERENCE_TEST" \
+    >"$OUTCOME/tsconfig.assay-outcome.json"
+reference_compiles=$(typecheck "$OUTCOME" tsconfig.assay-outcome.json "$OUT_DIR/outcome-tsc.log")
 (cd "$OUTCOME" && timeout "$JEST_TIMEOUT" corepack yarn jest --ci --no-cache --json --outputFile="$WORK/outcome.json" \
     --runTestsByPath "./$REFERENCE_TEST") >"$OUT_DIR/outcome-jest.log" 2>&1
 read -r reference_passed reference_total _ < <(jest_counts "$WORK/outcome.json")
@@ -93,7 +103,7 @@ else
     ' "$AGENT/tsconfig.assay-agent-tests.json" "${agent_tests[@]}"
     agent_tests_compile=$(typecheck "$AGENT" tsconfig.assay-agent-tests.json "$OUT_DIR/agent-tsc.log")
     (cd "$AGENT" && timeout "$JEST_TIMEOUT" corepack yarn jest --ci --no-cache --json --outputFile="$WORK/agent.json" \
-        --passWithNoTests --testMatch '**/*.test.ts' '**/*.spec.ts') >"$OUT_DIR/agent-jest.log" 2>&1
+        --passWithNoTests --testMatch "${TEST_FILE_PATTERNS[@]/#/**/}") >"$OUT_DIR/agent-jest.log" 2>&1
     read -r agent_tests_passed agent_tests_total load_errors < <(jest_counts "$WORK/agent.json")
     # A suite that throws while it loads does not compile.
     if [ "$load_errors" -gt 0 ]; then

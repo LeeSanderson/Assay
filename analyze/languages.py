@@ -1,8 +1,9 @@
 """Language rules are data: one table keyed by task-pack language.
 
 The key is the <language> folder of tasks/<language>/<slug>. The task packs'
-test.sh removes the same test-file class in the outcome pass, so keep the two
-in step (PRD section 5, "Test-first order" and "The cross-check").
+test.sh removes the same test-file class in the outcome pass (its one
+TEST_FILE_PATTERNS line); tests/test_test_file_patterns.py keeps the two in step
+(PRD section 5, "Test-first order" and "The cross-check").
 """
 
 from __future__ import annotations

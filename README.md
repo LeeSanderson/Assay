@@ -53,7 +53,7 @@ uv run harbor run -c jobs/phase0-local.yaml -y
 
 A person labels the ten hosted trials and compares the labels with `trajectory.py`, for test-first order and for red-to-green order and the TDD loop. The full procedure is in the PRD, section 5, "How a person checks `trajectory.py`" and its red-to-green extension. In short:
 
-1. Run `replay.py` and `agent_runs.py` on the job, so each trial has `analysis/<job-id>/<trial>/replay.jsonl` and `agent-runs.jsonl`.
+1. Run `replay.py` and `agent_runs.py` on the job, so each trial has `analysis/<job-id>/<trial>/replay.jsonl` and `agent-runs.jsonl`. Harbor deletes each trial's task image, so replay rebuilds it from the pack's Dockerfile, whose base image is pinned by digest. `replay-works.json` records the rebuilt image ID and that base image.
 2. Print the neutral listing of each trial with `jq` (`jq` must be on the PATH). The listing gives no class, no seen state, no verdict, and no count. The header of `analyze/listing.jq` explains each field.
 
    ```sh

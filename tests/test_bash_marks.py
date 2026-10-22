@@ -73,6 +73,7 @@ def test_main_prints_one_json_line_per_trial(make_trial, capsys):
             "red_to_green_order": None,
             "tdd_loop": None,
             "bash": {"file_writing_bash": False, "bash_writes_test_or_implementation": False},
+            "skill_load": {"loaded": False, "before_first_file_write": False},
         },
         {
             "trial": "other__xyz9876",
@@ -85,5 +86,6 @@ def test_main_prints_one_json_line_per_trial(make_trial, capsys):
             "red_to_green_order": None,
             "tdd_loop": None,
             "bash": {"file_writing_bash": False, "bash_writes_test_or_implementation": False},
+            "skill_load": {"loaded": False, "before_first_file_write": False},
         },
     ]

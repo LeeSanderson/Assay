@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from analyze.languages import LANGUAGES, LanguageRules
-from analyze.replay import PASS, REPO_ROOT, read_replay
-from analyze.trial import ToolCall, TraceLine, Trial, read_trial
+from analyze.replay import PASS, read_replay
+from analyze.trial import REPO_ROOT, ToolCall, Trial, read_job, read_jsonl, share, write_jsonl
 
 AGENT_RUNS_FILE = "agent-runs.jsonl"
 CROSS_CHECK_FILE = "cross-check.json"
@@ -99,7 +99,8 @@ def agent_runs(trial: Trial, replay: list[dict]) -> list[dict]:
         run = match_test_run(trial.language, command) if isinstance(command, str) else None
         if run is None:
             continue
-        snapshot = _snapshot_before(trial, call)
+        own = trial.trace_lines_for(call.tool_use_id)
+        snapshot = trial.snapshot_before(own[0]) if own else None
         code = exit_code(call)
         state = states.get(snapshot.seq, {}).get("test_state") if snapshot else None
         agrees = None
@@ -137,18 +138,14 @@ def cross_check(replay: list[dict], runs: list[dict]) -> dict:
     return {
         "snapshots": len(snapshots),
         "covered_snapshots": len(covered),
-        "coverage": _share(len(covered), len(snapshots)),
+        "coverage": share(len(covered), len(snapshots)),
         "test_runs": len(runs),
         "partial_runs": sum(1 for run in runs if run["partial"]),
         "compared_runs": len(compared),
         "agreeing_runs": len(agreeing),
-        "agreement": _share(len(agreeing), len(compared)),
+        "agreement": share(len(agreeing), len(compared)),
         "differences": [run["tool_use_id"] for run in compared if not run["agrees"]],
     }
-
-
-def _share(part: int, whole: int) -> float | None:
-    return part / whole if whole else None
 
 
 def cross_check_job(job_dir: Path | str, analysis_root: Path | str) -> dict[str, dict]:
@@ -160,8 +157,7 @@ def cross_check_job(job_dir: Path | str, analysis_root: Path | str) -> dict[str,
     """
     job_dir = Path(job_dir)
     summaries = {}
-    for trial_dir in sorted(p for p in job_dir.iterdir() if (p / "lock.json").is_file()):
-        trial = read_trial(trial_dir)
+    for trial in read_job(job_dir):
         out = Path(analysis_root) / job_dir.name / trial.name
         replay = read_replay(out)
         runs = agent_runs(trial, replay)
@@ -181,8 +177,7 @@ def read_agent_runs(trial_out: Path | str) -> list[dict]:
     run applies to; snapshot_seq joins replay.jsonl's seq), test_state (from
     the replay) and agrees (None for a partial run).
     """
-    path = Path(trial_out) / AGENT_RUNS_FILE
-    return [json.loads(t) for t in path.read_text(encoding="utf-8").splitlines() if t.strip()]
+    return read_jsonl(Path(trial_out) / AGENT_RUNS_FILE)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -203,14 +198,6 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
-
-def _snapshot_before(trial: Trial, call: ToolCall) -> TraceLine | None:
-    """The last trace line with a commit before the call's own trace line."""
-    own = trial.trace_lines_for(call.tool_use_id)
-    if not own:
-        return None
-    before = [l for l in trial.trace if l.seq < own[0].seq and l.commit]
-    return before[-1] if before else None
 
 
 def _partial(rules: LanguageRules, args: list[str]) -> bool:

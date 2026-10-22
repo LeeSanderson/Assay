@@ -17,8 +17,8 @@ from pathlib import Path
 
 from analyze.agent_runs import AGENT_RUNS_FILE, read_agent_runs
 from analyze.languages import IMPLEMENTATION, TEST, classify
-from analyze.replay import FAIL, PASS, RED_COMPILE, REPLAY_FILE, REPO_ROOT, read_replay
-from analyze.trial import Trial, read_trial
+from analyze.replay import FAIL, PASS, RED_COMPILE, REPLAY_FILE, read_replay
+from analyze.trial import REPO_ROOT, Trial, read_trial
 
 WRITE_STATUSES = ("A", "M")
 
@@ -87,6 +87,22 @@ def bash_marks(trial: Trial) -> dict:
         for w in file_writes(trial)
     )
     return {"file_writing_bash": file_writing, "bash_writes_test_or_implementation": classed}
+
+
+INSTRUMENT_SKILL = "tdd"
+
+
+def skill_load(trial: Trial) -> dict:
+    """Whether a successful Skill call loaded the instrument skill, and whether
+    it came before the first file write (PRD section 5, "The phase 0 instrument")."""
+    call = next((c for c in trial.tool_calls if c.function_name == "Skill"
+                 and c.arguments.get("skill") == INSTRUMENT_SKILL and c.is_error is not True), None)
+    first = next(iter(file_writes(trial)), None)
+    return {
+        "loaded": call is not None,
+        "before_first_file_write": call is not None and (
+            first is None or (call.step_id, call.position) < (first.step_id, first.position)),
+    }
 
 
 SEEN_RED = "red"
@@ -186,6 +202,7 @@ def analyze_trial(trial: Trial, replay: list[dict] | None = None,
         "red_to_green_order": None,
         "tdd_loop": None,
         "bash": bash_marks(trial),
+        "skill_load": skill_load(trial),
     }
     if replay is not None and runs is not None:
         seen = seen_states(replay, runs)

@@ -2,7 +2,8 @@
 
 import subprocess
 
-from analyze.trial import PathChange, read_trial
+from analyze.trial import PathChange, Usage, read_job, read_trial
+from tests.trial_builder import TrialBuilder
 
 
 def test_reader_joins_each_tool_call_with_its_observation_in_atif_order(make_trial):
@@ -25,7 +26,6 @@ def test_reader_joins_each_tool_call_with_its_observation_in_atif_order(make_tri
     assert (t.tool_calls[0].is_error, t.tool_calls[2].result, t.tool_calls[2].is_error) == (
         False, None, None,
     )
-    assert t.last_step_id == 3
 
 
 def test_reader_gives_trace_lines_joined_by_tool_use_id_and_a_real_trace_git(make_trial):
@@ -54,11 +54,36 @@ def test_reader_gives_the_language_versions_and_the_json_files(make_trial):
     t = read_trial(trial.build())
 
     assert t.language == "typescript"
+    assert t.task_path == ("tasks", "typescript", "split-second-stopwatch")
     assert t.agent_version == "2.1.7"
-    assert t.lock["agent"]["kwargs"]["version"] == "2.1.7"
+    assert t.requested_version == "2.1.7"
     assert t.reward == {"reward": 1, "agent_tests_total": 3}
-    assert t.result["verifier_result"] == {"rewards": {"reward": 1, "agent_tests_total": 3}}
     assert t.instruments["harbor_version"] == "0.24.0"
+
+
+def test_reader_gives_the_model_tier_usage_duration_and_turns(make_trial):
+    trial = make_trial("go")
+    trial.lock["agent"].update(model_name="laguna-s-2.1", env={"ANTHROPIC_BASE_URL": "x"})
+    trial.result.update(started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:01:30Z",
+                        agent_result={"n_input_tokens": 10, "n_cache_tokens": 4,
+                                      "n_output_tokens": 3, "cost_usd": 0.25})
+    trial.step().call("Read", {"file_path": "/app/stopwatch.go"})
+    trial.step("system")
+    trial.step().call("Read", {"file_path": "/app/stopwatch.go"})
+
+    t = read_trial(trial.build())
+
+    assert (t.model_tier, t.local, t.duration_sec, t.turns) == ("laguna-s-2.1", True, 90, 2)
+    assert t.usage == Usage(cost_usd=0.25, input_tokens=10, cache_tokens=4, output_tokens=3)
+    assert t.system_step_ids == (3,)
+
+
+def test_read_job_reads_each_trial_folder_in_name_order(tmp_path):
+    for name in ("b__2", "a__1"):
+        TrialBuilder(tmp_path / "job", name=name).build()
+    (tmp_path / "job" / "lock.json").write_text("{}", encoding="utf-8")  # the job's own file
+
+    assert [t.name for t in read_job(tmp_path / "job")] == ["a__1", "b__2"]
 
 
 def test_reader_gives_none_for_missing_files(make_trial):
@@ -69,4 +94,5 @@ def test_reader_gives_none_for_missing_files(make_trial):
 
     t = read_trial(path)
 
-    assert (t.reward, t.result, t.instruments, t.trace) == (None, None, None, ())
+    assert (t.reward, t.instruments, t.trace) == (None, None, ())
+    assert (t.usage, t.duration_sec) == (Usage(None, None, None, None), None)
