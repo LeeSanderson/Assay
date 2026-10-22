@@ -1,3 +1,8 @@
 *.sh text eol=lf
 instruments/jq binary
+# The instruments digest hashes file bytes, so the checkout must not depend on the host.
+instruments/** -text
+instruments/*.sh text eol=lf
+instruments/*.py text eol=lf
+# Docker COPY and bind mounts do not strip CR, so task-pack files stay LF.
 tasks/** text=auto eol=lf

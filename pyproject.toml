@@ -11,11 +11,25 @@ dependencies = [
 [dependency-groups]
 dev = ["pytest"]
 
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+# The project is installed (editable, by `uv sync`) so that `uv run harbor`
+# can import `instruments.agent:InstrumentedClaudeCode`, and the analyzer can
+# import `instruments.digest`. Editable matters: the agent class uploads and
+# digests the `instruments/` folder it is imported from, which must be the
+# checkout (it holds trace.sh and jq, which a wheel would not).
 [tool.uv]
-package = false
+package = true
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = ["instruments", "analyze"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-m 'not slow'"
 markers = [
     "slow: needs Docker or Harbor; skipped by default, run with `uv run pytest -m slow` or `-m \"\"`",
