@@ -112,8 +112,12 @@ def test_control_trials_pass_no_variant_flags():
 
 
 def test_server_address_appears_only_in_the_host_setting():
+    # Job files may show an example address in a comment; no setting may hold one.
     for path in JOBS_DIR.iterdir():
-        assert "://" not in path.read_text(encoding="utf-8"), path.name
+        text = path.read_text(encoding="utf-8")
+        if path.suffix == ".yaml":
+            text = json.dumps(yaml.safe_load(text))
+        assert "://" not in text, path.name
 
 
 @pytest.mark.slow

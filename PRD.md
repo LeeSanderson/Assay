@@ -660,15 +660,15 @@ assay/
     variants.py                  reads variants.toml, builds Harbor flags, tests comparability
     pairs.py                     paired deltas and bootstrap CIs
     report.py                    metric table, UNSTABLE marks, cost for each solve
-  results/<job-id>/              output tree of Harbor, committed without change
-  analysis/<job-id>/<trial>/     output of replay.py (replay.jsonl, agent-runs.jsonl)
+  results/<job-id>/              output tree of Harbor, kept locally and not committed
+  analysis/<job-id>/<trial>/     output of replay.py (replay.jsonl, agent-runs.jsonl), kept locally and not committed
 ```
 
 A skill directory holds a `SKILL.md` file, because the `--skill` flag of Harbor takes a directory. The control names no parts. Harbor runs the control with none of the variant flags.
 
 The task packs are native to Harbor. Therefore any user of Harbor can run the corpus without an installation of Assay. This property gives the replication path, and it also prevents the growth of an adapter layer.
 
-The repository commits the raw trajectories and not only the totals. Results in this field come from a second analysis with a metric that was not obvious at first. A second run costs money. A second analysis is free.
+The raw trajectories stay in `results/` on the local machine, and not only the totals. The repository does not commit `results/` or `analysis/`, and `.gitignore` excludes them. Results in this field come from a second analysis with a metric that was not obvious at first. A second run costs money. A second analysis is free.
 
 The analyzer is the only large piece of code. Its budget is 400 to 600 lines of Python. If the analyzer becomes larger than this budget, then a function of Harbor is inside Assay.
 

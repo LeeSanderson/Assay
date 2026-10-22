@@ -4,7 +4,13 @@
 #
 # Launch from the repository root, with ASSAY_LOCAL_BASE_URL set on the host
 # (the server address lives in that one setting only, L10):
+#   PowerShell:  $env:ASSAY_LOCAL_BASE_URL = "http://192.168.1.252:8080"
+#   bash:        export ASSAY_LOCAL_BASE_URL=http://192.168.1.252:8080
 #   uv run harbor run -c jobs/phase0-local.yaml -y
+# The value is the server root: no trailing slash and no /v1, because Claude
+# Code adds /v1/messages itself. Use an address the container can reach (a LAN
+# address, not localhost or host.docker.internal, L7). The server must serve
+# the Anthropic Messages API.
 # See README.md, "Run the Phase 0 jobs".
 
 job_name: phase0-local
@@ -29,7 +35,7 @@ agents:
       # Claude Code version: the same value in all three job files (PRD "Version pins").
       version: "SET-ON-SMOKE-TRIAL-DAY"
     env:
-      ANTHROPIC_BASE_URL: "${ASSAY_LOCAL_BASE_URL}"   # the one setting (L10)
+      ANTHROPIC_BASE_URL: "${ASSAY_LOCAL_BASE_URL}"   # the one setting (L10), e.g. http://192.168.1.252:8080
       ANTHROPIC_API_KEY: dummy
       DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"          # every model tier (L9)
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"

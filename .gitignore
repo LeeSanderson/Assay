@@ -221,3 +221,7 @@ __marimo__/
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Harbor trial output and its analysis stay local (PRD §6)
+results/
+analysis/
