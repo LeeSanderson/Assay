@@ -3,11 +3,13 @@
 # trajectory.py on purpose: it gives no class, no seen state, no verdict
 # and no count. Run it from the repository root:
 #
-#   jq -r \
-#     --slurpfile trace   <trial>/artifacts/logs/artifacts/trace/trace.jsonl \
-#     --slurpfile replay  analysis/<job-id>/<trial>/replay.jsonl \
-#     --slurpfile runs    analysis/<job-id>/<trial>/agent-runs.jsonl \
-#     -f analyze/listing.jq <trial>/agent/trajectory.json
+#   jq -r `
+#     --slurpfile trace   <trial>\artifacts\logs\artifacts\trace\trace.jsonl `
+#     --slurpfile replay  analysis\<job-id>\<trial>\replay.jsonl `
+#     --slurpfile runs    analysis\<job-id>\<trial>\agent-runs.jsonl `
+#     -f analyze\listing.jq <trial>\agent\trajectory.json
+#
+# (PowerShell; README.md, "Stage 5", has a loop over every trial of a job.)
 #
 # One line for each tool call, in ATIF order:
 #
