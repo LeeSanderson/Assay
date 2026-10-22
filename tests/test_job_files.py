@@ -134,12 +134,17 @@ def test_a_job_file_trial_delivers_the_trace_to_the_trial_artifacts(tmp_path):
     job_file = tmp_path / "job.yaml"
     job_file.write_text(yaml.safe_dump(data), encoding="utf-8")
 
-    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
-    result = subprocess.run(
-        ["uv", "run", "harbor", "run", "-c", str(job_file), "-y"],
-        cwd=REPO_ROOT, env=env, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=1200,
-    )
+    # UTF-8 output: Harbor's progress spinner cannot be written to a cp1252 pipe.
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT), "PYTHONIOENCODING": "utf-8"}
+
+    def assay_run():
+        return subprocess.run(
+            ["uv", "run", "assay", "run", "-c", str(job_file), "-y"],
+            cwd=REPO_ROOT, env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=1200,
+        )
+
+    result = assay_run()
     assert result.returncode == 0, result.stdout + result.stderr
 
     (trial_dir,) = [p for p in (tmp_path / "trace-delivery").iterdir() if p.is_dir()]
@@ -147,3 +152,17 @@ def test_a_job_file_trial_delivers_the_trace_to_the_trial_artifacts(tmp_path):
     assert (trace / "trace.git").is_dir()
     record = json.loads((trace / "instruments.json").read_text(encoding="utf-8"))
     assert record["harbor_version"] == "0.24.0"
+
+    # A re-run of the same job file resumes: assay's config equals the
+    # config.json Harbor saved, so the run reaches Harbor, which has nothing
+    # left to run.
+    result = assay_run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (trial_dir / "artifacts").is_dir()
+
+    # A changed job file stops before Harbor, with the hint.
+    data["n_attempts"] = 2
+    job_file.write_text(yaml.safe_dump(data), encoding="utf-8")
+    result = assay_run()
+    assert result.returncode != 0
+    assert "--overwrite" in result.stderr

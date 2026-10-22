@@ -1,0 +1,16 @@
+# Assay jobs start through `assay run`, a launcher that runs `harbor run` as a subprocess
+
+`uv run assay run -c jobs/<file>.yaml ...` is the only supported way to start an Assay job. It takes one option of its own, `--overwrite`, and passes every other argument to `harbor run` unchanged and in the same order. Before Harbor starts, it finds the job's results folder (`<jobs_dir>/<job_name>/`, with `--job-name` and `-o`/`--jobs-dir` from the command line winning over the job file, as in Harbor). Without `--overwrite`, if that folder holds a run whose config differs, `assay run` stops and says to re-run with `--overwrite`. Harbor itself fails with a `FileExistsError` that does not say how to fix it. With `--overwrite`, it deletes the folder without asking, then runs. We chose a launcher because Harbor (pinned, third party) has no option to overwrite a job's results, and the only fix was to delete the folder by hand.
+
+Harbor runs as a subprocess, not in process, because the layout of Harbor's CLI module is not a public API. The launcher imports only Harbor's `JobConfig` model and its skill resolver, so that it builds the config the same way Harbor does and compares it the same way Harbor does (`existing_config != self.config`). `-c` is required, so that every result traces back to a committed job file. `--overwrite` deletes without a prompt: the flag is already the opt-in, and a prompt that you always answer yes to adds nothing.
+
+## Considered Options
+
+- **Patch or subclass Harbor's `Job`** to overwrite in place: couples Assay to more Harbor internals than ADR 0001 does, and a patch to a pinned third-party package is lost on every upgrade.
+- **Call Harbor's CLI in process**: no subprocess, but it depends on the layout of Harbor's CLI module and on Typer's internals.
+- **Move the old folder aside instead of deleting it**: keeps the old results, but `results/` fills with stale copies that nothing reads. The job file in git already records what the old run was.
+- **No option** (delete by hand, or pass a new `--job-name`): no code, but the error message gives no hint, and a new job name breaks the `results/<job_name>/` path that the README and analysis use.
+
+## Consequences
+
+The config comparison copies a part of Harbor's `build_job_config` and `Job.create` (the job-file load, the legacy migration, the `--job-name`/`--jobs-dir` overrides, and the skill resolution). A Harbor upgrade that changes how it builds the config can make the hint fire when Harbor would resume. The slow test re-runs a finished job through `assay run` to catch that. Other `harbor run` options that change the config (for example `-k`) are not applied to the comparison. A run started with one of them can get the hint on a re-run even when Harbor would resume it. Put such settings in the job file instead. `assay run` takes one `-c` only, because Harbor merges several job files with rules that the launcher does not copy.

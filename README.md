@@ -28,15 +28,24 @@ The three Phase 0 job files are in `jobs/`. Each runs at `-k 1` with `instrument
 
 **Set the Claude Code version first.** On the day of the smoke trial, read the version of the `stable` channel of Claude Code. Replace the placeholder `SET-ON-SMOKE-TRIAL-DAY` with it in all three job files, in one commit, before the smoke trial runs. In `phase0-cross.yaml` the value is written once and shared through a YAML anchor. A fast test (`tests/test_job_files.py`) fails if the three files do not hold one version. Do not change the version for the remaining Phase 0 trials (PRD, "Version pins").
 
-Launch each job from the repository root:
+Launch each job from the repository root with `assay run`, the only supported way to start a job (ADR 0002). It gives the job file to `harbor run` with `-c`, and every other option goes to Harbor unchanged:
 
 ```sh
-uv run harbor run -c jobs/phase0-cross.yaml --dry-run   # check: 8 trials, nothing runs
-uv run harbor run -c jobs/phase0-cross.yaml -y
-uv run harbor run -c jobs/phase0-extra.yaml -y
+uv run assay run -c jobs/phase0-cross.yaml --dry-run   # check: 8 trials, nothing runs
+uv run assay run -c jobs/phase0-cross.yaml -y
+uv run assay run -c jobs/phase0-extra.yaml -y
 ```
 
 The hosted jobs read `ANTHROPIC_API_KEY` from the host environment.
+
+**Re-running a job.** A re-run with the same job file resumes the job in `results/<job_name>/`: Harbor keeps the finished trials and runs the rest. Harbor cannot resume a job whose job file has changed. In that case `assay run` stops before Harbor starts and names the folder. To delete the folder and start fresh, add `--overwrite`:
+
+```sh
+uv run assay run -c jobs/phase0-cross.yaml -y --overwrite   # deletes results/phase0-cross/ without asking, then runs
+uv run assay run -c jobs/phase0-cross.yaml --overwrite --dry-run   # says what it would delete; deletes nothing
+```
+
+`--overwrite` deletes the folder even when the job file has not changed. `--job-name` and `-o`/`--jobs-dir` on the command line change the folder, as they do in Harbor.
 
 **The local job** needs three more steps:
 
@@ -46,7 +55,7 @@ The hosted jobs read `ANTHROPIC_API_KEY` from the host environment.
 
 ```sh
 export ASSAY_LOCAL_BASE_URL=http://<server address>:<port>
-uv run harbor run -c jobs/phase0-local.yaml -y
+uv run assay run -c jobs/phase0-local.yaml -y
 ```
 
 ## Check `trajectory.py` by hand
