@@ -1,0 +1,15 @@
+[instrument-tdd]
+label       = "Instrument: TDD skill adapted for trials with no user"
+skills      = ["variants/instrument-tdd/tdd"]
+instrument  = true
+published   = false
+source      = "mattpocock/skills"
+source_path = "skills/engineering/tdd/SKILL.md"
+source_hash = "535d1a6f3bd5bded8971e7e4ea76538907cbff6b6d32c39cf97b669869dcd383"
+edits       = [
+  "seams: the agent selects the seams and writes them down; no user confirms them",
+  "removed the paragraph that refers to codebase-design",
+  "removed the reference to code-review; the rule against refactoring in the loop stays",
+  "description: use for every task that adds or changes code",
+  "removed agents/openai.yaml",
+]
