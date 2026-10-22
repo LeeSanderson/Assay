@@ -49,6 +49,31 @@ export ASSAY_LOCAL_BASE_URL=http://<server address>:<port>
 uv run harbor run -c jobs/phase0-local.yaml -y
 ```
 
+## Check `trajectory.py` by hand
+
+A person labels the ten hosted trials and compares the labels with `trajectory.py`, for test-first order and for red-to-green order and the TDD loop. The full procedure is in the PRD, section 5, "How a person checks `trajectory.py`" and its red-to-green extension. In short:
+
+1. Run `replay.py` and `agent_runs.py` on the job, so each trial has `analysis/<job-id>/<trial>/replay.jsonl` and `agent-runs.jsonl`.
+2. Print the neutral listing of each trial with `jq` (`jq` must be on the PATH). The listing gives no class, no seen state, no verdict, and no count. The header of `analyze/listing.jq` explains each field.
+
+   ```sh
+   jq -r \
+     --slurpfile trace  results/<job-id>/<trial>/artifacts/logs/artifacts/trace/trace.jsonl \
+     --slurpfile replay analysis/<job-id>/<trial>/replay.jsonl \
+     --slurpfile runs   analysis/<job-id>/<trial>/agent-runs.jsonl \
+     -f analyze/listing.jq results/<job-id>/<trial>/agent/trajectory.json
+   ```
+
+3. Copy `labeling/sheet-template.csv` and fill one row per trial before `trajectory.py` runs. Use the trial folder name for `trial`. For test-first order, give the verdict, the two anchors (`step_id`, position, and path of the first test write and of the first implementation write), and a note. For red-to-green order, give the verdict, the `tool_use_id` of the first seen red and of the first seen green, the three counts of the TDD loop, and a note. Leave a cell blank when there is no such write or seen state. You can read `trajectory.json` when the listing is not sufficient.
+4. Run `trajectory.py` and compare. The command prints each difference and exits with 1 when any trial differs:
+
+   ```sh
+   uv run python -m analyze.trajectory results/<job-id>/*/ > trajectory.jsonl
+   uv run python -m analyze.compare_labels <sheet.csv> trajectory.jsonl
+   ```
+
+5. For each difference, find the cause and fix the script, the label, or the rule in the PRD. Record each correction in a copy of `labeling/corrections-template.csv` (`corrected` is `script`, `label`, or `rule`). Repeat until one full pass over the ten trials gives no difference for each metric.
+
 ## Run the tests
 
 ```sh
