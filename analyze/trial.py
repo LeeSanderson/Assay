@@ -15,6 +15,7 @@ report it instead of the reader failing.
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -62,7 +63,8 @@ class Trial:
     trajectory: dict | None  # the raw ATIF document
     tool_calls: tuple[ToolCall, ...]  # in ATIF order: step_id, then position
     last_step_id: int | None
-    agent_version: str | None  # ATIF agent.version
+    agent_version: str | None  # ATIF agent.version: the Claude Code that ran
+    requested_version: str | None  # lock.json agent.kwargs.version: the pin
     lock: dict | None
     result: dict | None
     reward: dict | None
@@ -76,6 +78,20 @@ class Trial:
 
     def trace_lines_for(self, tool_use_id: str) -> list[TraceLine]:
         return [line for line in self.trace if line.tool_use_id == tool_use_id]
+
+    def snapshot_before(self, line: TraceLine) -> str | None:
+        """The commit of the last snapshot taken before this line, or None."""
+        commits = [l.commit for l in self.trace if l.seq < line.seq and l.commit]
+        return commits[-1] if commits else None
+
+    def snapshot_file(self, commit: str, path: str) -> bytes | None:
+        """A file's content in a snapshot of trace.git; None when it has no such file."""
+        done = subprocess.run(
+            ["git", "-c", "safe.directory=*", "--git-dir", str(self.trace_git),
+             "cat-file", "blob", f"{commit}:{path}"],
+            capture_output=True,
+        )
+        return done.stdout if done.returncode == 0 else None
 
 
 def read_trial(path: Path | str) -> Trial:
@@ -92,6 +108,7 @@ def read_trial(path: Path | str) -> Trial:
         tool_calls=tuple(_tool_calls(steps)),
         last_step_id=max((s["step_id"] for s in steps), default=None),
         agent_version=((trajectory or {}).get("agent") or {}).get("version"),
+        requested_version=(((lock or {}).get("agent") or {}).get("kwargs") or {}).get("version"),
         lock=lock,
         result=_json(path / "result.json"),
         reward=_json(path / "verifier" / "reward.json"),

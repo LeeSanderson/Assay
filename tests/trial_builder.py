@@ -29,7 +29,13 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from instruments.digest import instruments_digest
+
 APP = "/app"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+# By default a built trial carries the committed instruments digest and the
+# Harbor version in uv.lock, so it passes those two trace checks.
+COMMITTED_DIGEST = instruments_digest(REPO_ROOT / "instruments")
 
 
 class StepBuilder:
@@ -119,7 +125,9 @@ class TrialBuilder:
             "verifier_result": None,
         }
         self.reward: dict[str, Any] | None = None
-        self.instruments: dict[str, Any] | None = {"digest": "sha256:0", "harbor_version": "0.24.0"}
+        self.instruments: dict[str, Any] | None = {
+            "digest": COMMITTED_DIGEST, "settings": {}, "harbor_version": "0.24.0",
+        }
         self.agent_version = claude_code_version
 
     # --- building the history -------------------------------------------
