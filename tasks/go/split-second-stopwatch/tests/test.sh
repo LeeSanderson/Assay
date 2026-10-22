@@ -18,6 +18,13 @@ PASS_TIMEOUT=240s
 
 mkdir -p "$OUT"
 
+# The test-file class. It must equal `test_files` for go in
+# analyze/languages.py; tests/test_test_file_patterns.py checks it.
+TEST_FILE_PATTERNS=('*_test.go')
+name_tests=()
+for pattern in "${TEST_FILE_PATTERNS[@]}"; do name_tests+=(-o -name "$pattern"); done
+name_tests=("${name_tests[@]:1}")
+
 write_reward() {
   printf '{"reward": %d, "reference_compiles": %d, "reference_passed": %d, "reference_total": %d, "agent_tests_compile": %d, "agent_tests_passed": %d, "agent_tests_total": %d}\n' \
     "$reward" "$reference_compiles" "$reference_passed" "$reference_total" \
@@ -70,8 +77,8 @@ run_go_tests() {
 # --- 1. Outcome pass -------------------------------------------------------
 scratch="$(mktemp -d)"
 (cd "$APP" && tar --exclude=./.git -cf - .) | (cd "$scratch" && tar -xf -)
-find "$scratch" -name '*_test.go' -type f -delete
-cp "$HERE"/reference/assay_reference_*_test.go "$scratch"/
+find "$scratch" -type f \( "${name_tests[@]}" \) -delete
+cp "$HERE"/reference/assay_reference_* "$scratch"/
 
 run_go_tests "$scratch" . "$OUT/outcome.json"
 reference_compiles=$compiles
@@ -94,7 +101,7 @@ agent_tests_total=$total
 # test files, so replay labels the snapshot red-compile and not no-tests.
 # A build failure emits no test events, so the counted total is often 0.
 if [ "$agent_tests_compile" -eq 0 ]; then
-  agent_test_files=$(cd "$APP" && find . -name .git -prune -o -type f -name '*_test.go' -print | wc -l)
+  agent_test_files=$(cd "$APP" && find . -name .git -prune -o -type f \( "${name_tests[@]}" \) -print | wc -l)
   if [ "$agent_test_files" -gt 0 ]; then
     agent_tests_passed=0
     if [ "$agent_tests_total" -lt "$agent_test_files" ]; then
