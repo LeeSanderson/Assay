@@ -210,8 +210,18 @@ def test_a_placeholder_or_missing_version_is_rejected(version):
     assert "Set the Claude Code version first" in message
 
 
-def test_a_real_version_is_accepted():
-    check_version_set("2.1.308")
+@pytest.mark.parametrize("version", ["2.1", "v2.1.308", "2.1.308 ", "2.1.x", "STABLE", "next"])
+def test_a_version_the_bootstrap_script_does_not_accept_is_rejected(version):
+    with pytest.raises(VersionNotSetError) as raised:
+        check_version_set(version)
+    message = str(raised.value)
+    assert repr(version) in message
+    assert "Set the Claude Code version first" in message
+
+
+@pytest.mark.parametrize("version", ["2.1.308", "10.0.0", "stable", "latest"])
+def test_a_real_version_is_accepted(version):
+    check_version_set(version)
 
 
 @pytest.mark.parametrize("version", ["SET-ON-SMOKE-TRIAL-DAY", None])

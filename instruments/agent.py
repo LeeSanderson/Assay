@@ -8,6 +8,7 @@ instruments.agent:InstrumentedClaudeCode`. It overrides `setup()` only.
 import copy
 import importlib.metadata
 import json
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -28,24 +29,33 @@ BLOCKING_KEYS = ("disableAllHooks", "allowManagedHooksOnly")
 VERSION_PLACEHOLDER = "SET-ON-SMOKE-TRIAL-DAY"
 
 
+VALID_VERSION = re.compile(r"stable|latest|[0-9]+\.[0-9]+\.[0-9]+")
+
+
 class VersionNotSetError(RuntimeError):
-    """The job's Claude Code version is the placeholder or missing."""
+    """The job's Claude Code version is missing, the placeholder, or not a value
+    the Claude Code bootstrap script accepts."""
 
 
 def check_version_set(version: str | None) -> None:
-    """Raise `VersionNotSetError` if `version` (the agent's `kwargs.version`) is
-    missing or still the placeholder.
+    """Raise `VersionNotSetError` unless `version` (the agent's `kwargs.version`)
+    is `stable`, `latest` or a version number X.Y.Z.
 
     Harbor passes the version verbatim to the Claude Code bootstrap script,
-    which accepts only `stable`, `latest` or a version number.
+    which accepts only those values.
     """
+    if version and VALID_VERSION.fullmatch(version):
+        return
     if not version or version == VERSION_PLACEHOLDER:
         found = "the placeholder" if version else "no version"
-        raise VersionNotSetError(
-            f"The job's Claude Code version (kwargs.version) is {found}, not a "
-            f"version number. Replace `{VERSION_PLACEHOLDER}` with a version: see "
-            'README.md, "Set the Claude Code version first".'
-        )
+        fix = f"Replace `{VERSION_PLACEHOLDER}` with a version"
+    else:
+        found = repr(version)
+        fix = "Use `stable`, `latest` or a version number such as 2.1.308"
+    raise VersionNotSetError(
+        f"The job's Claude Code version (kwargs.version) is {found}, not a "
+        f'version number. {fix}: see README.md, "Set the Claude Code version first".'
+    )
 
 
 class InstrumentBlockedError(RuntimeError):

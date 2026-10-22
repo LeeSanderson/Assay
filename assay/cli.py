@@ -3,11 +3,11 @@
     uv run assay run -c jobs/<file>.yaml -y [--overwrite] [harbor run options]
 
 `assay run` takes only `--overwrite`; every other argument goes to
-`harbor run` unchanged and in the same order. Before Harbor starts, it finds
-the job's Claude Code version, and stops when an InstrumentedClaudeCode agent
-has no version or the placeholder (with --dry-run too). It reads the version
-from the job file only, not from --ak. Then it finds the
-job's results folder, <jobs_dir>/<job_name>/, and:
+`harbor run` unchanged and in the same order. Before Harbor starts, it stops
+when an InstrumentedClaudeCode agent's Claude Code version is not `stable`,
+`latest` or X.Y.Z, for example the placeholder or no version (with --dry-run
+too). It reads the version from the job file only, not from --ak. Then it
+finds the job's results folder, <jobs_dir>/<job_name>/, and:
 
 - with --overwrite, deletes the folder (with --dry-run, says it would);
 - without, stops with a hint when the folder holds results that Harbor cannot
