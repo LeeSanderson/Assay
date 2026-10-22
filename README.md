@@ -1,9 +1,25 @@
 # Assay
 Assay measures the value of a context artifact for a coding agent: a skill, a rules file, an instruction file, or a hook.
 
+## Commands
+
+`assay` is the one tool for running and analysing a job. Run it through uv from the repository root:
+
+| Command | What it does |
+|---|---|
+| `uv run assay run -c jobs/<file>.yaml` | Starts a job: runs `harbor run` with the job file, after it checks the Claude Code version and the job's results folder. `--overwrite` deletes earlier results first. |
+| `uv run assay trace-check results/<job-id>` | Checks that the trace hook worked in each trial of the job. |
+| `uv run assay replay results/<job-id>` | Replays each trace snapshot of each trial in a fresh container, and says whether replay works. |
+| `uv run assay agent-runs results/<job-id>` | Cross-checks each test run of the agent with the replay of the same snapshot. |
+| `uv run assay trajectory <trial folder>...` | Measures test-first order, red-to-green order and the TDD loop of each trial, one JSON line each. |
+| `uv run assay compare-labels <sheet.csv> <trajectory.jsonl>` | Compares the labeling sheet with the output of `assay trajectory`, and prints each difference. |
+| `uv run assay summary results/<job-id>...` | Writes the Phase 0 summary of one or more jobs. |
+
+`uv run assay` lists the commands, and `uv run assay <command> --help` shows the arguments of one. Do not run `harbor` directly: start every job with `assay run` (ADR 0002). [The analysis process](#the-analysis-process) gives the order of the commands and what each one reads and writes.
+
 ## Setup
 
-Install [uv](https://docs.astral.sh/uv/), then run `uv sync` at the repository root. `pyproject.toml` pins `harbor==0.24.0` and the repository commits `uv.lock`, so every host gets the same Harbor version.
+Install [uv](https://docs.astral.sh/uv/), then run `uv sync` at the repository root. `pyproject.toml` pins `harbor==0.24.0` and the repository commits `uv.lock`, so every host gets the same Harbor version, and `assay run` uses it. To change the Harbor version, edit the pin in `pyproject.toml`, run `uv lock`, and commit `uv.lock`.
 
 The analysis also needs these tools on the host:
 
@@ -11,17 +27,6 @@ The analysis also needs these tools on the host:
 - `jq` on the PATH, for the neutral listing of the person check (for example, `winget install jqlang.jq`).
 
 The commands in this README are for PowerShell 7 (`pwsh`), run from the repository root. Use PowerShell 7 and not Windows PowerShell 5.1: in PowerShell 7, `>` writes UTF-8 with no BOM, which the analysis scripts can read.
-
-## Run Harbor
-
-Always run Harbor through uv, so that it uses the locked version:
-
-```powershell
-uv run harbor --version   # reports 0.24.0
-uv run harbor <command>
-```
-
-To change the Harbor version, edit the pin in `pyproject.toml`, run `uv lock`, and commit `uv.lock`.
 
 ## The analysis process
 
@@ -36,7 +41,7 @@ Phase 0 has six stages. Do them in this order, one job at a time for stages 2 to
 | 5. Check `trajectory.py` by hand | `jq`, `uv run assay trajectory`, `uv run assay compare-labels` | `results/`, `analysis/`, the labeling sheet | `analysis/<job-id>/<trial>/listing.txt`, `analysis/trajectory.jsonl` |
 | 6. Write the Phase 0 summary | `uv run assay summary` | `results/`, `analysis/` | `analysis/phase0-summary.md`, `phase0-summary.json` |
 
-`assay` is the one tool for every stage except the `jq` listing of stage 5. `uv run assay` with no subcommand lists the subcommands, and `uv run assay <subcommand> --help` shows the arguments of one.
+Every stage uses an `assay` command, except the `jq` listing of stage 5.
 
 `<job-id>` is the folder name of the job in `results/`, for example `phase0-cross`. A trial folder is a folder in `results/<job-id>/` that holds a `lock.json`. Git ignores `results/` and `analysis/`, so the commands below also keep the filled labeling sheet and the corrections in `analysis/`.
 
