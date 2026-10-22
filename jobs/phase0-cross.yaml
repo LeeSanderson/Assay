@@ -1,0 +1,45 @@
+# Phase 0, the cross job: Haiku and Sonnet x control and instrument-tdd
+# x TypeScript and Go, at -k 1. 8 trials.
+#
+# Launch from the repository root:  uv run harbor run -c jobs/phase0-cross.yaml -y
+# See README.md, "Run the Phase 0 jobs".
+
+job_name: phase0-cross
+jobs_dir: results
+n_attempts: 1
+
+tasks:
+  - path: tasks/typescript/split-second-stopwatch
+  - path: tasks/go/split-second-stopwatch
+
+agents:
+  # Control: no variant flags (no skills, no settings, no extra instructions).
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-haiku-5-5
+    kwargs:
+      # Claude Code version: the same value in all three job files (PRD "Version pins").
+      version: &claude_code_version "SET-ON-SMOKE-TRIAL-DAY"
+    env: &hosted_env
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"   # every model tier (L9)
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+
+  # instrument-tdd (variants/variants.toml): the skills part only.
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-haiku-5-5
+    skills: [variants/instrument-tdd/tdd]
+    kwargs:
+      version: *claude_code_version
+    env: *hosted_env
+
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-sonnet-5-5
+    kwargs:
+      version: *claude_code_version
+    env: *hosted_env
+
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-sonnet-5-5
+    skills: [variants/instrument-tdd/tdd]
+    kwargs:
+      version: *claude_code_version
+    env: *hosted_env
