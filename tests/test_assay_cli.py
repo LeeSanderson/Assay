@@ -220,3 +220,35 @@ def test_overwrite_deletes_even_when_the_configs_match(tmp_path):
     main(["run", "-c", str(job), "--overwrite"], run_harbor=Harbor())
 
     assert not folder.exists()
+
+
+INSTRUMENTED = "instruments.agent:InstrumentedClaudeCode"
+
+
+@pytest.mark.parametrize("options", [["-y"], ["--dry-run"]])
+@pytest.mark.parametrize("kwargs", [{"version": "SET-ON-SMOKE-TRIAL-DAY"}, {}])
+def test_a_job_without_a_claude_code_version_stops_before_harbor(tmp_path, capsys,
+                                                                 kwargs, options):
+    job = job_file(tmp_path, agents=[
+        {"import_path": INSTRUMENTED, "kwargs": {"version": "2.1.308"}},
+        {"import_path": INSTRUMENTED, "kwargs": kwargs},
+    ])
+    harbor = Harbor()
+
+    assert main(["run", "-c", str(job), *options], run_harbor=harbor) != 0
+
+    assert harbor.calls == []
+    err = capsys.readouterr().err
+    assert "SET-ON-SMOKE-TRIAL-DAY" in err
+    assert "Set the Claude Code version first" in err
+
+
+def test_a_job_with_a_claude_code_version_runs(tmp_path):
+    job = job_file(tmp_path, agents=[
+        {"import_path": INSTRUMENTED, "kwargs": {"version": "2.1.308"}},
+    ])
+    harbor = Harbor()
+
+    assert main(["run", "-c", str(job), "-y"], run_harbor=harbor) == 0
+
+    assert harbor.calls == [["-c", str(job), "-y"]]

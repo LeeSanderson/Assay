@@ -18,6 +18,8 @@ from harbor.models.agent.context import AgentContext
 from instruments.agent import (
     InstrumentBlockedError,
     InstrumentedClaudeCode,
+    VersionNotSetError,
+    check_version_set,
     merge_instrument_hooks,
 )
 from instruments.digest import instruments_digest
@@ -60,11 +62,11 @@ class FakeEnvironment:
         return self.calls[self.index("upload_file", lambda c: c[1] == target)][2]
 
 
-def make_agent(tmp_path, config):
+def make_agent(tmp_path, config, version=CLAUDE_VERSION):
     return InstrumentedClaudeCode(
         logs_dir=tmp_path / "agent",
         model_name="anthropic/claude-haiku-4-5",
-        version=CLAUDE_VERSION,
+        version=version,
         config=config,
         extra_env={"ANTHROPIC_API_KEY": "sk-test"},
     )
@@ -197,3 +199,25 @@ def test_a_job_without_kwargs_config_still_gets_the_instrument_hooks(tmp_path):
     env = run_trial(tmp_path, None)
     uploaded = json.loads(env.uploaded("/tmp/claude-code-settings/settings.json"))
     assert uploaded == merge_instrument_hooks({})
+
+
+@pytest.mark.parametrize("version", ["SET-ON-SMOKE-TRIAL-DAY", None, ""])
+def test_a_placeholder_or_missing_version_is_rejected(version):
+    with pytest.raises(VersionNotSetError) as raised:
+        check_version_set(version)
+    message = str(raised.value)
+    assert "SET-ON-SMOKE-TRIAL-DAY" in message
+    assert "Set the Claude Code version first" in message
+
+
+def test_a_real_version_is_accepted():
+    check_version_set("2.1.308")
+
+
+@pytest.mark.parametrize("version", ["SET-ON-SMOKE-TRIAL-DAY", None])
+def test_setup_stops_before_the_install_when_the_version_is_not_set(tmp_path, version):
+    agent = make_agent(tmp_path, None, version=version)
+    env = FakeEnvironment()
+    with pytest.raises(VersionNotSetError, match="SET-ON-SMOKE-TRIAL-DAY"):
+        asyncio.run(agent.setup(env))
+    assert env.calls == []

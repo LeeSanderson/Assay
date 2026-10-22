@@ -24,6 +24,27 @@ TRACE_DIR = "/logs/artifacts/trace"
 HOOK_COMMAND = "bash /harbor/instruments/trace.sh"
 HOOK_EVENTS = ("PostToolUse", "PostToolUseFailure")
 BLOCKING_KEYS = ("disableAllHooks", "allowManagedHooksOnly")
+VERSION_PLACEHOLDER = "SET-ON-SMOKE-TRIAL-DAY"
+
+
+class VersionNotSetError(RuntimeError):
+    """The job's Claude Code version is the placeholder or missing."""
+
+
+def check_version_set(version: str | None) -> None:
+    """Raise `VersionNotSetError` if `version` (the agent's `kwargs.version`) is
+    missing or still the placeholder.
+
+    Harbor passes the version verbatim to the Claude Code bootstrap script,
+    which accepts only `stable`, `latest` or a version number.
+    """
+    if not version or version == VERSION_PLACEHOLDER:
+        found = "the placeholder" if version else "no version"
+        raise VersionNotSetError(
+            f"The job's Claude Code version (kwargs.version) is {found}, not a "
+            f"version number. Replace `{VERSION_PLACEHOLDER}` with a version: see "
+            'README.md, "Set the Claude Code version first".'
+        )
 
 
 class InstrumentBlockedError(RuntimeError):
@@ -66,6 +87,9 @@ class InstrumentedClaudeCode(ClaudeCode):
         # settings). `run()` uploads `_base_settings` and passes `--settings`
         # only when `_config` is not None. The trial lock was written from the
         # job config before this, so `kwargs.config` there stays the variant's.
+        # The version check is the backstop for a direct `harbor run`; `assay
+        # run` makes the same check before Harbor starts.
+        check_version_set(self._version)
         check_hooks_not_blocked(self._base_settings)
         merged = merge_instrument_hooks(self._base_settings)
         self._config = merged
