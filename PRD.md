@@ -266,7 +266,7 @@ Put the settings object inline in the job configuration, and not as a file path.
 
 Harbor releases a new version every two to four weeks, often with breaking changes. Claude Code releases a new version almost every day. Thus each trial must use pinned versions of both, and each trial must record them ([issue #10](https://github.com/LeeSanderson/Assay/issues/10)).
 
-**Harbor.** The file `pyproject.toml` at the root of the repository pins `harbor==0.24.0` exactly. The repository commits `uv.lock`. Each job runs as `uv run harbor`. Both harness hosts use the same lock file. A change of the Harbor version is a commit to `uv.lock`.
+**Harbor.** The file `pyproject.toml` at the root of the repository pins `harbor==0.24.0` exactly. The repository commits `uv.lock`. Each job runs as `uv run assay run`, which runs the locked `harbor run` (ADR 0002). Both harness hosts use the same lock file. A change of the Harbor version is a commit to `uv.lock`.
 
 **Claude Code.** On the day of the smoke trial, read the version of the `stable` channel of Claude Code. Write this version as `kwargs.version` in all three job files, in one commit, before the smoke trial runs. Do not change it for the remaining trials of phase 0.
 
@@ -636,7 +636,7 @@ A trial that fails the trace check is a failure of the infrastructure. It runs a
 ```
 assay/
   pyproject.toml                 pins harbor==0.24.0
-  uv.lock                        committed; every job runs as `uv run harbor`
+  uv.lock                        committed; every job runs as `uv run assay run`
   tasks/<language>/<exercism-slug>/
     instruction.md               prompt for the agent
     task.toml                    [verifier] [agent] [environment]
