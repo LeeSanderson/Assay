@@ -4,6 +4,10 @@ and the one way to run the analysis tools on its results.
     uv run assay run -c jobs/<file>.yaml -y [--overwrite] [harbor run options]
     uv run assay <subcommand> [args]   (each analysis tool's `main` in the `analyze` package)
 
+Every subcommand first loads `.env` from the repository root: it sets each key
+the shell has not set (a shell variable wins) and prints the names of the
+keys it set, never the values.
+
 `assay run` takes only `--overwrite`; every other argument goes to
 `harbor run` unchanged and in the same order. Before Harbor starts, it stops
 when an InstrumentedClaudeCode agent's Claude Code version is not `stable`,
@@ -30,6 +34,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import yaml
+from dotenv import dotenv_values
 from harbor.models.job.config import JobConfig, migrate_legacy_job_config
 from harbor.skills import resolve_skill_sources
 
@@ -59,6 +64,7 @@ USAGE = "\n".join([
     *(f"  assay {name:<15} {tool.about}" for name, tool in TOOLS.items()),
 ])
 OVERWRITE = "--overwrite"
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"  # at the repository root
 
 HarborRunner = Callable[[Sequence[str]], int]
 
@@ -172,7 +178,20 @@ def run(args: Sequence[str], run_harbor: HarborRunner = run_harbor) -> int:
     return run_harbor(harbor_args)
 
 
-def main(argv: Sequence[str] | None = None, run_harbor: HarborRunner = run_harbor) -> int:
+def load_env_file(env_file: Path) -> None:
+    """Set each key of the file that the shell has not set (python-dotenv's
+    override=False), and print the names of the keys set, never the values.
+    Printed to stderr, so a tool's stdout stays its own."""
+    loaded = {key: value for key, value in dotenv_values(env_file).items()
+              if key not in os.environ and value is not None}
+    os.environ.update(loaded)
+    if loaded:
+        print(f"assay: loaded {', '.join(loaded)} from {env_file}", file=sys.stderr)
+
+
+def main(argv: Sequence[str] | None = None, run_harbor: HarborRunner = run_harbor,
+         env_file: Path | None = None) -> int:
+    load_env_file(env_file or ENV_FILE)
     command, *args = list(sys.argv[1:] if argv is None else argv) or [""]
     if command == "run":
         return run(args, run_harbor)

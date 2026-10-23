@@ -130,6 +130,14 @@ The analysis also needs these tools on the host:
 - Docker, for the trials and for the replay of the trace snapshots.
 - `jq` on the PATH, for the neutral listing of the person check (for example, `winget install jqlang.jq`).
 
+**Host settings.** Copy `.env.example` to `.env` at the repository root and fill it in. The hosted jobs need `ANTHROPIC_API_KEY`; the local job needs `ASSAY_LOCAL_BASE_URL`. Git ignores `.env`. Every `assay` command loads it and prints the names of the keys it loaded, never the values:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+A variable set in the shell still wins over `.env`. The order of the sources, strongest first: Harbor's `--env-file`, the shell, `.env`, then `.env.local` (Harbor's fallback).
+
 The commands in this README are for PowerShell 7 (`pwsh`), run from the repository root. Use PowerShell 7 and not Windows PowerShell 5.1: in PowerShell 7, `>` writes UTF-8 with no BOM, which the analysis scripts can read.
 
 ## The analysis process
@@ -176,11 +184,7 @@ uv run assay run -c jobs/phase0-cross.yaml -y --debug
 uv run assay run -c jobs/phase0-extra.yaml -y --debug
 ```
 
-The hosted jobs read `ANTHROPIC_API_KEY` from the host environment:
-
-```powershell
-$env:ANTHROPIC_API_KEY = '<your key>'
-```
+The hosted jobs read `ANTHROPIC_API_KEY` from `.env` (see [Setup](#setup)).
 
 `--debug` shows Harbor's debug log on the console. Harbor writes the same log, at debug level, to `results/<job_name>/job.log` and `<trial>/trial.log` with or without the flag. The console shows only "Running agent" while Claude Code works; to follow the agent, tail `results/<job_name>/<trial>/agent/claude-code.txt`, which Harbor writes while the agent runs (one JSON event per line):
 
@@ -201,10 +205,9 @@ uv run assay run -c jobs/phase0-cross.yaml --overwrite --dry-run   # says what i
 
 1. Set the task pack. After the hosted trials, replace the marked `tasks:` path in `jobs/phase0-local.yaml` (`SET AFTER THE HOSTED TRIALS`) with the chosen pack.
 2. Fill in `jobs/phase0-local.L6.md`, the record of the local setup (L6).
-3. Set `ASSAY_LOCAL_BASE_URL` on the host to the server address. This is the only place the address appears (L10). Without it, Harbor stops before any trial runs.
+3. Set `ASSAY_LOCAL_BASE_URL` in `.env` to the server address (see [Setup](#setup)). This is the only place the address appears (L10). Without it, Harbor stops before any trial runs.
 
 ```powershell
-$env:ASSAY_LOCAL_BASE_URL = 'http://<server address>:<port>'
 uv run assay run -c jobs/phase0-local.yaml -y --debug
 ```
 

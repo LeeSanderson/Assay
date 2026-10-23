@@ -1,14 +1,20 @@
 """`assay run` (issue #31): the launcher's checks around `harbor run`, with
-Harbor replaced by a recorder, so no Docker and no Harbor process."""
+Harbor replaced by a recorder, so no Docker and no Harbor process. And the
+load of host settings from `.env` (issue #35), from a `.env` in a temporary
+folder in place of the repository's."""
 
+import os
 from pathlib import Path
 
 import pytest
 import yaml
+from dotenv import dotenv_values
 from harbor.models.job.config import JobConfig
 
 from assay.cli import main
 from instruments.agent import IMPORT_PATH as INSTRUMENTED
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Harbor:
@@ -27,6 +33,8 @@ class Harbor:
 def in_tmp(tmp_path, monkeypatch):
     # Harbor resolves jobs_dir against the current directory, and so does assay.
     monkeypatch.chdir(tmp_path)
+    # The repository's own .env stays out of every test.
+    monkeypatch.setattr("assay.cli.ENV_FILE", tmp_path / ".env")
 
 
 def job_file(tmp_path, name="job.yaml", **fields):
@@ -323,3 +331,90 @@ def test_compare_labels_runs_end_to_end_through_assay(tmp_path, capsys):
 
     assert code == 1
     assert "test_first_verdict" in capsys.readouterr().out
+
+
+# Host settings from .env (issue #35).
+
+class EnvSeenByHarbor(Harbor):
+    """Records the value of `key` that the Harbor process would inherit."""
+
+    def __init__(self, key):
+        super().__init__()
+        self.key = key
+        self.value = None
+
+    def __call__(self, args):
+        self.value = os.environ.get(self.key)
+        return super().__call__(args)
+
+
+@pytest.fixture
+def unset_key(monkeypatch):
+    """A key the shell does not set. Set then deleted, so that monkeypatch
+    removes it after the test, whatever assay loads into os.environ."""
+    monkeypatch.setenv("ASSAY_TEST_KEY", "")
+    monkeypatch.delenv("ASSAY_TEST_KEY")
+    return "ASSAY_TEST_KEY"
+
+
+def env_file(tmp_path, text):
+    path = tmp_path / ".env"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_a_key_in_env_file_reaches_harbor(tmp_path, unset_key):
+    harbor = EnvSeenByHarbor(unset_key)
+
+    main(["run", "-c", str(job_file(tmp_path))], run_harbor=harbor,
+         env_file=env_file(tmp_path, f"{unset_key}=from-file\n"))
+
+    assert harbor.value == "from-file"
+
+
+def test_a_key_set_in_the_shell_wins_over_env_file(tmp_path, monkeypatch, unset_key):
+    monkeypatch.setenv(unset_key, "from-shell")
+    harbor = EnvSeenByHarbor(unset_key)
+
+    main(["run", "-c", str(job_file(tmp_path))], run_harbor=harbor,
+         env_file=env_file(tmp_path, f"{unset_key}=from-file\n"))
+
+    assert harbor.value == "from-shell"
+
+
+def test_assay_prints_the_names_of_the_keys_it_loaded_and_not_the_values(
+        tmp_path, monkeypatch, capsys, unset_key):
+    monkeypatch.setenv("ASSAY_SHELL_KEY", "shell-secret")
+
+    main(["run", "-c", str(job_file(tmp_path))], run_harbor=Harbor(),
+         env_file=env_file(tmp_path, f"{unset_key}=file-secret\nASSAY_SHELL_KEY=other-secret\n"))
+
+    output = capsys.readouterr()
+    printed = output.out + output.err
+    assert unset_key in printed
+    assert "ASSAY_SHELL_KEY" not in printed  # set in the shell, so not loaded
+    assert "secret" not in printed
+
+
+def test_without_an_env_file_assay_runs_and_prints_nothing_extra(tmp_path, capsys):
+    harbor = Harbor()
+
+    assert main(["run", "-c", str(job_file(tmp_path))], run_harbor=harbor,
+                env_file=tmp_path / ".env") == 0
+
+    assert harbor.calls != []
+    output = capsys.readouterr()
+    assert output.out + output.err == ""
+
+
+def test_every_subcommand_loads_env_file(tmp_path, capsys, unset_key):
+    main(["no-such-subcommand"], env_file=env_file(tmp_path, f"{unset_key}=from-file\n"))
+
+    assert os.environ.get(unset_key) == "from-file"
+
+
+def test_env_example_holds_no_value_for_any_key():
+    keys = dotenv_values(REPO_ROOT / ".env.example")
+
+    assert {"ANTHROPIC_API_KEY", "ASSAY_LOCAL_BASE_URL"} <= keys.keys()
+    assert {key: value for key, value in keys.items() if value} == {}

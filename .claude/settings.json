@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./.env.local)",
+      "Read(!.env.example)",
+      "Edit(./.env)",
+      "Edit(./.env.*)",
+      "Edit(./.env.local)",
+      "Edit(!.env.example)"
+    ]
+  }
+}
