@@ -1,0 +1,24 @@
+# Phase 0, the smoke job: Haiku x instrument-tdd x TypeScript, at -k 1.
+# 1 trial. Use it to check the setup end to end before the real jobs run.
+#
+# Launch from the repository root:  uv run assay run -c jobs/phase0-smoke.yaml -y --debug
+# See README.md, "Run the Phase 0 jobs".
+
+job_name: phase0-smoke
+jobs_dir: results
+n_attempts: 1
+
+tasks:
+  - path: tasks/typescript/split-second-stopwatch
+
+agents:
+  # instrument-tdd (variants/variants.toml): the skills part only.
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-haiku-5-5
+    skills: [variants/instrument-tdd/tdd]
+    kwargs:
+      # Claude Code version: the same value in all the job files (PRD "Version pins").
+      version: "2.1.308"
+    env:
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"   # every model tier (L9)
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
