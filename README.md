@@ -138,6 +138,8 @@ Copy-Item .env.example .env
 
 A variable set in the shell still wins over `.env`. The order of the sources, strongest first: Harbor's `--env-file`, the shell, `.env`, then `.env.local` (Harbor's fallback).
 
+`assay run` turns Harbor's usage telemetry off (`HARBOR_TELEMETRY=0`). On Windows its sender flashes a console window, and it sends each job's model names and cost to Harbor's maintainers. Set `HARBOR_TELEMETRY=1` in the shell or `.env` to turn it back on.
+
 The commands in this README are for PowerShell 7 (`pwsh`), run from the repository root. Use PowerShell 7 and not Windows PowerShell 5.1: in PowerShell 7, `>` writes UTF-8 with no BOM, which the analysis scripts can read.
 
 ## The analysis process

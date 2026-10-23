@@ -9,7 +9,9 @@ the shell has not set (a shell variable wins) and prints the names of the
 keys it set, never the values.
 
 `assay run` takes only `--overwrite`; every other argument goes to
-`harbor run` unchanged and in the same order. Before Harbor starts, it stops
+`harbor run` unchanged and in the same order. It runs Harbor with its
+telemetry off (HARBOR_TELEMETRY=0) unless the shell or `.env` sets
+HARBOR_TELEMETRY. Before Harbor starts, it stops
 when an InstrumentedClaudeCode agent's Claude Code version is not `stable`,
 `latest` or X.Y.Z, for example the placeholder or no version (with --dry-run
 too). It reads the version from the job file only, not from --ak. Then it
@@ -65,6 +67,7 @@ USAGE = "\n".join([
 ])
 OVERWRITE = "--overwrite"
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"  # at the repository root
+TELEMETRY = "HARBOR_TELEMETRY"  # harbor/telemetry.py; "0" turns it off
 
 HarborRunner = Callable[[Sequence[str]], int]
 
@@ -72,7 +75,10 @@ HarborRunner = Callable[[Sequence[str]], int]
 def run_harbor(args: Sequence[str]) -> int:
     """`harbor run <args>` as a subprocess; returns its exit code."""
     sys.stdout.flush()  # assay's own lines come before Harbor's
-    process = subprocess.Popen(["harbor", "run", *args])
+    # Harbor's telemetry sender flashes a console window on Windows and sends
+    # the job's model names and cost off the machine; a shell value wins.
+    env = {TELEMETRY: "0", **os.environ}
+    process = subprocess.Popen(["harbor", "run", *args], env=env)
     while True:
         try:
             return process.wait()
