@@ -11,6 +11,7 @@ and assay agent-runs); without them both are null.
 from __future__ import annotations
 
 import posixpath
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -127,6 +128,30 @@ def ad_hoc_runs(trial: Trial) -> dict:
                 for script in _scripts_run(without_heredoc_bodies(command), runners)):
             steps.append(call.step_id)
     return {"count": len(steps), "first_step_id": steps[0] if steps else None}
+
+
+WEB_TOOLS = ("WebFetch", "WebSearch")
+_URL = re.compile(r"\bhttps?://")
+
+
+def web_access(trial: Trial) -> dict:
+    """The steps where the agent may have reached the web: a web tool call that
+    did not fail, or a Bash command with a URL, curl, wget or git clone (a
+    heuristic: curl localhost is flagged, node -e "fetch(...)" is missed)."""
+    steps = []
+    for call in trial.tool_calls:
+        if call.function_name in WEB_TOOLS:
+            reached = call.is_error is not True
+        elif call.function_name == "Bash" and isinstance(call.arguments.get("command"), str):
+            text = without_heredoc_bodies(call.arguments["command"])
+            reached = bool(_URL.search(text)) or any(
+                words[:1] in (["curl"], ["wget"]) or words[:2] == ["git", "clone"]
+                for words in map(without_prefixes, simple_commands(text)))
+        else:
+            reached = False
+        if reached and call.step_id not in steps:
+            steps.append(call.step_id)
+    return {"flagged": bool(steps), "step_ids": steps}
 
 
 def _scripts_run(command: str, runners: list[list[str]]) -> list[str]:
@@ -312,6 +337,7 @@ def analyze_trial(trial: Trial, replay: list[dict] | None = None,
         "bash": bash_marks(trial),
         "skill_load": skill_load(trial),
         "ad_hoc_runs": ad_hoc_runs(trial),
+        "web_access": web_access(trial),
     }
     if replay is not None and runs is not None:
         seen = seen_states(replay, runs)

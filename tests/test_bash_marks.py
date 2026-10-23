@@ -83,6 +83,7 @@ def test_main_writes_one_json_line_per_trial_of_each_job_to_the_analysis_folder(
             "bash": {"file_writing_bash": False, "bash_writes_test_or_implementation": False},
             "skill_load": {"loaded": False, "before_first_file_write": False},
             "ad_hoc_runs": {"count": 0, "first_step_id": None},
+            "web_access": {"flagged": False, "step_ids": []},
         },
         {
             "trial": "other__xyz9876",
@@ -97,6 +98,7 @@ def test_main_writes_one_json_line_per_trial_of_each_job_to_the_analysis_folder(
             "bash": {"file_writing_bash": False, "bash_writes_test_or_implementation": False},
             "skill_load": {"loaded": False, "before_first_file_write": False},
             "ad_hoc_runs": {"count": 0, "first_step_id": None},
+            "web_access": {"flagged": False, "step_ids": []},
         },
     ]
 

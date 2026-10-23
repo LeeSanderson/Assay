@@ -84,6 +84,7 @@ It writes `analysis/trajectory.jsonl`, with one JSON line for each trial, and re
 - **The TDD loop**: the counts of red-to-green cycles, of tests never seen red, and of refactor steps.
 - Whether a `Bash` call wrote to the repository, and whether the instrument skill loaded before the first file write.
 - **Ad-hoc runs**: the count of `Bash` calls that run a script the agent wrote (for example `npx tsx /tmp/verify.ts`), and the step of the first. They are not test runs, so the cross-check does not see them.
+- **Web access**: whether the agent may have reached the web, and the steps where it did: a `WebFetch` or `WebSearch` call that did not fail, or a `Bash` command with a URL, `curl`, `wget` or `git clone`. A flagged trial may have read the exercise's solution. It stays in the data; `assay summary` also gives its figures without the flagged trials.
 
 **Expected result:** `wrote analysis/trajectory.jsonl`, one line in it for each trial, and exit code 0. No verdict is the expected one: a verdict measures the agent, and is not a pass or a fail. Red-to-green order and the TDD loop are `null` when the trial has no `replay.jsonl` and `agent-runs.jsonl`; run `assay replay` and `assay agent-runs` first. Phase 0 finds out whether the values are correct by comparing them with a person (`assay compare-labels`).
 

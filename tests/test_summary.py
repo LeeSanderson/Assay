@@ -155,6 +155,30 @@ def test_throwaway_tests_and_ad_hoc_runs_are_counted_for_each_trial_and_in_the_s
            "1 of 2 (50%)." in markdown
 
 
+def test_web_access_trials_are_kept_and_counted_and_an_unflagged_view_leaves_them_out(tmp_path):
+    job = Job(tmp_path, "phase0-cross")
+    job.trial().build()
+    fetched = job.trial()
+    fetched.step().call("WebFetch", {"url": "https://example.com/proof.go"}, result="package x")
+    fetched.step().call("Bash", {"command": "echo x > notes.txt"}, files={"notes.txt": "x\n"})
+    fetched.build()
+
+    summary = summarize([job.dir], job.analysis)
+    markdown = render_markdown(summary)
+
+    assert len(summary["trials"]) == 2
+    assert summary["trials"][1]["web_access"] == {"flagged": True, "step_ids": [2]}
+    assert summary["shares"]["web_access"] == {"count": 1, "share": pytest.approx(1 / 2)}
+    unflagged = summary["unflagged"]
+    assert unflagged["shares"]["trials"] == 1
+    assert unflagged["shares"]["file_writing_bash"] == {"count": 0, "share": 0}
+    assert unflagged["agent_test_runs"]["snapshots"] == 0
+    assert "| Web access (steps) |" in markdown
+    assert f"| {fetched.dir.name} |" in markdown and "| no | 2 |" in markdown
+    assert "Trials that may have reached the web: 1 of 2 (50%)." in markdown
+    assert "## Without the web-access trials" in markdown
+
+
 def test_the_markdown_gives_where_offline_replay_applies_as_trials_without_file_writing_bash(tmp_path):
     job = Job(tmp_path, "phase0-cross")
     job.trial().build()

@@ -40,11 +40,14 @@ def summarize(job_dirs: list[Path | str], analysis_root: Path | str) -> dict:
         trials += [_trial(job_dir, trial, Path(analysis_root)) for trial in job]
         local += [_local_trial(job_dir, trial) for trial in job if trial.local]
     hosted_usd = sum(t["cost"]["cost_usd"] or 0 for t in trials if not t["local"])
+    unflagged = [t for t in trials if not t["web_access"]["flagged"]]
     return {
         "claude_code_versions": versions,
         "trials": trials,
         "shares": _shares(trials),
         "agent_test_runs": _pooled(trials),
+        # The same values without the trials that may have read the solution from the web.
+        "unflagged": {"shares": _shares(unflagged), "agent_test_runs": _pooled(unflagged)},
         "cost": _cost(trials),
         "hosted_cost": {
             "total_usd": hosted_usd, "total_gbp": hosted_usd / USD_PER_GBP,
@@ -129,6 +132,7 @@ def _shares(trials: list[dict]) -> dict:
             counted(lambda t: t["bash"]["bash_writes_test_or_implementation"]),
         "offline_replay_applies": counted(lambda t: not t["bash"]["file_writing_bash"]),
         "ad_hoc_runs": counted(lambda t: t["ad_hoc_runs"]["count"] > 0),
+        "web_access": counted(lambda t: t["web_access"]["flagged"]),
     }
 
 
@@ -148,6 +152,7 @@ def _trial(job_dir: Path, trial: Trial, analysis_root: Path) -> dict:
         "bash": metrics["bash"],
         "skill_load": metrics["skill_load"],
         "ad_hoc_runs": metrics["ad_hoc_runs"],
+        "web_access": metrics["web_access"],
         "agent_test_runs": read_json(out / CROSS_CHECK_FILE),
         "model_tier": trial.model_tier,
         "local": trial.local,
@@ -186,8 +191,8 @@ def render_markdown(summary: dict) -> str:
              "## Trials", "",
              "| Job | Trial | Model tier | Trace check | Replay | Test-first order "
              "| Red-to-green order | TDD loop (cycles / never seen red / refactor steps) "
-             "| Coverage | Agreement | Skill loaded |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| Coverage | Agreement | Skill loaded | Web access (steps) |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for t in summary["trials"]:
         check = "pass" if t["trace_check"]["passed"] else \
             "fail: " + ", ".join(t["trace_check"]["failed_checks"])
@@ -200,32 +205,43 @@ def render_markdown(summary: dict) -> str:
         skill = t["skill_load"]
         skill = ("before first file write" if skill["before_first_file_write"]
                  else "after first file write" if skill["loaded"] else "no")
+        web = t["web_access"]
+        web = ", ".join(map(str, web["step_ids"])) if web["flagged"] else "no"
         lines.append(
             f"| {t['job']} | {t['trial']} | {t['model_tier']} | {check} | {replay} "
             f"| {t['test_first_order']} | {t['red_to_green_order'] or '-'} | {loop} "
-            f"| {pct(runs.get('coverage'))} | {pct(runs.get('agreement'))} | {skill} |")
+            f"| {pct(runs.get('coverage'))} | {pct(runs.get('agreement'))} | {skill} | {web} |")
 
-    shares = summary["shares"]
-
-    def counted(text, key):
+    def counted(shares, text, key):
         s = shares[key]
         return f"- {text}: {s['count']} of {shares['trials']} ({pct(s['share'])})."
 
-    runs = summary["agent_test_runs"]
-    lines += ["", "## Bash file writes", "",
-              counted("Trials with a file-writing `Bash` call", "file_writing_bash"),
-              counted("Trials where a `Bash` call writes a test or implementation file",
-                      "bash_writes_test_or_implementation"),
-              counted("Trials where offline replay applies (no file-writing `Bash` call)",
-                      "offline_replay_applies"),
-              "", "## Agent test runs", "",
-              f"- Coverage: {runs['covered_snapshots']} of {runs['snapshots']} snapshots "
-              f"({pct(runs['coverage'])}).",
-              f"- Agreement: {runs['agreeing_runs']} of {runs['compared_runs']} compared runs "
-              f"({pct(runs['agreement'])}).",
-              counted("Trials with an ad-hoc run (a script the agent wrote, not in the "
-                      "cross-check)", "ad_hoc_runs"),
-              "", "## Cost for each model tier", "",
+    def sections(shares, runs, level):
+        return [
+            "", f"{level} Bash file writes", "",
+            counted(shares, "Trials with a file-writing `Bash` call", "file_writing_bash"),
+            counted(shares, "Trials where a `Bash` call writes a test or implementation file",
+                    "bash_writes_test_or_implementation"),
+            counted(shares, "Trials where offline replay applies (no file-writing `Bash` call)",
+                    "offline_replay_applies"),
+            "", f"{level} Agent test runs", "",
+            f"- Coverage: {runs['covered_snapshots']} of {runs['snapshots']} snapshots "
+            f"({pct(runs['coverage'])}).",
+            f"- Agreement: {runs['agreeing_runs']} of {runs['compared_runs']} compared runs "
+            f"({pct(runs['agreement'])}).",
+            counted(shares, "Trials with an ad-hoc run (a script the agent wrote, not in the "
+                            "cross-check)", "ad_hoc_runs"),
+        ]
+
+    unflagged = summary["unflagged"]
+    lines += sections(summary["shares"], summary["agent_test_runs"], "##")
+    lines += ["", "## Web access", "",
+              counted(summary["shares"], "Trials that may have reached the web", "web_access"),
+              "", "These trials stay in the data above. A web tool call that did not fail, or "
+              "a `Bash` command with a URL, `curl`, `wget` or `git clone`, flags a trial.",
+              "", "## Without the web-access trials"]
+    lines += sections(unflagged["shares"], unflagged["agent_test_runs"], "###")
+    lines += ["", "## Cost for each model tier", "",
               "The local tier's money cost is zero (L5); its token counts are kept. "
               "Values per trial are means.", "",
               "| Model tier | Trials | Total USD | USD per trial | Input tokens | Cache tokens "
