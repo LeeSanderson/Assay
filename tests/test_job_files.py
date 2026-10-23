@@ -79,7 +79,15 @@ def test_local_job_is_one_instrument_tdd_trial_on_one_server_slot():
     assert agent.env["ANTHROPIC_BASE_URL"] == "${ASSAY_LOCAL_BASE_URL}"
 
 
-JOB_FILES = ("phase0-cross.yaml", "phase0-extra.yaml", "phase0-local.yaml")
+def test_smoke_job_is_one_haiku_instrument_tdd_trial():
+    trials = expand_trials(load_job("phase0-smoke.yaml"))
+
+    assert [trial_key(t) for t in trials] == [
+        ("anthropic/claude-haiku-5-5", "instrument-tdd", "typescript"),
+    ]
+
+
+JOB_FILES = ("phase0-cross.yaml", "phase0-extra.yaml", "phase0-local.yaml", "phase0-smoke.yaml")
 
 
 def all_agents():

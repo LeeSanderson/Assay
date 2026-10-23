@@ -164,6 +164,7 @@ The three Phase 0 job files are in `jobs/`. Each runs at `-k 1` with `instrument
 | `jobs/phase0-cross.yaml` | Haiku and Sonnet × control and `instrument-tdd` × TypeScript and Go: 8 |
 | `jobs/phase0-extra.yaml` | Haiku × `instrument-tdd` × TypeScript and Go: 2 |
 | `jobs/phase0-local.yaml` | the local model × `instrument-tdd` × one task pack: 1 |
+| `jobs/phase0-smoke.yaml` | Haiku × `instrument-tdd` × TypeScript: 1. Use it to check the setup before the jobs above. |
 
 **Set the Claude Code version first.** On the day of the smoke trial, read the version of the `stable` channel of Claude Code. Replace the placeholder `SET-ON-SMOKE-TRIAL-DAY` with it in all three job files, in one commit, before the smoke trial runs. In `phase0-cross.yaml` the value is written once and shared through a YAML anchor. A fast test (`tests/test_job_files.py`) fails if the three files do not hold one version. `uv run assay run` stops before Harbor starts if a job's version is not `stable`, `latest` or `X.Y.Z` (for example the placeholder, or no version), and the agent's `setup()` makes the same check for a direct `harbor run`. Do not change the version for the remaining Phase 0 trials (PRD, "Version pins").
 
