@@ -9,11 +9,21 @@ Assay measures the value of a context artifact for a coding agent: a skill, a ru
 |---|---|
 | `uv run assay run -c jobs/<file>.yaml` | Starts a job: runs `harbor run` with the job file, after it checks the Claude Code version and the job's results folder. `--overwrite` deletes earlier results first. |
 | `uv run assay trace-check results/<job-id>` | Checks that the trace hook worked in each trial of the job. |
-| `uv run assay replay results/<job-id>` | Replays each trace snapshot of each trial in a fresh container, and says whether replay works. |
+| `uv run assay replay results/<job-id>` | Gives the test state (`no-tests`, `red-compile`, `fail` or `pass`) of each trace snapshot of each trial, and says whether replay works. See [why replay](#why-replay). |
 | `uv run assay agent-runs results/<job-id>` | Cross-checks each test run of the agent with the replay of the same snapshot. |
 | `uv run assay trajectory <trial folder>...` | Measures test-first order, red-to-green order and the TDD loop of each trial, one JSON line each. |
 | `uv run assay compare-labels <sheet.csv> <trajectory.jsonl>` | Compares the labeling sheet with the output of `assay trajectory`, and prints each difference. |
 | `uv run assay summary results/<job-id>...` | Writes the Phase 0 summary of one or more jobs. |
+
+### Why replay
+
+The trajectory of a trial shows the order in which the agent wrote files, but not whether the tests passed or failed between the writes. The trace hook saves a snapshot of the repository after each tool call that changes it. After the trial, `assay replay` runs the task pack's unchanged `tests/test.sh` on each snapshot, in a fresh container with no network, and reads the test state from the `reward.json` that the script writes.
+
+Replay is the only source of the test state, for every trial and every condition, so that all conditions are measured the same way (PRD section 5). It also works when the agent writes files through `Bash`, and when the agent never runs the tests itself. The test runs of the agent are only a cross-check (`assay agent-runs`). `assay trajectory` needs the replay for red-to-green order and the TDD loop; without it, both are null.
+
+Phase 0 replays each trial two times, to show that replay can rebuild the environment of the trial (PRD section 8, risk 1). Harbor deletes each trial's task image, so replay rebuilds it from the pack's Dockerfile, whose base image is pinned by digest.
+
+### Help
 
 `uv run assay` lists the commands, and `uv run assay <command> --help` shows the arguments of one. Do not run `harbor` directly: start every job with `assay run` (ADR 0002). [The analysis process](#the-analysis-process) gives the order of the commands and what each one reads and writes.
 
