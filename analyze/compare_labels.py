@@ -1,8 +1,8 @@
 """Compares the labeling sheet with trajectory.py's output (PRD section 5,
 "How a person checks trajectory.py" and its red-to-green extension).
 
-    uv run assay trajectory <trial folder>... > trajectory.jsonl
-    uv run assay compare-labels <sheet.csv> trajectory.jsonl
+    uv run assay trajectory results/<job-id>...
+    uv run assay compare-labels <sheet.csv> analysis/trajectory.jsonl
 
 The sheet is a filled copy of labeling/sheet-template.csv. The two agree on a
 trial, for each metric, when every field of that metric is the same: for
@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="assay compare-labels",
         description="Compare the labeling sheet with trajectory.py's output.")
     parser.add_argument("sheet", type=Path, help="a filled copy of labeling/sheet-template.csv")
-    parser.add_argument("output", type=Path, help="the JSON lines that assay trajectory prints")
+    parser.add_argument("output", type=Path, help="the JSON lines that assay trajectory writes (analysis/trajectory.jsonl)")
     args = parser.parse_args(argv)
 
     report = compare(args.sheet, args.output)

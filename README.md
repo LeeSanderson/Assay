@@ -11,7 +11,7 @@ Assay measures the value of a context artifact for a coding agent: a skill, a ru
 | [`uv run assay trace-check results/<job-id>`](#assay-trace-check) | Checks that the trace hook worked in each trial of the job. |
 | [`uv run assay replay results/<job-id>`](#assay-replay) | Gives the test state (`no-tests`, `red-compile`, `fail` or `pass`) of each trace snapshot of each trial, and says whether replay works. |
 | [`uv run assay agent-runs results/<job-id>`](#assay-agent-runs) | Cross-checks each test run of the agent with the replay of the same snapshot. |
-| [`uv run assay trajectory results/<job-id>/<trial>...`](#assay-trajectory) | Measures test-first order, red-to-green order and the TDD loop of each trial folder given, one JSON line each. |
+| [`uv run assay trajectory results/<job-id>...`](#assay-trajectory) | Measures test-first order, red-to-green order and the TDD loop of each trial of one or more jobs, and writes them to `analysis/trajectory.jsonl`. |
 | [`uv run assay compare-labels <sheet.csv> <trajectory.jsonl>`](#assay-compare-labels) | Compares the labeling sheet with the output of `assay trajectory`, and prints each difference. |
 | [`uv run assay summary results/<job-id>...`](#assay-summary) | Writes the Phase 0 summary of one or more jobs. |
 
@@ -75,16 +75,16 @@ The agent's own test runs are a second view of the test state: each one gives an
 
 Measures how each trial worked: test-first order, red-to-green order and the TDD loop.
 
-Each `<trial folder>` is the path of one trial's folder inside a job's results, `results/<job-id>/<trial>`: the folder that holds the trial's `lock.json`, for example `results\phase0-cross\stopwatch__abc1234`. It is not the job folder, so give one path for each trial (stage 5 of [the analysis process](#the-analysis-process) lists them with `Get-ChildItem`). The command reads the trial's replay and agent runs from `analysis/<job-id>/<trial>/`, where `<job-id>` is the name of the folder that holds the trial folder. `--analysis` changes the `analysis` root.
+Give one or more job folders, `results/<job-id>`, as for `assay summary`. The command analyses each trial folder of each job (a folder that holds a `lock.json`), in name order. It reads each trial's replay and agent runs from `analysis/<job-id>/<trial>/`. `--analysis` changes the `analysis` root.
 
-For each trial, it prints one JSON line with these values:
+It writes `analysis/trajectory.jsonl`, with one JSON line for each trial, and replaces an earlier file, so the file holds only the jobs given. Each line has these values:
 
 - **Test-first order**, from the order of the writes only: `test-first`, `implementation-first`, `same-turn`, `no-test` or `no-implementation`. The anchors are the first test write and the first implementation write.
 - **Red-to-green order**, from the seen states: `red-to-green` (the agent first saw the tests fail, and later saw them pass), `green-first`, `never-green` or `not-observed`. The anchors are the first seen red and the first seen green.
 - **The TDD loop**: the counts of red-to-green cycles, of tests never seen red, and of refactor steps.
 - Whether a `Bash` call wrote to the repository, and whether the instrument skill loaded before the first file write.
 
-**Expected result:** one JSON line per trial, and exit code 0. No verdict is the expected one: a verdict measures the agent, and is not a pass or a fail. Red-to-green order and the TDD loop are `null` when the trial has no `replay.jsonl` and `agent-runs.jsonl`; run `assay replay` and `assay agent-runs` first. Phase 0 finds out whether the values are correct by comparing them with a person (`assay compare-labels`).
+**Expected result:** `wrote analysis/trajectory.jsonl`, one line in it for each trial, and exit code 0. No verdict is the expected one: a verdict measures the agent, and is not a pass or a fail. Red-to-green order and the TDD loop are `null` when the trial has no `replay.jsonl` and `agent-runs.jsonl`; run `assay replay` and `assay agent-runs` first. Phase 0 finds out whether the values are correct by comparing them with a person (`assay compare-labels`).
 
 ### `assay compare-labels`
 
@@ -264,12 +264,10 @@ A person labels the ten hosted trials and compares the labels with `trajectory.p
    Copy-Item labeling\sheet-template.csv analysis\sheet.csv
    ```
 
-3. Run `assay trajectory` on the trials of both hosted jobs, then compare. PowerShell does not expand a wildcard for `assay`, so the first command lists the trial folders. `assay compare-labels` prints each difference and exits with 1 when any trial differs:
+3. Run `assay trajectory` on both hosted jobs, then compare. `assay trajectory` writes `analysis\trajectory.jsonl`. `assay compare-labels` prints each difference and exits with 1 when any trial differs:
 
    ```powershell
-   $trials = Get-ChildItem results\phase0-cross, results\phase0-extra -Directory |
-     Where-Object { Test-Path "$_\lock.json" }
-   uv run assay trajectory $trials.FullName > analysis\trajectory.jsonl
+   uv run assay trajectory results\phase0-cross results\phase0-extra
    uv run assay compare-labels analysis\sheet.csv analysis\trajectory.jsonl
    ```
 

@@ -4,6 +4,7 @@ import json
 
 from analyze.trajectory import analyze_trial, main
 from analyze.trial import read_trial
+from tests.trial_builder import TrialBuilder
 
 GO_STUB = "package stopwatch\n"
 
@@ -51,16 +52,23 @@ def test_a_bash_call_that_writes_an_implementation_file_gives_both_marks(make_tr
     assert marks(trial) == {"file_writing_bash": True, "bash_writes_test_or_implementation": True}
 
 
-def test_main_prints_one_json_line_per_trial(make_trial, capsys):
-    first = go_trial(make_trial)
+def test_main_writes_one_json_line_per_trial_of_each_job_to_the_analysis_folder(tmp_path, capsys):
+    job_a, job_b = tmp_path / "results" / "job-a", tmp_path / "results" / "job-b"
+    first = TrialBuilder(job_a, language="go")
+    first.seed({"stopwatch.go": GO_STUB, "go.mod": "module stopwatch\n"})
     first.step().call("Write", {"file_path": "/app/stopwatch_test.go"},
                       files={"stopwatch_test.go": "package stopwatch\n"})
-    second = make_trial("typescript", name="other__xyz9876")
+    first.build()
+    second = TrialBuilder(job_b, language="typescript", name="other__xyz9876")
     second.seed({"stopwatch.ts": "export {}\n"})
+    second.build()
+    analysis = tmp_path / "analysis"
 
-    assert main([str(first.build()), str(second.build())]) == 0
+    assert main(["--analysis", str(analysis), str(job_a), str(job_b)]) == 0
 
-    lines = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
+    output = analysis / "trajectory.jsonl"
+    assert capsys.readouterr().out == f"wrote {output}\n"
+    lines = [json.loads(l) for l in output.read_text(encoding="utf-8").splitlines()]
     assert lines == [
         {
             "trial": "split-second-stopwatch__abc1234",
@@ -89,3 +97,16 @@ def test_main_prints_one_json_line_per_trial(make_trial, capsys):
             "skill_load": {"loaded": False, "before_first_file_write": False},
         },
     ]
+
+
+def test_main_overwrites_the_output_so_it_holds_only_the_jobs_given(tmp_path):
+    job_a, job_b = tmp_path / "results" / "job-a", tmp_path / "results" / "job-b"
+    for job in (job_a, job_b):
+        TrialBuilder(job, name=f"{job.name}__t1").build()
+    analysis = tmp_path / "analysis"
+    main(["--analysis", str(analysis), str(job_a), str(job_b)])
+
+    assert main(["--analysis", str(analysis), str(job_b)]) == 0
+
+    lines = (analysis / "trajectory.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(l)["trial"] for l in lines] == ["job-b__t1"]

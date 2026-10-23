@@ -210,7 +210,7 @@ def test_seen_states_of_one_color_in_a_row_count_as_one_for_cycles(make_trial):
     assert out["tdd_loop"]["cycles"] == 2
 
 
-def test_main_reads_replay_and_agent_runs_from_the_analysis_folder(make_trial, tmp_path, capsys):
+def test_main_reads_replay_and_agent_runs_from_the_analysis_folder(make_trial, tmp_path):
     import json
 
     from analyze.agent_runs import cross_check_job
@@ -227,9 +227,9 @@ def test_main_reads_replay_and_agent_runs_from_the_analysis_folder(make_trial, t
                        analysis_dir=analysis / trial_dir.parent.name / trial_dir.name)
     cross_check_job(trial_dir.parent, analysis)
 
-    assert main(["--analysis", str(analysis), str(trial_dir)]) == 0
+    assert main(["--analysis", str(analysis), str(trial_dir.parent)]) == 0
 
-    out = json.loads(capsys.readouterr().out)
+    out = json.loads((analysis / "trajectory.jsonl").read_text(encoding="utf-8"))
     assert out["red_to_green_order"] == {
         "verdict": "red-to-green", "first_seen_red": red, "first_seen_green": green,
     }

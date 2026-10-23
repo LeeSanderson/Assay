@@ -1,24 +1,24 @@
 """Process metrics from one trial: pure functions over the trial reader's data.
 
-    uv run assay trajectory [--analysis analysis] <trial folder>...
+    uv run assay trajectory results/<job-id>... [--analysis analysis]
 
-prints one JSON line per trial, to compare with the labeling sheet. Red-to-green
-order and the TDD loop need analysis/<job-id>/<trial>/replay.jsonl and
-agent-runs.jsonl (from assay replay and assay agent-runs); without them
-both are null.
+writes analysis/trajectory.jsonl, one JSON line for each trial of each job, to
+compare with the labeling sheet. Red-to-green order and the TDD loop need
+analysis/<job-id>/<trial>/replay.jsonl and agent-runs.jsonl (from assay replay
+and assay agent-runs); without them both are null.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from analyze.agent_runs import AGENT_RUNS_FILE, read_agent_runs
 from analyze.languages import IMPLEMENTATION, TEST, classify
 from analyze.replay import FAIL, PASS, RED_COMPILE, REPLAY_FILE, read_replay
-from analyze.trial import REPO_ROOT, Trial, read_trial
+from analyze.trial import REPO_ROOT, Trial, read_job, read_trial, write_jsonl
 
+TRAJECTORY_FILE = "trajectory.jsonl"
 WRITE_STATUSES = ("A", "M")
 
 
@@ -220,15 +220,28 @@ def analyze_folder(folder: Path | str, analysis_root: Path | str) -> dict:
     return analyze_trial(trial)
 
 
+def write_trajectory(job_dirs: list[Path | str], analysis_root: Path | str) -> Path:
+    """Writes analysis_root/trajectory.jsonl, a line for each trial of each job
+    in turn, over any earlier file; returns its path."""
+    lines = [analyze_folder(trial.path, analysis_root)
+             for job_dir in job_dirs for trial in read_job(job_dir)]
+    output = Path(analysis_root) / TRAJECTORY_FILE
+    output.parent.mkdir(parents=True, exist_ok=True)
+    write_jsonl(output, lines)
+    return output
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    parser = argparse.ArgumentParser(prog="assay trajectory",
-                                     description="Process metrics of each trial, one JSON line each.")
-    parser.add_argument("trials", nargs="*", type=Path, help="results/<job-id>/<trial>")
+    parser = argparse.ArgumentParser(
+        prog="assay trajectory",
+        description=f"Write the process metrics of each trial of one or more jobs to "
+                    f"analysis/{TRAJECTORY_FILE}, one JSON line each.")
+    parser.add_argument("job_dirs", nargs="+", type=Path, help="results/<job-id>")
     parser.add_argument("--analysis", type=Path, default=REPO_ROOT / "analysis",
-                        help="analysis root holding <job-id>/<trial>/replay.jsonl and agent-runs.jsonl")
+                        help=f"analysis root holding <job-id>/<trial>/replay.jsonl and "
+                             f"agent-runs.jsonl; {TRAJECTORY_FILE} goes here")
     args = parser.parse_args(argv)
-    for folder in args.trials:
-        print(json.dumps(analyze_folder(folder, args.analysis)))
+    print(f"wrote {write_trajectory(args.job_dirs, args.analysis)}")
     return 0
