@@ -14,12 +14,12 @@ from __future__ import annotations
 import json
 import posixpath
 import re
-import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
 from analyze.languages import LANGUAGES, LanguageRules
 from analyze.replay import PASS, read_replay
+from analyze.shell import simple_commands, without_prefixes
 from analyze.trial import REPO_ROOT, ToolCall, Trial, read_job, read_jsonl, share, write_jsonl
 
 AGENT_RUNS_FILE = "agent-runs.jsonl"
@@ -27,8 +27,6 @@ CROSS_CHECK_FILE = "cross-check.json"
 
 SEED_REPOSITORY = "/app"  # the agent's working folder in the task image
 _EXIT_CODE = re.compile(r"Exit code (\d+)")
-_PUNCTUATION = "();<>|&\n"
-_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
 @dataclass(frozen=True)
@@ -48,8 +46,8 @@ def match_test_run(language: str, command: str) -> TestRun | None:
     rules = LANGUAGES[language]
     cwd = SEED_REPOSITORY
     runs: list[bool] = []  # the partial flag of each test run in the command
-    for words in _simple_commands(command):
-        words = _without_prefixes(words)
+    for words in simple_commands(command):
+        words = without_prefixes(words)
         if not words:
             continue
         if words[0] == "cd":
@@ -208,46 +206,6 @@ def _partial(rules: LanguageRules, args: list[str]) -> bool:
         if name in rules.value_flags and "=" not in arg:
             next(args, None)
     return False
-
-
-def _simple_commands(command: str) -> list[list[str]]:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=_PUNCTUATION)
-    lexer.whitespace = " \t\r"
-    lexer.whitespace_split = True
-    try:
-        tokens = list(lexer)
-    except ValueError:  # unbalanced quotes
-        tokens = command.split()
-    commands: list[list[str]] = [[]]
-    redirect = False
-    for token in tokens:
-        if redirect:
-            redirect = False  # the redirection's target
-        elif token and all(c in _PUNCTUATION for c in token):
-            if "<" in token or ">" in token:
-                redirect = True  # the next word is the target: the file, or the 1 of 2>&1
-                if commands[-1] and commands[-1][-1].isdigit():
-                    commands[-1].pop()  # the 2 of 2>file
-            else:
-                commands.append([])
-        else:
-            commands[-1].append(token)
-    return [c for c in commands if c]
-
-
-def _without_prefixes(words: list[str]) -> list[str]:
-    """Drops VAR=value assignments and the wrappers time and timeout <duration>."""
-    while words:
-        if _ASSIGNMENT.match(words[0]) or words[0] == "time":
-            words = words[1:]
-        elif words[0] == "timeout":
-            rest = words[1:]
-            while rest and rest[0].startswith("-"):
-                rest = rest[1:]
-            words = rest[1:]  # the duration
-        else:
-            break
-    return words
 
 
 def _cd(cwd: str, args: list[str]) -> str:

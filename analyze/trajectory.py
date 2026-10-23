@@ -10,13 +10,15 @@ and assay agent-runs); without them both are null.
 
 from __future__ import annotations
 
+import posixpath
 from dataclasses import dataclass
 from pathlib import Path
 
-from analyze.agent_runs import AGENT_RUNS_FILE, read_agent_runs
-from analyze.languages import IMPLEMENTATION, TEST, classify
+from analyze.agent_runs import AGENT_RUNS_FILE, SEED_REPOSITORY, read_agent_runs
+from analyze.languages import IMPLEMENTATION, LANGUAGES, TEST, classify, is_test_file
 from analyze.replay import FAIL, PASS, RED_COMPILE, REPLAY_FILE, read_replay
-from analyze.trial import REPO_ROOT, Trial, read_job, read_trial, write_jsonl
+from analyze.shell import simple_commands, without_heredoc_bodies, without_prefixes, written_paths
+from analyze.trial import REPO_ROOT, ToolCall, Trial, read_job, read_trial, write_jsonl
 
 TRAJECTORY_FILE = "trajectory.jsonl"
 WRITE_STATUSES = ("A", "M")
@@ -52,13 +54,120 @@ def file_writes(trial: Trial) -> list[FileWrite]:
     return writes
 
 
+@dataclass(frozen=True)
+class TestWrite:
+    __test__ = False  # not a pytest class
+
+    step_id: int
+    position: int
+    path: str  # relative to the seed repository, or absolute outside it
+    source: str  # "trace", "tool" (a file tool's file_path) or "bash" (a redirection)
+    kept: bool  # the final snapshot holds the file
+
+    def anchor(self) -> dict:
+        out = {"step_id": self.step_id, "position": self.position, "path": self.path}
+        return out if self.kept else {**out, "kept": False, "source": self.source}
+
+
+def test_writes(trial: Trial) -> list[TestWrite]:
+    """Writes of test files in ATIF order, from the trace and from Bash redirections.
+
+    A file written and deleted in one Bash call leaves no trace change, so the
+    redirection is the only sign of it. Each file appears once a call.
+    """
+    final = next((line.commit for line in reversed(trial.trace) if line.commit), None)
+
+    def kept(path: str) -> bool:
+        return (final is not None and not path.startswith("/")
+                and trial.snapshot_file(final, path) is not None)
+
+    writes = []
+    for call in trial.tool_calls:
+        seen = set()
+        for line in trial.trace_lines_for(call.tool_use_id):
+            for change in line.paths:
+                if change.status in WRITE_STATUSES and classify(trial.language, change.path) == TEST:
+                    seen.add(change.path)
+                    writes.append(TestWrite(call.step_id, call.position, change.path,
+                                            "trace", kept(change.path)))
+        for source, raw in _named_writes(call):
+            path = _repository_path(raw)
+            if path not in seen and is_test_file(trial.language, path):
+                seen.add(path)
+                writes.append(TestWrite(call.step_id, call.position, path, source, kept(path)))
+    return writes
+
+
+FILE_TOOLS = ("Write", "Edit", "MultiEdit")
+
+
+def _named_writes(call: ToolCall) -> list[tuple[str, str]]:
+    """(source, path) for each file a call names as written: the file_path of
+    a file tool that did not fail, or a Bash redirection."""
+    if call.function_name in FILE_TOOLS and call.is_error is not True:
+        path = call.arguments.get("file_path")
+        return [("tool", path)] if isinstance(path, str) else []
+    command = call.arguments.get("command") if call.function_name == "Bash" else None
+    return [("bash", p) for p in written_paths(command)] if isinstance(command, str) else []
+
+
+def ad_hoc_runs(trial: Trial) -> dict:
+    """Bash calls that run, with a script runner of the language, a file the
+    agent wrote in that call or before it. A call counts once."""
+    runners = [r.split() for r in LANGUAGES[trial.language].script_runners]
+    written: set[str] = set()
+    steps = []
+    for call in trial.tool_calls:
+        for line in trial.trace_lines_for(call.tool_use_id):
+            written.update(_absolute(c.path) for c in line.paths if c.status in WRITE_STATUSES)
+        written.update(_absolute(path) for _, path in _named_writes(call))
+        command = call.arguments.get("command") if call.function_name == "Bash" else None
+        if isinstance(command, str) and any(
+                _absolute(script) in written
+                for script in _scripts_run(without_heredoc_bodies(command), runners)):
+            steps.append(call.step_id)
+    return {"count": len(steps), "first_step_id": steps[0] if steps else None}
+
+
+def _scripts_run(command: str, runners: list[list[str]]) -> list[str]:
+    """The file each runner in the command runs: its first argument that is not a flag."""
+    scripts = []
+    for words in simple_commands(command):
+        words = without_prefixes(words)
+        runner = next((r for r in runners if words[:len(r)] == r), None)
+        if runner is not None:
+            scripts += [w for w in words[len(runner):] if not w.startswith("-")][:1]
+    return scripts
+
+
+def _absolute(path: str) -> str:
+    return posixpath.normpath(posixpath.join(SEED_REPOSITORY, path))
+
+
+def _repository_path(path: str) -> str:
+    """A path the agent named, relative to the seed repository when inside it."""
+    full = _absolute(path)
+    if full.startswith(SEED_REPOSITORY + "/"):
+        return full[len(SEED_REPOSITORY) + 1:]
+    return full
+
+
 def write_order(trial: Trial) -> dict:
-    """Test-first order: the verdict and its two anchors (PRD section 5)."""
+    """Test-first order: the verdict and its two anchors (PRD section 5).
+
+    Only kept test files order against the implementation. When the agent
+    kept none but wrote some, the verdict is throwaway-tests.
+    """
     writes = file_writes(trial)
-    test = next((w for w in writes if w.file_class == TEST), None)
+    tests = test_writes(trial)
+    test = next((t for t in tests if t.kept), None)
     impl = next((w for w in writes if w.file_class == IMPLEMENTATION), None)
     if impl is None:
         verdict = "no-implementation"
+        test = test or next(iter(tests), None)
+    elif test is None and tests:
+        verdict = "throwaway-tests"
+        test = tests[0]
     elif test is None:
         verdict = "no-test"
     elif test.step_id == impl.step_id:
@@ -202,6 +311,7 @@ def analyze_trial(trial: Trial, replay: list[dict] | None = None,
         "tdd_loop": None,
         "bash": bash_marks(trial),
         "skill_load": skill_load(trial),
+        "ad_hoc_runs": ad_hoc_runs(trial),
     }
     if replay is not None and runs is not None:
         seen = seen_states(replay, runs)

@@ -116,17 +116,19 @@ def _pooled(trials: list[dict]) -> dict:
 def _shares(trials: list[dict]) -> dict:
     """Risk 2: trials with a file-writing Bash call, and trials where a Bash
     call writes a test or implementation file. Risk 1: offline replay applies
-    to the trials with no file-writing Bash call (PRD section 5)."""
+    to the trials with no file-writing Bash call (PRD section 5). Also the
+    trials with an ad-hoc run, which the cross-check does not see."""
     def counted(test) -> dict:
-        count = sum(1 for t in trials if test(t["bash"]))
+        count = sum(1 for t in trials if test(t))
         return {"count": count, "share": share(count, len(trials))}
 
     return {
         "trials": len(trials),
-        "file_writing_bash": counted(lambda b: b["file_writing_bash"]),
+        "file_writing_bash": counted(lambda t: t["bash"]["file_writing_bash"]),
         "bash_writes_test_or_implementation":
-            counted(lambda b: b["bash_writes_test_or_implementation"]),
-        "offline_replay_applies": counted(lambda b: not b["file_writing_bash"]),
+            counted(lambda t: t["bash"]["bash_writes_test_or_implementation"]),
+        "offline_replay_applies": counted(lambda t: not t["bash"]["file_writing_bash"]),
+        "ad_hoc_runs": counted(lambda t: t["ad_hoc_runs"]["count"] > 0),
     }
 
 
@@ -145,6 +147,7 @@ def _trial(job_dir: Path, trial: Trial, analysis_root: Path) -> dict:
         "tdd_loop": metrics["tdd_loop"],
         "bash": metrics["bash"],
         "skill_load": metrics["skill_load"],
+        "ad_hoc_runs": metrics["ad_hoc_runs"],
         "agent_test_runs": read_json(out / CROSS_CHECK_FILE),
         "model_tier": trial.model_tier,
         "local": trial.local,
@@ -220,6 +223,8 @@ def render_markdown(summary: dict) -> str:
               f"({pct(runs['coverage'])}).",
               f"- Agreement: {runs['agreeing_runs']} of {runs['compared_runs']} compared runs "
               f"({pct(runs['agreement'])}).",
+              counted("Trials with an ad-hoc run (a script the agent wrote, not in the "
+                      "cross-check)", "ad_hoc_runs"),
               "", "## Cost for each model tier", "",
               "The local tier's money cost is zero (L5); its token counts are kept. "
               "Values per trial are means.", "",

@@ -438,7 +438,7 @@ Test-first order looks at the order of writes only. It does not look at the test
 Use these rules:
 
 1. A write is a tool call whose trace line gives a path with the status `A` (added) or `M` (modified). The tool has no effect, and thus a `Bash` call can make a write. A path with the status `D` (deleted) is not a write. ATIF gives the order of the writes (`step_id` and the position in the array). The trace gives the paths. The content of the write has no effect. A stub is a write. The content of the seed repository is not a write.
-2. Only a path inside the seed repository counts. A path outside it, such as `/tmp/try.ts`, is neutral.
+2. Only a path inside the seed repository counts as an implementation write. A test write can also come from the `file_path` of a `Write`, `Edit` or `MultiEdit` call that did not fail, or from a redirection (`>`, `>>`, `tee`) in a `Bash` command. These sources find a test file outside the seed repository, such as `/tmp/try.test.ts`, and a test file that one `Bash` call writes and deletes. The redirection source is a heuristic: it misses a file that a command writes in another way. A test file is kept when the last snapshot of the trace holds it. A test file that is not kept is a throwaway test.
 3. The language of the task pack sets the class of each path:
 
    | Language | Test file | Implementation file | Neutral |
@@ -446,7 +446,7 @@ Use these rules:
    | TypeScript | `*.test.ts`, `*.spec.ts` | Each other `*.ts` file, but not `*.config.*` | All other files |
    | Go | `*_test.go` | Each other `*.go` file | All other files |
 
-4. Find the first write to a test file and the first write to an implementation file. Only these two writes decide the verdict. Writes after them have no effect.
+4. Find the first write to a kept test file and the first write to an implementation file. Only these two writes decide the verdict. Writes after them have no effect. Throwaway tests decide the verdict only when there is no kept test file.
 5. The deciding point is the step of the earlier of the two writes. If one of the two writes does not occur, the deciding point is the last step of the trial.
 6. Give the trial one verdict:
 
@@ -455,6 +455,7 @@ Use these rules:
    | `test-first` | The first test write is in an earlier step than the first implementation write. |
    | `implementation-first` | The first implementation write is in an earlier step than the first test write. |
    | `same-turn` | The two writes have the same `step_id`. In one turn, the agent cannot run the test before the implementation exists. |
+   | `throwaway-tests` | The agent writes an implementation file and keeps no test file, but writes one or more throwaway tests. The test anchor is the first throwaway test, with `kept: false` and its source (`trace`, `tool` or `bash`). |
    | `no-test` | The agent writes an implementation file and writes no test file. |
    | `no-implementation` | The agent writes no implementation file. |
 

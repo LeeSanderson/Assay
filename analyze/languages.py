@@ -34,6 +34,9 @@ class LanguageRules:
     # Flags that take their value as the next argument, so that value is not
     # read as a positional argument.
     value_flags: tuple[str, ...]
+    # Commands that run a script; running a file the agent wrote is an ad-hoc
+    # run (not a test run, so not in the cross-check).
+    script_runners: tuple[str, ...]
 
 
 LANGUAGES: dict[str, LanguageRules] = {
@@ -60,6 +63,7 @@ LANGUAGES: dict[str, LanguageRules] = {
             "--outputFile", "--rootDir", "--roots", "--testMatch", "--testRegex",
             "--coverageDirectory", "--cacheDirectory", "--seed", "--shard",
         ),
+        script_runners=("tsx", "npx tsx", "ts-node", "npx ts-node", "node"),
     ),
     "go": LanguageRules(
         test_files=("*_test.go",),
@@ -69,8 +73,15 @@ LANGUAGES: dict[str, LanguageRules] = {
         selecting_flags=("-run", "--run", "-skip", "--skip"),
         positional_selects=False,  # go test <packages> runs all tests of each package
         value_flags=(),
+        script_runners=("go run",),
     ),
 }
+
+
+def is_test_file(language: str, path: str) -> bool:
+    """Whether a file's name matches the language's test-file class, wherever the file is."""
+    name = PurePosixPath(path).name
+    return any(fnmatchcase(name, p) for p in LANGUAGES[language].test_files)
 
 
 def classify(language: str, path: str) -> str:

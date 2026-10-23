@@ -140,10 +140,23 @@ def test_a_renamed_test_file_writes_its_new_path(make_trial):
     assert out["first_test_write"] == {"step_id": 2, "position": 0, "path": "new_test.go"}
 
 
-def test_a_write_outside_the_seed_repository_is_neutral(make_trial):
-    # The trace covers only the seed repository, so /tmp/try_test.go gives no path.
+def test_a_test_written_outside_the_seed_repository_is_a_throwaway_test(make_trial):
+    # The trace covers only the seed repository; the Write call names the file.
     trial = go_trial(make_trial)
     trial.step().call("Write", {"file_path": "/tmp/try_test.go", "content": "package x\n"})
+    trial.step().call("Edit", {"file_path": "/app/stopwatch.go"},
+                      files={"stopwatch.go": GO_STUB + "func New() {}\n"})
+
+    out = run(trial)["test_first_order"]
+    assert out["verdict"] == "throwaway-tests"
+    assert out["first_test_write"] == {"step_id": 2, "position": 0, "path": "/tmp/try_test.go",
+                                       "kept": False, "source": "tool"}
+
+
+def test_a_failed_write_outside_the_seed_repository_is_not_a_write(make_trial):
+    trial = go_trial(make_trial)
+    trial.step().call("Write", {"file_path": "/tmp/try_test.go", "content": "package x\n"},
+                      result="Permission denied", is_error=True)
     trial.step().call("Edit", {"file_path": "/app/stopwatch.go"},
                       files={"stopwatch.go": GO_STUB + "func New() {}\n"})
 

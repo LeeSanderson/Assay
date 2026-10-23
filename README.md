@@ -79,10 +79,11 @@ Give one or more job folders, `results/<job-id>`, as for `assay summary`. The co
 
 It writes `analysis/trajectory.jsonl`, with one JSON line for each trial, and replaces an earlier file, so the file holds only the jobs given. Each line has these values:
 
-- **Test-first order**, from the order of the writes only: `test-first`, `implementation-first`, `same-turn`, `no-test` or `no-implementation`. The anchors are the first test write and the first implementation write.
+- **Test-first order**, from the order of the writes only: `test-first`, `implementation-first`, `same-turn`, `throwaway-tests`, `no-test` or `no-implementation`. The anchors are the first kept test write and the first implementation write. `throwaway-tests` means the agent wrote test files but kept none; its test anchor has `kept: false` and the source that found the write (`trace`, `tool` or `bash`).
 - **Red-to-green order**, from the seen states: `red-to-green` (the agent first saw the tests fail, and later saw them pass), `green-first`, `never-green` or `not-observed`. The anchors are the first seen red and the first seen green.
 - **The TDD loop**: the counts of red-to-green cycles, of tests never seen red, and of refactor steps.
 - Whether a `Bash` call wrote to the repository, and whether the instrument skill loaded before the first file write.
+- **Ad-hoc runs**: the count of `Bash` calls that run a script the agent wrote (for example `npx tsx /tmp/verify.ts`), and the step of the first. They are not test runs, so the cross-check does not see them.
 
 **Expected result:** `wrote analysis/trajectory.jsonl`, one line in it for each trial, and exit code 0. No verdict is the expected one: a verdict measures the agent, and is not a pass or a fail. Red-to-green order and the TDD loop are `null` when the trial has no `replay.jsonl` and `agent-runs.jsonl`; run `assay replay` and `assay agent-runs` first. Phase 0 finds out whether the values are correct by comparing them with a person (`assay compare-labels`).
 

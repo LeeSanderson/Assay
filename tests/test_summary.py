@@ -133,6 +133,28 @@ def test_the_shares_count_trials_with_file_writing_bash_and_bash_test_or_impleme
     assert shares["offline_replay_applies"] == {"count": 1, "share": pytest.approx(1 / 3)}
 
 
+def test_throwaway_tests_and_ad_hoc_runs_are_counted_for_each_trial_and_in_the_shares(tmp_path):
+    job = Job(tmp_path, "phase0-cross")
+    job.trial().build()
+    checked = job.trial()  # writes a throwaway test and a script, and runs the script
+    checked.step().call("Write", {"file_path": "/app/stopwatch.go"},
+                        files={"stopwatch.go": GO_STUB + "func New() {}\n"})
+    checked.step().call("Bash", {"command": (
+        "cat > /tmp/try_test.go <<'EOF'\npackage x\nEOF\n"
+        "cat > /tmp/main.go <<'EOF'\npackage main\nEOF\ngo run /tmp/main.go")})
+    checked.build()
+
+    summary = summarize([job.dir], job.analysis)
+    markdown = render_markdown(summary)
+
+    assert summary["trials"][1]["test_first_order"] == "throwaway-tests"
+    assert summary["trials"][1]["ad_hoc_runs"] == {"count": 1, "first_step_id": 3}
+    assert summary["shares"]["ad_hoc_runs"] == {"count": 1, "share": pytest.approx(1 / 2)}
+    assert "| throwaway-tests |" in markdown
+    assert "Trials with an ad-hoc run (a script the agent wrote, not in the cross-check): " \
+           "1 of 2 (50%)." in markdown
+
+
 def test_the_markdown_gives_where_offline_replay_applies_as_trials_without_file_writing_bash(tmp_path):
     job = Job(tmp_path, "phase0-cross")
     job.trial().build()
