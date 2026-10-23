@@ -7,21 +7,99 @@ Assay measures the value of a context artifact for a coding agent: a skill, a ru
 
 | Command | What it does |
 |---|---|
-| `uv run assay run -c jobs/<file>.yaml` | Starts a job: runs `harbor run` with the job file, after it checks the Claude Code version and the job's results folder. `--overwrite` deletes earlier results first. |
-| `uv run assay trace-check results/<job-id>` | Checks that the trace hook worked in each trial of the job. |
-| `uv run assay replay results/<job-id>` | Gives the test state (`no-tests`, `red-compile`, `fail` or `pass`) of each trace snapshot of each trial, and says whether replay works. See [why replay](#why-replay). |
-| `uv run assay agent-runs results/<job-id>` | Cross-checks each test run of the agent with the replay of the same snapshot. |
-| `uv run assay trajectory <trial folder>...` | Measures test-first order, red-to-green order and the TDD loop of each trial, one JSON line each. |
-| `uv run assay compare-labels <sheet.csv> <trajectory.jsonl>` | Compares the labeling sheet with the output of `assay trajectory`, and prints each difference. |
-| `uv run assay summary results/<job-id>...` | Writes the Phase 0 summary of one or more jobs. |
+| [`uv run assay run -c jobs/<file>.yaml`](#assay-run) | Starts a job: runs `harbor run` with the job file, after it checks the Claude Code version and the job's results folder. `--overwrite` deletes earlier results first. |
+| [`uv run assay trace-check results/<job-id>`](#assay-trace-check) | Checks that the trace hook worked in each trial of the job. |
+| [`uv run assay replay results/<job-id>`](#assay-replay) | Gives the test state (`no-tests`, `red-compile`, `fail` or `pass`) of each trace snapshot of each trial, and says whether replay works. |
+| [`uv run assay agent-runs results/<job-id>`](#assay-agent-runs) | Cross-checks each test run of the agent with the replay of the same snapshot. |
+| [`uv run assay trajectory <trial folder>...`](#assay-trajectory) | Measures test-first order, red-to-green order and the TDD loop of each trial, one JSON line each. |
+| [`uv run assay compare-labels <sheet.csv> <trajectory.jsonl>`](#assay-compare-labels) | Compares the labeling sheet with the output of `assay trajectory`, and prints each difference. |
+| [`uv run assay summary results/<job-id>...`](#assay-summary) | Writes the Phase 0 summary of one or more jobs. |
 
-### Why replay
+The sections below say why each command exists and what result to expect. PRD section 5 gives the full rules.
+
+### `assay run`
+
+Every result must trace back to a committed job file, and every trial must run the pinned Claude Code version. `assay run` makes sure of both before Harbor starts. It refuses a job without `-c`, and a job whose Claude Code version is not `stable`, `latest` or `X.Y.Z` (for example the placeholder). Harbor cannot resume a job whose job file changed, and it cannot overwrite earlier results, so `assay run` looks at the job's results folder first. If that folder holds results of a different config, it stops and says to re-run with `--overwrite`.
+
+**Expected result:** Harbor's exit code, and one trial folder for each trial in `results/<job_name>/`. A `--dry-run` lists the trials and runs none: 8 for `phase0-cross`, 2 for `phase0-extra` and 1 for `phase0-local`. Exit code 2 means that `assay run` stopped before Harbor started, and the message says why.
+
+### `assay trace-check`
+
+Replay and every process metric depend on the trace that the trace hook writes in each trial. If the hook did not work, the measurements of that trial are not valid. The trace check makes eight checks on each trial:
+
+1. `instruments`: the trial ran the committed `instruments/` folder (the same digest).
+2. `seed`: the hook made the first snapshot, of the seed repository.
+3. `tool-calls`: each tool call in the trajectory has exactly one trace line.
+4. `errors`: no trace line records a hook error.
+5. `changed`: at least one snapshot holds a change.
+6. `claude-code-version`: the Claude Code that ran is the pinned version.
+7. `harbor-version`: the Harbor that ran is the version in `uv.lock`.
+8. `file-writes`: each successful `Edit`, `MultiEdit`, or `Write` that changed a file in the seed repository has that path in its trace line.
+
+**Expected result:** one JSON line per trial, each with `"failed_checks": []`, and exit code 0. Phase 0 needs every trial to pass. A trial that fails a check is a failure of the infrastructure: fix the cause, and run the trial again in the same cell. Exit code 2 means that the trials of the job ran more than one Claude Code version.
+
+### `assay replay`
 
 The trajectory of a trial shows the order in which the agent wrote files, but not whether the tests passed or failed between the writes. The trace hook saves a snapshot of the repository after each tool call that changes it. After the trial, `assay replay` runs the task pack's unchanged `tests/test.sh` on each snapshot, in a fresh container with no network, and reads the test state from the `reward.json` that the script writes.
 
-Replay is the only source of the test state, for every trial and every condition, so that all conditions are measured the same way (PRD section 5). It also works when the agent writes files through `Bash`, and when the agent never runs the tests itself. The test runs of the agent are only a cross-check (`assay agent-runs`). `assay trajectory` needs the replay for red-to-green order and the TDD loop; without it, both are null.
+Replay is the only source of the test state, for every trial and every condition, so that all conditions are measured the same way. It also works when the agent writes files through `Bash`, and when the agent never runs the tests itself. The test runs of the agent are only a cross-check (`assay agent-runs`). `assay trajectory` needs the replay for red-to-green order and the TDD loop; without it, both are null.
 
 Phase 0 replays each trial two times, to show that replay can rebuild the environment of the trial (PRD section 8, risk 1). Harbor deletes each trial's task image, so replay rebuilds it from the pack's Dockerfile, whose base image is pinned by digest.
+
+**Expected result:** `<trial>: replay works` for every trial, and exit code 0. Replay works on a trial when all three are true:
+
+- Each snapshot gives a test state. A timeout or a container error is a failure; `red-compile` is a test state, not a failure.
+- The replay of the last snapshot gives the same `reward.json`, field for field, as the trial's verifier.
+- The two runs give the same result for each snapshot.
+
+Phase 0 needs replay to work on all eleven trials. A trial where it does not work prints `replay does not work` and the causes, and the command exits 1. For each failure, find the cause, fix it, and replay all the trials again. If replay cannot rebuild the trial's environment and the cause cannot be fixed, the PRD's fallback is to make the mutation score the primary process metric.
+
+### `assay agent-runs`
+
+The agent's own test runs are a second view of the test state: each one gives an exit code at the moment the agent ran it. `assay agent-runs` finds each `Bash` call that runs the pack's test command in the seed repository (for example `go test` or `npm test`). It ties the run to the last snapshot before it, and checks that the exit code agrees with the replay of that snapshot. A pass agrees with exit code 0; `fail` and `red-compile` agree with any other exit code. A run that selects some of the tests (for example `go test -run X`) is `partial`, and it is not compared. The runs that agree are the "seen states" that red-to-green order and the TDD loop use.
+
+**Expected result:** one JSON line per trial, and exit code 0. Each line gives two values:
+
+- **Coverage**: the share of snapshots that have a test run after them and before the next snapshot. It shows how often the agent ran the tests. It has no target value.
+- **Agreement**: the share of compared runs that agree with the replay. Expect 1 (100%). `differences` lists the `tool_use_id` of each run that does not agree. For each one, a person finds the cause: the test-run pattern, the observation, or the replay. Only a replay that does not give the trial's environment is a failure of the replay.
+
+### `assay trajectory`
+
+This command gives the process metrics: the order in which the agent worked, and whether it worked test first. For each trial, it prints one JSON line with these values:
+
+- **Test-first order**, from the order of the writes only: `test-first`, `implementation-first`, `same-turn`, `no-test` or `no-implementation`. The anchors are the first test write and the first implementation write.
+- **Red-to-green order**, from the seen states: `red-to-green` (the agent first saw the tests fail, and later saw them pass), `green-first`, `never-green` or `not-observed`. The anchors are the first seen red and the first seen green.
+- **The TDD loop**: the counts of red-to-green cycles, of tests never seen red, and of refactor steps.
+- Whether a `Bash` call wrote to the repository, and whether the instrument skill loaded before the first file write.
+
+**Expected result:** one JSON line per trial, and exit code 0. No verdict is the expected one: a verdict measures the agent, and is not a pass or a fail. Red-to-green order and the TDD loop are `null` when the trial has no `replay.jsonl` and `agent-runs.jsonl`; run `assay replay` and `assay agent-runs` first. Phase 0 finds out whether the values are correct by comparing them with a person (`assay compare-labels`).
+
+### `assay compare-labels`
+
+`assay trajectory` is useful only if its rules give the same answer as a careful person. In Phase 0, a person labels the ten hosted trials from the neutral `jq` listing before `assay trajectory` runs. `assay compare-labels` then compares the labels with the script. The two agree on a trial, for one metric, when every field of that metric is the same: for test-first order, the verdict and the two anchors; for red-to-green order, the verdict, the two anchors and the three counts of the TDD loop. Notes are not compared.
+
+**Expected result:** each trial prints `test_first: agrees  red_to_green: agrees`, the last line is `agrees every time: test_first=True  red_to_green=True`, and the exit code is 0. Phase 0 needs one full pass over the ten trials with no difference, for each metric. Each difference prints the field and the two values, and the command exits 1. A trial that is in one file only is also a difference. For each difference, fix the script, the label or the rule in the PRD, record the correction, and compare again.
+
+### `assay summary`
+
+Phase 0 blocks all other phases, and its acceptance values come from every stage. `assay summary` puts them in one place:
+
+- For each trial: the trace check, the replay verdict, the process metrics, the coverage and agreement, and the cost.
+- The shares of trials with a file-writing `Bash` call (risk 2).
+- The pooled coverage and agreement.
+- The cost for each model tier, and the total hosted cost against the £15 cap.
+- The values of the local trial (risks 9 and 10).
+
+It writes `analysis/phase0-summary.md` and `analysis/phase0-summary.json`, and nothing else.
+
+**Expected result:** `wrote ...phase0-summary.md and ...phase0-summary.json`, and exit code 0. Phase 0 passes when the summary shows all of these:
+
+- The trace check passes on every trial.
+- Replay works on every trial.
+- The hosted trials are `within the cap` of £15. The summary converts USD with the rate `USD_PER_GBP` in `analyze/summary.py`; set it to the rate on the day.
+- The local trial's trajectory holds its tool arguments.
+
+The person check (`assay compare-labels`) is the other acceptance value, and it is not in the summary. Where the summary says "record by hand from the server log", record the local trial's prefix cache hits and background requests by hand. Exit code 2 means that the trials of a job ran more than one Claude Code version.
 
 ### Help
 
