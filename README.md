@@ -11,7 +11,7 @@ Assay measures the value of a context artifact for a coding agent: a skill, a ru
 | [`uv run assay trace-check results/<job-id>`](#assay-trace-check) | Checks that the trace hook worked in each trial of the job. |
 | [`uv run assay replay results/<job-id>`](#assay-replay) | Gives the test state (`no-tests`, `red-compile`, `fail` or `pass`) of each trace snapshot of each trial, and says whether replay works. |
 | [`uv run assay agent-runs results/<job-id>`](#assay-agent-runs) | Cross-checks each test run of the agent with the replay of the same snapshot. |
-| [`uv run assay trajectory <trial folder>...`](#assay-trajectory) | Measures test-first order, red-to-green order and the TDD loop of each trial, one JSON line each. |
+| [`uv run assay trajectory results/<job-id>/<trial>...`](#assay-trajectory) | Measures test-first order, red-to-green order and the TDD loop of each trial folder given, one JSON line each. |
 | [`uv run assay compare-labels <sheet.csv> <trajectory.jsonl>`](#assay-compare-labels) | Compares the labeling sheet with the output of `assay trajectory`, and prints each difference. |
 | [`uv run assay summary results/<job-id>...`](#assay-summary) | Writes the Phase 0 summary of one or more jobs. |
 
@@ -74,6 +74,8 @@ The agent's own test runs are a second view of the test state: each one gives an
 ### `assay trajectory`
 
 Measures how each trial worked: test-first order, red-to-green order and the TDD loop.
+
+Each `<trial folder>` is the path of one trial's folder inside a job's results, `results/<job-id>/<trial>`: the folder that holds the trial's `lock.json`, for example `results\phase0-cross\stopwatch__abc1234`. It is not the job folder, so give one path for each trial (stage 5 of [the analysis process](#the-analysis-process) lists them with `Get-ChildItem`). The command reads the trial's replay and agent runs from `analysis/<job-id>/<trial>/`, where `<job-id>` is the name of the folder that holds the trial folder. `--analysis` changes the `analysis` root.
 
 For each trial, it prints one JSON line with these values:
 
