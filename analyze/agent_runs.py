@@ -19,7 +19,7 @@ from pathlib import Path
 
 from analyze.languages import LANGUAGES, LanguageRules
 from analyze.replay import PASS, read_replay
-from analyze.shell import simple_commands, without_prefixes
+from analyze.shell import piped_simple_commands, without_prefixes
 from analyze.trial import REPO_ROOT, ToolCall, Trial, read_job, read_jsonl, share, write_jsonl
 
 AGENT_RUNS_FILE = "agent-runs.jsonl"
@@ -28,12 +28,20 @@ CROSS_CHECK_FILE = "cross-check.json"
 SEED_REPOSITORY = "/app"  # the agent's working folder in the task image
 _EXIT_CODE = re.compile(r"Exit code (\d+)")
 
+# The result of a test run, and where it came from.
+RED = "red"
+GREEN = "green"
+UNKNOWN = "unknown"
+FROM_OUTPUT = "output"
+FROM_EXIT_CODE = "exit_code"
+
 
 @dataclass(frozen=True)
 class TestRun:
     __test__ = False  # not a pytest class
 
     partial: bool  # the run selects a subset of the tests
+    piped: bool = False  # a | follows a test run, so the exit code is not the tests'
 
 
 def match_test_run(language: str, command: str) -> TestRun | None:
@@ -46,7 +54,8 @@ def match_test_run(language: str, command: str) -> TestRun | None:
     rules = LANGUAGES[language]
     cwd = SEED_REPOSITORY
     runs: list[bool] = []  # the partial flag of each test run in the command
-    for words in simple_commands(command):
+    piped = False
+    for words, to_pipe in piped_simple_commands(command):
         words = without_prefixes(words)
         if not words:
             continue
@@ -59,11 +68,12 @@ def match_test_run(language: str, command: str) -> TestRun | None:
             prefix = pattern.split()
             if words[:len(prefix)] == prefix:
                 runs.append(_partial(rules, words[len(prefix):]))
+                piped = piped or to_pipe
                 break
     if not runs:
         return None
     # One exit code covers all the runs, so one partial run makes the call partial.
-    return TestRun(partial=any(runs))
+    return TestRun(partial=any(runs), piped=piped)
 
 
 def exit_code(call: ToolCall) -> int | None:
@@ -80,13 +90,32 @@ def exit_code(call: ToolCall) -> int | None:
     return int(found[1]) if found else None
 
 
+def run_result(language: str, run: TestRun, output: str | None,
+               code: int | None) -> tuple[str, str]:
+    """The result of a test run (RED, GREEN or UNKNOWN) and its source.
+
+    The test framework's summary in the output decides when there is one.
+    A piped run's exit code belongs to the last command of the pipe (tail,
+    head, grep), so with no summary its result is UNKNOWN. An unpiped run
+    with no summary falls back to its exit code.
+    """
+    summary = _summary(LANGUAGES[language], output or "")
+    if summary is not None or run.piped:
+        return summary or UNKNOWN, FROM_OUTPUT
+    if code is None:
+        return UNKNOWN, FROM_EXIT_CODE
+    return (GREEN if code == 0 else RED), FROM_EXIT_CODE
+
+
 def agent_runs(trial: Trial, replay: list[dict]) -> list[dict]:
     """One agent-runs.jsonl line for each test run in the trial, in ATIF order.
 
     Each run applies to the last snapshot before the run's own trace line.
-    The run agrees with the replay when both give a pass or both do not
-    (fail and red-compile are the same here); a partial run, or one with no
-    exit code or no replay test state, has no agreement value (None).
+    Each run has a result (run_result). The run agrees with the replay when
+    a green result meets a pass, or a result that is not green meets a test
+    state that is not a pass (fail and red-compile are the same here); a
+    partial run, an unknown result, or no replay test state has no
+    agreement value (None).
     """
     states = {line["seq"]: line for line in replay}
     lines = []
@@ -100,10 +129,11 @@ def agent_runs(trial: Trial, replay: list[dict]) -> list[dict]:
         own = trial.trace_lines_for(call.tool_use_id)
         snapshot = trial.snapshot_before(own[0]) if own else None
         code = exit_code(call)
+        result, source = run_result(trial.language, run, call.result, code)
         state = states.get(snapshot.seq, {}).get("test_state") if snapshot else None
         agrees = None
-        if not run.partial and code is not None and state is not None:
-            agrees = (code == 0) == (state == PASS)
+        if not run.partial and result != UNKNOWN and state is not None:
+            agrees = (result == GREEN) == (state == PASS)
         lines.append({
             "tool_use_id": call.tool_use_id,
             "step_id": call.step_id,
@@ -111,6 +141,8 @@ def agent_runs(trial: Trial, replay: list[dict]) -> list[dict]:
             "command": command,
             "partial": run.partial,
             "exit_code": code,
+            "result": result,
+            "result_source": source,
             "snapshot_seq": snapshot and snapshot.seq,
             "snapshot_commit": snapshot and snapshot.commit,
             "snapshot_tool_use_id": snapshot and snapshot.tool_use_id,
@@ -171,6 +203,7 @@ def read_agent_runs(trial_out: Path | str) -> list[dict]:
     """The lines of analysis/<job-id>/<trial>/agent-runs.jsonl, in ATIF order.
 
     Each line: tool_use_id, step_id, position, command, partial, exit_code,
+    result (red, green or unknown), result_source (output or exit_code),
     snapshot_seq, snapshot_commit and snapshot_tool_use_id (the snapshot the
     run applies to; snapshot_seq joins replay.jsonl's seq), test_state (from
     the replay) and agrees (None for a partial run).
@@ -191,6 +224,14 @@ def main(argv: list[str] | None = None) -> int:
     for name, summary in cross_check_job(args.job_dir, args.analysis).items():
         print(json.dumps({"trial": name, **summary}))
     return 0
+
+
+def _summary(rules: LanguageRules, output: str) -> str | None:
+    if any(re.search(p, output, re.MULTILINE) for p in rules.red_summaries):
+        return RED
+    if any(re.search(p, output, re.MULTILINE) for p in rules.green_summaries):
+        return GREEN
+    return None
 
 
 def _partial(rules: LanguageRules, args: list[str]) -> bool:

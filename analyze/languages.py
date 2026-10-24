@@ -34,6 +34,12 @@ class LanguageRules:
     # Flags that take their value as the next argument, so that value is not
     # read as a positional argument.
     value_flags: tuple[str, ...]
+    # The test framework's summary in a test run's output, as regular
+    # expressions (searched line by line, re.MULTILINE). The run is red when
+    # a red pattern matches; otherwise green when a green pattern matches;
+    # otherwise the output has no summary.
+    red_summaries: tuple[str, ...]
+    green_summaries: tuple[str, ...]
     # Commands that run a script; running a file the agent wrote is an ad-hoc
     # run (not a test run, so not in the cross-check).
     script_runners: tuple[str, ...]
@@ -63,6 +69,12 @@ LANGUAGES: dict[str, LanguageRules] = {
             "--outputFile", "--rootDir", "--roots", "--testMatch", "--testRegex",
             "--coverageDirectory", "--cacheDirectory", "--seed", "--shard",
         ),
+        red_summaries=(
+            r"^Tests:.*\b\d+ failed\b",
+            r"^Test Suites:.*\b\d+ failed\b",
+            r"Test suite failed to run",
+        ),
+        green_summaries=(r"^Tests:.*\b\d+ passed\b",),
         script_runners=("tsx", "npx tsx", "ts-node", "npx ts-node", "node"),
     ),
     "go": LanguageRules(
@@ -73,6 +85,8 @@ LANGUAGES: dict[str, LanguageRules] = {
         selecting_flags=("-run", "--run", "-skip", "--skip"),
         positional_selects=False,  # go test <packages> runs all tests of each package
         value_flags=(),
+        red_summaries=(),
+        green_summaries=(),
         script_runners=("go run",),
     ),
 }

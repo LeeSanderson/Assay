@@ -234,3 +234,63 @@ def test_main_reads_replay_and_agent_runs_from_the_analysis_folder(make_trial, t
         "verdict": "red-to-green", "first_seen_red": red, "first_seen_green": green,
     }
     assert out["tdd_loop"] == {"cycles": 1, "tests_never_seen_red": 0, "refactor_steps": 0}
+
+
+# --- seen states from the run's result (#37) -----------------------------------
+
+TS_TEST = "import { Stopwatch } from './split-second-stopwatch'\n\ntest('new', () => {})\n"
+JEST_RED = "Test Suites: 1 failed, 1 total\nTests:       0 total\n"
+JEST_COMPILE = "FAIL ./split-second-stopwatch.test.ts\n  ● Test suite failed to run\n"
+JEST_GREEN = "Test Suites: 1 passed, 1 total\nTests:       3 passed, 3 total\n"
+
+
+def ts_trial(make_trial):
+    trial = make_trial("typescript")
+    trial.seed({"split-second-stopwatch.ts": "export {}\n"})
+    return trial
+
+
+def jest_tail(trial, output):
+    """One step that runs jest piped through tail; tail's exit code is always 0."""
+    return trial.step().call("Bash", {"command": "yarn jest 2>&1 | tail -20"}, result=output)
+
+
+def test_the_smoke_trial_shape_of_piped_runs_on_red_compile_then_pass_is_red_to_green(make_trial):
+    trial = ts_trial(make_trial)
+    test = write(trial, "split-second-stopwatch.test.ts", TS_TEST)
+    red = jest_tail(trial, JEST_COMPILE)
+    impl = write(trial, "split-second-stopwatch.ts", "export class Stopwatch {}\n")
+    jest_tail(trial, JEST_COMPILE)
+    final = write(trial, "split-second-stopwatch.test.ts", TS_TEST.replace("'\n", ".ts'\n", 1))
+    green = jest_tail(trial, JEST_GREEN)
+
+    out = analyze(trial, {test: "red-compile", impl: "red-compile", final: "pass"})
+
+    assert out["red_to_green_order"] == {
+        "verdict": "red-to-green", "first_seen_red": red, "first_seen_green": green,
+    }
+    assert out["tdd_loop"]["cycles"] == 1
+
+
+def test_a_run_with_an_unknown_result_gives_no_seen_state(make_trial):
+    trial = ts_trial(make_trial)
+    test = write(trial, "split-second-stopwatch.test.ts", TS_TEST)
+    jest_tail(trial, "  ● stopwatch › new\n")  # cut off before the summary
+    impl = write(trial, "split-second-stopwatch.ts", "export class Stopwatch {}\n")
+    green = jest_tail(trial, JEST_GREEN)
+
+    out = analyze(trial, {test: "fail", impl: "pass"})
+
+    assert out["red_to_green_order"] == {
+        "verdict": "green-first", "first_seen_red": None, "first_seen_green": green,
+    }
+
+
+def test_a_red_result_on_a_fail_snapshot_is_seen_red_whatever_its_exit_code(make_trial):
+    trial = ts_trial(make_trial)
+    test = write(trial, "split-second-stopwatch.test.ts", TS_TEST)
+    red = jest_tail(trial, JEST_RED)
+
+    out = analyze(trial, {test: "fail"})
+
+    assert out["red_to_green_order"]["first_seen_red"] == red

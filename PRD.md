@@ -524,9 +524,14 @@ Use these rules:
 1. A test run that selects some of the tests (for example `go test -run X`, `jest <file>`, or `-t`) is `partial`.
 2. A test run that does not run in the seed repository (for example after `cd /tmp/...`) is not a test run.
 3. Each test run applies to the last snapshot before it.
-4. The run agrees with the replay when both give a pass, or both do not give a pass. The observation gives only an exit code. Thus `fail` and `red-compile` are the same for this check.
+4. Each test run has a result: `red`, `green` or `unknown`. The result comes from the summary of the test framework in the output of the call, or from the exit code:
+   - A test run is piped when a `|` follows the simple command that starts the run (for example `yarn jest 2>&1 | tail -20`). The exit code of a piped run is the exit code of `tail`, `head` or `grep`, not of the tests. Thus the output alone gives the result of a piped run.
+   - A run that is not piped gets its result from the summary in the output when there is one, and from the exit code when there is no summary. Exit code 0 is `green`, and any other exit code is `red`.
+   - When neither the output nor the exit code shows red or green, the result is `unknown`.
+   - The summary patterns are data in the language rules, next to the test-run patterns. TypeScript (jest): `red` when the summary gives failed tests or failed suites, or the output gives "Test suite failed to run". `green` when the summary gives passed tests and no failure.
+5. The run agrees with the replay when a `green` result meets a `pass`, or a `red` result meets a test state that is not `pass`. Thus `fail` and `red-compile` are the same for this check. An `unknown` result is not compared.
 
-The file `analysis/<job-id>/<trial>/agent-runs.jsonl` holds one line for each test run: `tool_use_id`, the `partial` flag, the exit code, the snapshot, the test state of the snapshot from the replay, and the agreement. A `partial` run has no agreement value.
+The file `analysis/<job-id>/<trial>/agent-runs.jsonl` holds one line for each test run: `tool_use_id`, the `partial` flag, the exit code, the result and its source (`output` or `exit_code`), the snapshot, the test state of the snapshot from the replay, and the agreement. The exit code stays as raw data. A `partial` run, and a run with an `unknown` result, have no agreement value.
 
 Phase 0 gives two values for this way:
 
@@ -543,10 +548,10 @@ These two metrics use the test runs of the agent together with the test state of
 
 | Seen state | Rule |
 |---|---|
-| Seen red | The exit code is not 0, and the test state of the snapshot is `fail` or `red-compile`. |
-| Seen green | The exit code is 0, and the test state of the snapshot is `pass`. |
+| Seen red | The result of the run is `red`, and the test state of the snapshot is `fail` or `red-compile`. |
+| Seen green | The result of the run is `green`, and the test state of the snapshot is `pass`. |
 
-A test run that does not agree with the replay is not a seen state. For example, `go test -run TestNew` passes, but the replay of the snapshot gives `fail`. A test run on a `no-tests` snapshot is not a seen state, whatever its exit code.
+The result of the run is the result in `agent-runs.jsonl` (see "The cross-check"), not the exit code. A test run that does not agree with the replay is not a seen state. For example, `go test -run TestNew` passes, but the replay of the snapshot gives `fail`. A test run on a `no-tests` snapshot is not a seen state, whatever its result. A test run with an `unknown` result is not a seen state.
 
 **Red-to-green order.** Only the first seen states decide the verdict. Give the trial one verdict:
 
