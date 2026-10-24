@@ -16,6 +16,9 @@
 job_name: phase0-local
 jobs_dir: results
 n_attempts: 1
+# instrument-tdd: the skill's description alone did not load it on the smoke
+# trial, so the prompt names it (PRD "The phase 0 instrument").
+extra_instruction_paths: [variants/instrument-tdd/extra-instruction.md]
 n_concurrent_trials: 1
 timeout_multiplier: 3.0             # job level; no agent has this key (L4)
 
@@ -25,7 +28,7 @@ tasks:
   - path: tasks/typescript/split-second-stopwatch
 
 agents:
-  # instrument-tdd (variants/variants.toml): the skills part only.
+  # instrument-tdd (variants/variants.toml): the skill, and the extra instruction above.
   - import_path: instruments.agent:InstrumentedClaudeCode
     model_name: laguna-s-2.1        # bare name: the server receives this exact name
     concurrency_group: local-llm    # one server slot (L3)

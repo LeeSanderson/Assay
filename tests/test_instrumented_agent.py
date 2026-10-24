@@ -62,13 +62,14 @@ class FakeEnvironment:
         return self.calls[self.index("upload_file", lambda c: c[1] == target)][2]
 
 
-def make_agent(tmp_path, config, version=CLAUDE_VERSION):
+def make_agent(tmp_path, config, version=CLAUDE_VERSION, **kwargs):
     return InstrumentedClaudeCode(
         logs_dir=tmp_path / "agent",
         model_name="anthropic/claude-haiku-4-5",
         version=version,
         config=config,
         extra_env={"ANTHROPIC_API_KEY": "sk-test"},
+        **kwargs,
     )
 
 
@@ -162,12 +163,27 @@ def test_merge_leaves_the_variant_settings_unchanged():
     assert variant == VARIANT
 
 
-def run_trial(tmp_path, config):
-    agent = make_agent(tmp_path, config)
+def run_trial(tmp_path, config, **kwargs):
+    agent = make_agent(tmp_path, config, **kwargs)
     env = FakeEnvironment()
     asyncio.run(agent.setup(env))
     asyncio.run(agent.run("Solve the task.", env, AgentContext()))
     return env
+
+
+def launch_command(env):
+    return env.calls[env.index("exec", lambda c: "claude --verbose" in c[1])][1]
+
+
+def test_the_web_tools_are_disallowed_by_default(tmp_path):
+    # The Exercism solution is on the web; a trial must not read it (ADR 0003).
+    command = launch_command(run_trial(tmp_path, None))
+    assert "--disallowedTools WebSearch,WebFetch" in command
+
+
+def test_allow_web_lets_the_agent_use_the_web_tools(tmp_path):
+    command = launch_command(run_trial(tmp_path, None, allow_web=True))
+    assert "--disallowedTools" not in command
 
 
 def test_the_run_uses_the_merged_settings_and_kwargs_config_is_unchanged(tmp_path):

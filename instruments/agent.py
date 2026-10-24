@@ -93,6 +93,14 @@ def merge_instrument_hooks(variant: dict[str, Any]) -> dict[str, Any]:
 
 
 class InstrumentedClaudeCode(ClaudeCode):
+    def __init__(self, *args, allow_web: bool = False, **kwargs):
+        # ADR 0003: the web tools are disallowed unless the job sets
+        # `kwargs.allow_web: true`, because the task packs' solutions are on
+        # the web. Harbor's `disable_web_search` passes `--disallowedTools`,
+        # which removes the tools even under `bypassPermissions`.
+        kwargs["disable_web_search"] = not allow_web
+        super().__init__(*args, **kwargs)
+
     async def setup(self, environment: BaseEnvironment) -> None:
         # `self._base_settings` is the job's `kwargs.config` (the variant's
         # settings). `run()` uploads `_base_settings` and passes `--settings`

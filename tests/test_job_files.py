@@ -120,6 +120,19 @@ def test_control_trials_pass_no_variant_flags():
     assert not config.extra_instructions
 
 
+INSTRUMENT_INSTRUCTION = "variants/instrument-tdd/extra-instruction.md"
+
+
+@pytest.mark.parametrize("name", ["phase0-extra.yaml", "phase0-local.yaml", "phase0-smoke.yaml"])
+def test_instrument_only_jobs_name_the_skill_in_an_extra_instruction(name):
+    # PRD "The phase 0 instrument": the smoke trial did not load the skill
+    # from its description alone, so the prompt names it.
+    config = load_job(name)
+
+    assert all(agent.skills for agent in config.agents)
+    assert [Path(p).as_posix() for p in config.extra_instruction_paths] == [INSTRUMENT_INSTRUCTION]
+
+
 def test_server_address_appears_only_in_the_host_setting():
     # Job files may show an example address in a comment; no setting may hold one.
     for path in JOBS_DIR.iterdir():

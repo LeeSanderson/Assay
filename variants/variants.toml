@@ -1,6 +1,9 @@
 [instrument-tdd]
 label       = "Instrument: TDD skill adapted for trials with no user"
 skills      = ["variants/instrument-tdd/tdd"]
+# The description alone did not load the skill on the smoke trial, so a job
+# with only this variant also passes this file (PRD "The phase 0 instrument").
+extra_instruction = "variants/instrument-tdd/extra-instruction.md"
 instrument  = true
 published   = false
 source      = "mattpocock/skills"
