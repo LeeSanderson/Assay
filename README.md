@@ -68,7 +68,7 @@ Checks each test run of the agent against the replay of the same snapshot.
 
 The agent's own test runs are a second view of the test state: each one shows red or green at the moment the agent ran it. `assay agent-runs` finds each `Bash` call that runs the pack's test command in the seed repository (for example `go test` or `npm test`). It ties the run to the last snapshot before it, and gives the run a `result`:
 
-- The test framework's summary in the run's output decides when there is one. For jest, failed tests, failed suites or "Test suite failed to run" give `red`; passed tests and no failures give `green`.
+- The test framework's summary in the run's output decides when there is one. For jest, failed tests, failed suites or "Test suite failed to run" give `red`; passed tests and no failures give `green`. For `go test`, a `--- FAIL` or `FAIL` line, a `[build failed]` line or a compile-error header (`# <package>`) gives `red`; `ok` package lines and no failures give `green`.
 - A piped run (the test command is followed by `|`, for example `yarn jest 2>&1 | tail -20`) gets its result from the output only, because its exit code is `tail`'s. With no summary in the output (for example cut off by `head`), the result is `unknown`.
 - A run that is not piped and has no summary falls back to its exit code: 0 is `green`, anything else `red`.
 

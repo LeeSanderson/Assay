@@ -294,3 +294,28 @@ def test_a_red_result_on_a_fail_snapshot_is_seen_red_whatever_its_exit_code(make
     out = analyze(trial, {test: "fail"})
 
     assert out["red_to_green_order"]["first_seen_red"] == red
+
+
+# --- seen states from piped go test runs (#42) ---------------------------------
+
+GO_COMPILE = "# stopwatch [stopwatch.test]\n./stopwatch_test.go:3:6: undefined: New\nFAIL\tstopwatch [build failed]\n"
+GO_GREEN = "ok  \tstopwatch\t0.003s\n"
+
+
+def go_tail(trial, output):
+    """One step that runs go test piped through tail; tail's exit code is always 0."""
+    return trial.step().call("Bash", {"command": "go test ./... 2>&1 | tail -20"}, result=output)
+
+
+def test_piped_go_runs_on_red_compile_then_pass_are_red_to_green(make_trial):
+    trial = go_trial(make_trial)
+    test = write(trial, "stopwatch_test.go", GO_TEST)
+    red = go_tail(trial, GO_COMPILE)
+    impl = write(trial, "stopwatch.go", GO_STUB + "func New() {}\n")
+    green = go_tail(trial, GO_GREEN)
+
+    out = analyze(trial, {test: "red-compile", impl: "pass"})
+
+    assert out["red_to_green_order"] == {
+        "verdict": "red-to-green", "first_seen_red": red, "first_seen_green": green,
+    }

@@ -133,7 +133,7 @@ def test_each_test_run_gives_one_line_against_the_last_snapshot_before_it(make_t
         "partial": False,
         "exit_code": 1,
         "result": "red",
-        "result_source": "exit_code",
+        "result_source": "output",  # "--- FAIL: TestNew"
         "snapshot_seq": 1,
         "snapshot_commit": replay[1]["commit"],
         "snapshot_tool_use_id": write,
@@ -421,3 +421,71 @@ def test_agreement_compares_the_result_and_an_unknown_result_is_not_compared(
 
     assert lines[0]["agrees"] is agrees
     assert cross_check(replay, lines)["compared_runs"] == (0 if agrees is None else 1)
+
+
+# --- the result of a run, from go test's output (#42) --------------------------
+
+GO_RED = """--- FAIL: TestNew (0.00s)
+    stopwatch_test.go:8: got 1, want 0
+FAIL
+FAIL\tstopwatch\t0.003s
+FAIL
+"""
+
+
+def go_run(trial, command, output, code=0):
+    """One step that runs go test with the given output and exit code."""
+    if code == 0:
+        return trial.step().call("Bash", {"command": command}, result=output)
+    return trial.step().call("Bash", {"command": command},
+                             result=f"Exit code {code}\n{output}", is_error=True)
+
+
+def test_a_piped_go_test_run_with_fail_lines_is_red(make_trial):
+    trial = go_trial(make_trial)
+    go_run(trial, "go test ./... 2>&1 | tail -20", GO_RED)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["result_source"]) == ("red", "output")
+
+
+@pytest.mark.parametrize("output", [
+    "ok  \tstopwatch/clock\t0.002s\nstopwatch [build failed]\n",
+    "# stopwatch [stopwatch.test]\n./stopwatch_test.go:6:9: undefined: New\n",
+])
+def test_a_piped_go_test_run_that_failed_to_build_is_red(make_trial, output):
+    trial = go_trial(make_trial)
+    go_run(trial, "go test ./... 2>&1 | tail -5", output)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["result_source"]) == ("red", "output")
+
+
+@pytest.mark.parametrize("output", [
+    "ok  \tstopwatch\t0.003s\n",
+    "?   \tstopwatch/cmd\t[no test files]\nok  \tstopwatch\t(cached)\n",
+    "=== RUN   TestNew\n--- PASS: TestNew (0.00s)\nPASS\nok  \tstopwatch\t0.003s\n",
+])
+def test_a_piped_go_test_run_with_only_ok_package_lines_is_green(make_trial, output):
+    trial = go_trial(make_trial)
+    go_run(trial, "go test -v ./... 2>&1 | tail -5", output)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["result_source"]) == ("green", "output")
+
+
+@pytest.mark.parametrize("output", [
+    "",
+    "=== RUN   TestNew\n    stopwatch_test.go:8: got 1\n",
+    "?   \tstopwatch\t[no test files]\n",
+])
+def test_a_piped_go_test_run_with_no_package_result_lines_is_unknown(make_trial, output):
+    trial = go_trial(make_trial)
+    go_run(trial, "go test -v ./... 2>&1 | head -2", output)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["result_source"]) == ("unknown", "output")
