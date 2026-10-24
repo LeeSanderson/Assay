@@ -81,6 +81,10 @@ _Avoid_: Failing test first, test before implementation
 The result of the agent's own tests on one state of the repository: they pass, they fail, they do not compile, or there are none; a state with no tests is not green.
 _Avoid_: Test result, red/green status
 
+**Run result**:
+What one of the agent's own test runs showed: red, green or unknown, read from the test framework's summary in the run's output or, for an unpiped run with no summary, from its exit code; it belongs to the run, not to a state of the repository.
+_Avoid_: Exit code, test outcome
+
 **Seen state**:
 A test state the agent saw: the agent ran its tests, and what the run showed agrees with the test state of the repository at that moment; it is either seen red or seen green.
 _Avoid_: Observation, observed state

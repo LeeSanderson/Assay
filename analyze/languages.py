@@ -87,11 +87,12 @@ LANGUAGES: dict[str, LanguageRules] = {
         value_flags=(),
         # go test prints one line per package: "ok", "FAIL" or "?" (no test
         # files). Any FAIL line (--- FAIL for a test, FAIL for a package) or
-        # build failure ([build failed], or a "# <package>" compile-error
-        # header) is red first, so green means every package line that ran
-        # tests is ok.
+        # build failure ([build failed], or a "# <package>" header followed
+        # by a compiler error line such as "./x.go:12:3: ...") is red first,
+        # so green means every package line that ran tests is ok.
         red_summaries=(
-            r"^\s*--- FAIL", r"^FAIL\b", r"\[build failed\]", r"^# \S+",
+            r"^\s*--- FAIL", r"^FAIL\b", r"\[build failed\]",
+            r"^# \S+.*\r?\n(?:\./)?\S+\.go:\d+:\d+: ",
         ),
         green_summaries=(r"^ok\b",),
         script_runners=("go run",),

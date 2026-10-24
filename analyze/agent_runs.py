@@ -41,7 +41,7 @@ class TestRun:
     __test__ = False  # not a pytest class
 
     partial: bool  # the run selects a subset of the tests
-    piped: bool = False  # a | follows a test run, so the exit code is not the tests'
+    piped: bool  # a | follows a test run, so the exit code is not the tests'
 
 
 def match_test_run(language: str, command: str) -> TestRun | None:
@@ -107,15 +107,22 @@ def run_result(language: str, run: TestRun, output: str | None,
     return (GREEN if code == 0 else RED), FROM_EXIT_CODE
 
 
+def agreement(result: str, state: str | None) -> bool | None:
+    """Whether a run's result agrees with the replay's test state of its
+    snapshot: a green result meets a pass, or a red result meets a state that
+    is not a pass (fail and red-compile are the same here). None for an
+    unknown result or no test state."""
+    if result not in (RED, GREEN) or state is None:
+        return None
+    return (result == GREEN) == (state == PASS)
+
+
 def agent_runs(trial: Trial, replay: list[dict]) -> list[dict]:
     """One agent-runs.jsonl line for each test run in the trial, in ATIF order.
 
     Each run applies to the last snapshot before the run's own trace line.
-    Each run has a result (run_result). The run agrees with the replay when
-    a green result meets a pass, or a result that is not green meets a test
-    state that is not a pass (fail and red-compile are the same here); a
-    partial run, an unknown result, or no replay test state has no
-    agreement value (None).
+    Each run has a result (run_result) and, unless it is partial, an
+    agreement with the replay (agreement); a partial run's is None.
     """
     states = {line["seq"]: line for line in replay}
     lines = []
@@ -131,9 +138,7 @@ def agent_runs(trial: Trial, replay: list[dict]) -> list[dict]:
         code = exit_code(call)
         result, source = run_result(trial.language, run, call.result, code)
         state = states.get(snapshot.seq, {}).get("test_state") if snapshot else None
-        agrees = None
-        if not run.partial and result != UNKNOWN and state is not None:
-            agrees = (result == GREEN) == (state == PASS)
+        agrees = None if run.partial else agreement(result, state)
         lines.append({
             "tool_use_id": call.tool_use_id,
             "step_id": call.step_id,
@@ -206,7 +211,8 @@ def read_agent_runs(trial_out: Path | str) -> list[dict]:
     result (red, green or unknown), result_source (output or exit_code),
     snapshot_seq, snapshot_commit and snapshot_tool_use_id (the snapshot the
     run applies to; snapshot_seq joins replay.jsonl's seq), test_state (from
-    the replay) and agrees (None for a partial run).
+    the replay) and agrees (None for a partial run, an unknown result, or no
+    replay test state).
     """
     return read_jsonl(Path(trial_out) / AGENT_RUNS_FILE)
 

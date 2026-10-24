@@ -319,3 +319,17 @@ def test_piped_go_runs_on_red_compile_then_pass_are_red_to_green(make_trial):
     assert out["red_to_green_order"] == {
         "verdict": "red-to-green", "first_seen_red": red, "first_seen_green": green,
     }
+
+
+def test_an_agent_runs_line_written_before_result_existed_gives_no_seen_state(make_trial):
+    trial = go_trial(make_trial)
+    test = write(trial, "stopwatch_test.go", GO_TEST)
+    go_test(trial, 1)
+    replay = read_replay(trial.write_replay({test: "fail"}))
+    built = read_trial(trial.build())
+    old_runs = [{k: v for k, v in run.items() if k not in ("result", "result_source")}
+                for run in agent_runs(built, replay)]
+
+    out = analyze_trial(built, replay, old_runs)
+
+    assert out["red_to_green_order"]["verdict"] == "not-observed"

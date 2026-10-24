@@ -453,6 +453,7 @@ def test_a_piped_go_test_run_with_fail_lines_is_red(make_trial):
 @pytest.mark.parametrize("output", [
     "ok  \tstopwatch/clock\t0.002s\nstopwatch [build failed]\n",
     "# stopwatch [stopwatch.test]\n./stopwatch_test.go:6:9: undefined: New\n",
+    "# stopwatch\nstopwatch.go:12:3: syntax error: unexpected }\n",
 ])
 def test_a_piped_go_test_run_that_failed_to_build_is_red(make_trial, output):
     trial = go_trial(make_trial)
@@ -467,6 +468,7 @@ def test_a_piped_go_test_run_that_failed_to_build_is_red(make_trial, output):
     "ok  \tstopwatch\t0.003s\n",
     "?   \tstopwatch/cmd\t[no test files]\nok  \tstopwatch\t(cached)\n",
     "=== RUN   TestNew\n--- PASS: TestNew (0.00s)\nPASS\nok  \tstopwatch\t0.003s\n",
+    "# Running the tests\nok  \tstopwatch\t0.003s\n",  # a # heading, not a compile error
 ])
 def test_a_piped_go_test_run_with_only_ok_package_lines_is_green(make_trial, output):
     trial = go_trial(make_trial)

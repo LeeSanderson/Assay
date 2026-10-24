@@ -436,10 +436,36 @@ def test_docker_runner_replays_a_typescript_trial(tmp_path):
     assert [(l["tool_use_id"], l["test_state"]) for l in lines] == [
         (None, "no-tests"), (write, "pass")]
     assert lines[0]["reward"] == 0
-    # The real verifier's logs of each snapshot are copied out of the container.
+    # The real verifier's logs of each snapshot land on the host.
     logs = tmp_path / "analysis" / "job-ts" / "split-second-stopwatch__ts1" / "replay-logs"
     assert sorted(p.name for p in logs.iterdir()) == ["0", str(lines[1]["seq"])]
     final = logs / str(lines[1]["seq"])
     assert "Tests:" in (final / "agent-jest.log").read_text(encoding="utf-8")
     assert '"agent_tests_passed": 1' in (final / "test-stdout.txt").read_text(encoding="utf-8")
     assert (final / "outcome-tsc.log").exists()
+
+
+# A test.sh that writes a log, then ignores the inner timeout's TERM and hangs.
+HANG_DOCKERFILE = """\
+FROM python:3.11-slim
+RUN mkdir -p /app /tests && printf '%s\\n' \\
+    'mkdir -p /logs/verifier' \\
+    'echo "half a log" > /logs/verifier/outcome-tsc.log' \\
+    "trap '' TERM" \\
+    'sleep 600' > /tests/test.sh
+"""
+
+
+@pytest.mark.slow
+def test_docker_runner_keeps_the_logs_of_a_snapshot_that_outlives_the_outer_timeout(tmp_path):
+    image = "assay-test-hang:1"
+    subprocess.run(["docker", "build", "-q", "-t", image, "-"], input=HANG_DOCKERFILE,
+                   text=True, capture_output=True, check=True, timeout=600)
+    snapshot, logs = tmp_path / "snapshot", tmp_path / "logs"
+    snapshot.mkdir()
+    logs.mkdir()
+
+    with pytest.raises(RunnerError, match="timeout"):
+        DockerRunner(grace=5).run(image, snapshot, 1, logs)
+
+    assert (logs / "outcome-tsc.log").read_text(encoding="utf-8") == "half a log\n"

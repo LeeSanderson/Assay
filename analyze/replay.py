@@ -71,6 +71,9 @@ class DockerRunner:
     pack's environment/ and tests/ folders.
     """
 
+    def __init__(self, grace: float = 120):
+        self.grace = grace  # seconds past test.sh's timeout before the container is removed
+
     def image(self, pack: Path) -> str:
         name = f"{pack.parent.name}-{pack.name}:{_folder_hash(pack)}"
         tag = f"assay-replay-{name}"
@@ -94,23 +97,23 @@ class DockerRunner:
         # node_modules/ (Yarn's .yarn/unplugged/*/node_modules too), so the
         # image's own copies of those stay; any other file not in the
         # snapshot goes. test.sh's own output goes to test-stdout.txt, as
-        # Harbor's verifier keeps it, and the log folder is copied out to
-        # /replay-logs whatever the result.
+        # Harbor's verifier keeps it. The verifier's log folder is the host's
+        # `logs`, so each log lands there as it is written, even when the
+        # container is removed on the outer timeout.
         script = (
             "set -e; cd /app; "
             "find . -path ./.git -prune -o -name node_modules -prune -o ! -type d -print0"
             " | while IFS= read -r -d '' f; do [ -e \"/snapshot/$f\" ] || rm -f -- \"$f\"; done; "
-            "cp -a /snapshot/. /app/; set +e; mkdir -p /logs/verifier; "
+            "cp -a /snapshot/. /app/; set +e; "
             f"timeout {int(timeout)} bash /tests/test.sh >/logs/verifier/test-stdout.txt 2>&1; "
-            "code=$?; cp -r /logs/verifier/. /replay-logs/; "
-            "if [ $code -eq 124 ]; then exit 124; fi; cat /logs/verifier/reward.json"
+            "if [ $? -eq 124 ]; then exit 124; fi; cat /logs/verifier/reward.json"
         )
         try:
             done = _docker(
                 "run", "--rm", "--name", name, "--network", "none",
                 "-v", f"{snapshot.resolve()}:/snapshot:ro",
-                "-v", f"{logs.resolve()}:/replay-logs", image, "bash", "-c", script,
-                timeout=timeout + 120,
+                "-v", f"{logs.resolve()}:/logs/verifier", image, "bash", "-c", script,
+                timeout=timeout + self.grace,
             )
         except subprocess.TimeoutExpired:
             _docker("rm", "-f", name)

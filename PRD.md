@@ -399,6 +399,14 @@ The examples stay in TypeScript for the Go trials too. Phase 0 checks `trajector
 
 The new description must activate the skill on a prompt that does not name TDD. The smoke trial tests this: its trajectory must hold a `Skill` call for `tdd` before the first file write. If it does not, add an instruction file that names the skill (`--extra-instruction-path`), and run the smoke trial again. Each instrument trial records whether the skill loaded.
 
+The smoke gate passes on three criteria, all from the smoke trial's trajectory analysis:
+
+1. The skill loads before the first file write.
+2. The trial is not flagged for web access.
+3. Red-to-green order is not `not-observed` when the trial has an agent test run with a red or green result.
+
+The reward is not a criterion: the gate checks the setup, not the agent. Run the gate again after a change to a task pack or to the analysers, before the paid Phase 0 jobs. The trials that ran on the task packs before the Interface sections and the Exercism scrub (spec #36) are superseded. Do not delete them by hand: the next run of each job with `--overwrite` replaces them. Do not use them in a Phase 0 figure.
+
 ### Paired design
 
 Every condition runs against the same task pack, the same seed repository, and the same prompt. The analyzer computes each effect size inside one task pack. This method gives the largest available decrease in variance, and it costs nothing.

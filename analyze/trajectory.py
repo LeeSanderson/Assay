@@ -15,9 +15,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from analyze.agent_runs import AGENT_RUNS_FILE, GREEN, RED, SEED_REPOSITORY, read_agent_runs
+from analyze.agent_runs import (
+    AGENT_RUNS_FILE, RED, SEED_REPOSITORY, UNKNOWN, agreement, read_agent_runs,
+)
 from analyze.languages import IMPLEMENTATION, LANGUAGES, TEST, classify, is_test_file
-from analyze.replay import FAIL, PASS, RED_COMPILE, REPLAY_FILE, read_replay
+from analyze.replay import NO_TESTS, REPLAY_FILE, read_replay
 from analyze.shell import simple_commands, without_heredoc_bodies, without_prefixes, written_paths
 from analyze.trial import REPO_ROOT, ToolCall, Trial, read_job, read_trial, write_jsonl
 
@@ -255,23 +257,21 @@ def seen_states(replay: list[dict], runs: list[dict]) -> list[SeenState]:
     """The seen states of one trial, in ATIF order (PRD section 5).
 
     A test run gives a seen state when its result (agent-runs.jsonl) agrees
-    with the replay: a red result on a fail or red-compile snapshot (seen
-    red), or a green result on a pass snapshot (seen green). A partial run
-    counts. A run on a no-tests snapshot, an unknown result, or no test
+    with the replay (analyze.agent_runs.agreement): a red result on a fail or
+    red-compile snapshot (seen red), or a green result on a pass snapshot
+    (seen green). A partial run counts. A run on a no-tests snapshot, an
+    unknown result (or a line written before result existed), or no test
     state gives none.
     """
     snapshots = {line["seq"]: line for line in replay}
     seen = []
     for run in runs:
-        result = run["result"]
+        result = run.get("result", UNKNOWN)
         snapshot = snapshots.get(run["snapshot_seq"], {})
         state = snapshot.get("test_state")
-        if result == RED and state in (FAIL, RED_COMPILE):
-            color = SEEN_RED
-        elif result == GREEN and state == PASS:
-            color = SEEN_GREEN
-        else:
+        if state == NO_TESTS or not agreement(result, state):
             continue
+        color = SEEN_RED if result == RED else SEEN_GREEN
         seen.append(SeenState(run["tool_use_id"], run["step_id"], run["position"],
                               color, snapshot.get("agent_tests_total") or 0))
     return seen
