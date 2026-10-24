@@ -3,41 +3,41 @@ package splitsecondstopwatch
 type SplitSecondStopwatch struct{}
 
 func (sss *SplitSecondStopwatch) Start() error {
-	panic("Please implement the Start function")
+	panic("not implemented")
 }
 
 func (sss *SplitSecondStopwatch) Stop() error {
-	panic("Please implement the Stop function")
+	panic("not implemented")
 }
 
 func (sss *SplitSecondStopwatch) Reset() error {
-	panic("Please implement the Reset function")
+	panic("not implemented")
 }
 
 func (sss *SplitSecondStopwatch) Lap() error {
-	panic("Please implement the Lap function")
+	panic("not implemented")
 }
 
 func (sss *SplitSecondStopwatch) AdvanceTime(by string) {
-	panic("Please implement the AdvanceTime function")
+	panic("not implemented")
 }
 
 func (sss *SplitSecondStopwatch) State() string {
-	panic("Please implement the State function")
+	panic("not implemented")
 }
 
 func (sss *SplitSecondStopwatch) CurrentLap() string {
-	panic("Please implement the CurrentLap function")
+	panic("not implemented")
 }
 
 func (sss *SplitSecondStopwatch) Total() string {
-	panic("Please implement the Total function")
+	panic("not implemented")
 }
 
 func (sss *SplitSecondStopwatch) PreviousLaps() []string {
-	panic("Please implement the PreviousLaps function")
+	panic("not implemented")
 }
 
 func NewSplitSecondStopwatch() *SplitSecondStopwatch {
-	panic("Please implement the NewSplitSecondStopwatch function")
+	panic("not implemented")
 }
