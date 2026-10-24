@@ -27,6 +27,8 @@ mechanical_changes = [
     "renamed split_second_stopwatch_test.go -> assay_reference_split_second_stopwatch_test.go",
     "renamed cases_test.go -> assay_reference_cases_test.go",
     "instruction.md: appended the fixed Assay footer after .docs/instructions.md",
+    "instruction.md: added an Interface section between the source prose and the footer, derived from the reference tests only (time format, getter return values, AdvanceTime input, exact error messages)",
+    "environment/seed/split_second_stopwatch.go: replaced each `panic(\"Please implement the X function\")` body with `panic(\"not implemented\")`; exported names, signatures and the module name are unchanged",
 ]
 seed_files = ["go.mod", "split_second_stopwatch.go"]
 # tests/test.sh: when agent test files (`*_test.go`) exist but do not compile,

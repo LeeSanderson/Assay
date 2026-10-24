@@ -34,6 +34,7 @@ mechanical_changes = [
     "split-second-stopwatch.test.ts: xit( -> it( (28 tests)",
     "split-second-stopwatch.test.ts renamed to assay-reference.split-second-stopwatch.test.ts",
     "instruction.md: the fixed Assay footer appended after .docs/instructions.md",
+    "instruction.md: an Interface section, written from the reference tests only, inserted before the footer (getter formats, the advanceTime input, each error message)",
     "package.json: the `test` script `corepack yarn node test-runner.mjs` -> `corepack yarn lint:types && corepack yarn test:implementation`; test-runner.mjs is a track-level file that needs .meta/config.json, and these are the steps it runs for this exercise (tsc, then jest; tstyche is off)",
     "yarn.lock: the source file is empty; the pack holds the lock that `corepack yarn install` (yarn 4.5.1) wrote in the base image",
     "package.json: name `@exercism/typescript-split-second-stopwatch` -> `split-second-stopwatch`; the description and repository URL removed",
