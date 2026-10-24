@@ -35,21 +35,27 @@ def reward(compile=1, passed=0, total=0, **over) -> dict:
     return fields
 
 
-def gives(fields: dict) -> dict[str, str]:
-    return {FAKE: json.dumps({"reward": fields})}
+def gives(fields: dict, logs: dict[str, str] | None = None) -> dict[str, str]:
+    return {FAKE: json.dumps({"reward": fields, "logs": logs or {}})}
 
 
-def fails(message: str) -> dict[str, str]:
-    return {FAKE: json.dumps({"error": message})}
+def fails(message: str, logs: dict[str, str] | None = None) -> dict[str, str]:
+    return {FAKE: json.dumps({"error": message, "logs": logs or {}})}
 
 
 class FakeRunner:
+    """Like the real runner, it writes the verifier's log files into `logs`,
+    also when it then fails."""
+
     def __init__(self):
         self.calls: list[tuple[str, float]] = []
 
-    def run(self, image: str, snapshot: Path, timeout: float) -> dict:
+    def run(self, image: str, snapshot: Path, timeout: float, logs: Path) -> dict:
         self.calls.append((image, timeout))
         spec = json.loads((snapshot / FAKE).read_text(encoding="utf-8"))
+        for name, text in spec.get("logs", {}).items():
+            (logs / name).parent.mkdir(parents=True, exist_ok=True)
+            (logs / name).write_text(text, encoding="utf-8")
         if "error" in spec:
             raise RunnerError(spec["error"])
         return spec["reward"]
@@ -204,8 +210,8 @@ def test_a_trial_with_no_snapshots_does_not_work(make_trial):
 class FlakyRunner(FakeRunner):
     """Gives one more passing agent test on every odd call: the seed snapshot."""
 
-    def run(self, image, snapshot, timeout):
-        fields = dict(super().run(image, snapshot, timeout))
+    def run(self, image, snapshot, timeout, logs):
+        fields = dict(super().run(image, snapshot, timeout, logs))
         if len(self.calls) % 2 == 1:
             fields["agent_tests_passed"] += 1
             fields["agent_tests_total"] += 1
@@ -292,6 +298,72 @@ def test_replay_job_writes_replay_jsonl_and_the_verdict_under_analysis_only(tmp_
     assert set(runner.packs) == {pack}
 
 
+def _files_under(folder: Path) -> dict[str, str]:
+    return {p.relative_to(folder).as_posix(): p.read_text(encoding="utf-8")
+            for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
+def test_replay_job_keeps_each_snapshots_verifier_logs_in_a_folder_named_by_its_seq(tmp_path):
+    _fake_pack(tmp_path / "repo", 42.0)
+    job = tmp_path / "results" / "job-7"
+    b = TrialBuilder(job, name="t__a")
+    b.seed(gives(reward(), logs={"agent-tsc.log": "seed tsc\n"}))
+    step = b.step()
+    step.call("Write", files=gives(reward(compile=0, total=1), logs={
+        "agent-tsc.log": "error TS2835: Relative import paths need explicit file extensions\n",
+        "outcome-jest.log": "Tests: 29 failed\n", "test-stdout.txt": "{}\n"}))
+    step.call("Read")  # no snapshot
+    b.step().call("Write", files=gives(FINAL, logs={"agent-jest.log": "Tests: 2 passed\n"}))
+    b.reward = FINAL
+    b.build()
+
+    replay_job(job, tmp_path / "analysis", PackRunner(), tasks_root=tmp_path / "repo")
+
+    logs = tmp_path / "analysis" / "job-7" / "t__a" / "replay-logs"
+    assert _files_under(logs) == {
+        "0/agent-tsc.log": "seed tsc\n",
+        "1/agent-tsc.log": "error TS2835: Relative import paths need explicit file extensions\n",
+        "1/outcome-jest.log": "Tests: 29 failed\n",
+        "1/test-stdout.txt": "{}\n",
+        "3/agent-jest.log": "Tests: 2 passed\n",
+    }
+
+
+def test_a_snapshot_with_a_runner_error_keeps_whatever_logs_exist(tmp_path):
+    _fake_pack(tmp_path / "repo", 42.0)
+    job = tmp_path / "results" / "job-7"
+    b = TrialBuilder(job, name="t__a")
+    b.seed(fails("timeout after 42 s", logs={"outcome-tsc.log": "half a log"}))
+    b.step().call("Write", files=fails("container exited 125"))  # no logs at all
+    b.reward = FINAL
+    b.build()
+
+    verdicts = replay_job(job, tmp_path / "analysis", PackRunner(), tasks_root=tmp_path / "repo")
+
+    out = tmp_path / "analysis" / "job-7" / "t__a"
+    assert _files_under(out / "replay-logs") == {"0/outcome-tsc.log": "half a log"}
+    assert [l["error"] for l in read_replay(out)] == ["timeout after 42 s", "container exited 125"]
+    assert verdicts["t__a"].causes[:2] == [
+        "snapshot seq 0 gives no test state: timeout after 42 s",
+        "snapshot seq 1 gives no test state: container exited 125"]
+
+
+def test_a_new_replay_replaces_the_old_logs(tmp_path):
+    _fake_pack(tmp_path / "repo", 42.0)
+    job = tmp_path / "results" / "job-7"
+    b = TrialBuilder(job, name="t__a")
+    b.seed(gives(FINAL, logs={"agent-tsc.log": "new"}))
+    b.reward = FINAL
+    b.build()
+    stale = tmp_path / "analysis" / "job-7" / "t__a" / "replay-logs" / "9"
+    stale.mkdir(parents=True)
+    (stale / "agent-tsc.log").write_text("old", encoding="utf-8")
+
+    replay_job(job, tmp_path / "analysis", PackRunner(), tasks_root=tmp_path / "repo")
+
+    assert _files_under(stale.parent) == {"0/agent-tsc.log": "new"}
+
+
 def test_the_builders_replay_jsonl_matches_what_replay_writes(make_trial):
     b = make_trial()
     b.seed(gives(REPLAY_REWARDS["no-tests"]))
@@ -364,3 +436,10 @@ def test_docker_runner_replays_a_typescript_trial(tmp_path):
     assert [(l["tool_use_id"], l["test_state"]) for l in lines] == [
         (None, "no-tests"), (write, "pass")]
     assert lines[0]["reward"] == 0
+    # The real verifier's logs of each snapshot are copied out of the container.
+    logs = tmp_path / "analysis" / "job-ts" / "split-second-stopwatch__ts1" / "replay-logs"
+    assert sorted(p.name for p in logs.iterdir()) == ["0", str(lines[1]["seq"])]
+    final = logs / str(lines[1]["seq"])
+    assert "Tests:" in (final / "agent-jest.log").read_text(encoding="utf-8")
+    assert '"agent_tests_passed": 1' in (final / "test-stdout.txt").read_text(encoding="utf-8")
+    assert (final / "outcome-tsc.log").exists()
