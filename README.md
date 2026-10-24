@@ -23,7 +23,7 @@ Runs an Assay job in Harbor: it checks the job file, then runs `harbor run` with
 
 Every result must trace back to a committed job file, and every trial must run the pinned Claude Code version. `assay run` makes sure of both before Harbor starts. It refuses a job without `-c`, and a job whose Claude Code version is not `stable`, `latest` or `X.Y.Z` (for example the placeholder). Harbor cannot resume a job whose job file changed, and it cannot overwrite earlier results, so `assay run` looks at the job's results folder first. If that folder holds results of a different config, it stops and says to re-run with `--overwrite`.
 
-**Expected result:** Harbor's exit code, and one trial folder for each trial in `results/<job_name>/`. A `--dry-run` lists the trials and runs none: 8 for `phase0-cross`, 2 for `phase0-extra` and 1 for `phase0-local`. Exit code 2 means that `assay run` stopped before Harbor started, and the message says why.
+**Expected result:** Harbor's exit code, and one trial folder for each trial in `results/<job_name>/`. A `--dry-run` lists the trials and runs none: 4 each for `phase0-cross-control` and `phase0-cross-tdd`, 2 for `phase0-extra` and 1 for `phase0-local`. Exit code 2 means that `assay run` stopped before Harbor started, and the message says why.
 
 ### `assay trace-check`
 
@@ -159,32 +159,36 @@ Phase 0 has six stages. Do them in this order, one job at a time for stages 2 to
 
 Every stage uses an `assay` command, except the `jq` listing of stage 5.
 
-`<job-id>` is the folder name of the job in `results/`, for example `phase0-cross`. A trial folder is a folder in `results/<job-id>/` that holds a `lock.json`. Git ignores `results/` and `analysis/`, so the commands below also keep the filled labeling sheet and the corrections in `analysis/`.
+`<job-id>` is the folder name of the job in `results/`, for example `phase0-cross-tdd`. A trial folder is a folder in `results/<job-id>/` that holds a `lock.json`. Git ignores `results/` and `analysis/`, so the commands below also keep the filled labeling sheet and the corrections in `analysis/`.
 
 Most commands below use the variable `$job`. Set it to the job you analyze:
 
 ```powershell
-$job = 'phase0-cross'   # or phase0-extra, or phase0-local
+$job = 'phase0-cross-tdd'   # or phase0-cross-control, phase0-extra, or phase0-local
 ```
 
 ### Stage 1: Run the jobs
 
-The three Phase 0 job files are in `jobs/`. Each runs at `-k 1` with `instruments.agent:InstrumentedClaudeCode`, so every trial, the control included, carries the trace hook. Trials go to `results/<job_name>/`.
+The Phase 0 job files are in `jobs/`. Each runs at `-k 1` with `instruments.agent:InstrumentedClaudeCode`, so every trial, the control included, carries the trace hook. Trials go to `results/<job_name>/`.
 
 | Job file | Trials |
 |---|---|
-| `jobs/phase0-cross.yaml` | Haiku and Sonnet × control and `instrument-tdd` × TypeScript and Go: 8 |
+| `jobs/phase0-cross-control.yaml` | Haiku and Sonnet × control × TypeScript and Go: 4 |
+| `jobs/phase0-cross-tdd.yaml` | Haiku and Sonnet × `instrument-tdd` × TypeScript and Go: 4 |
 | `jobs/phase0-extra.yaml` | Haiku × `instrument-tdd` × TypeScript and Go: 2 |
 | `jobs/phase0-local.yaml` | the local model × `instrument-tdd` × one task pack: 1 |
 | `jobs/phase0-smoke.yaml` | Haiku × `instrument-tdd` × TypeScript: 1. Use it to check the setup before the jobs above. |
 
-**Set the Claude Code version first.** On the day of the smoke trial, read the version of the `stable` channel of Claude Code. Replace the placeholder `SET-ON-SMOKE-TRIAL-DAY` with it in all three job files, in one commit, before the smoke trial runs. In `phase0-cross.yaml` the value is written once and shared through a YAML anchor. A fast test (`tests/test_job_files.py`) fails if the three files do not hold one version. `uv run assay run` stops before Harbor starts if a job's version is not `stable`, `latest` or `X.Y.Z` (for example the placeholder, or no version), and the agent's `setup()` makes the same check for a direct `harbor run`. Do not change the version for the remaining Phase 0 trials (PRD, "Version pins").
+The cross trials are two jobs because Harbor sets extra instructions per job, not per agent. Each `instrument-tdd` job passes `variants/instrument-tdd/extra-instruction.md`, which names the skill; the control job passes nothing. The web tools are off in every trial unless a job sets `kwargs.allow_web: true` (ADR 0003).
+
+**Set the Claude Code version first.** On the day of the smoke trial, read the version of the `stable` channel of Claude Code. Replace the placeholder `SET-ON-SMOKE-TRIAL-DAY` with it in all the job files, in one commit, before the smoke trial runs. In each cross job the value is written once and shared through a YAML anchor. A fast test (`tests/test_job_files.py`) fails if the files do not hold one version. `uv run assay run` stops before Harbor starts if a job's version is not `stable`, `latest` or `X.Y.Z` (for example the placeholder, or no version), and the agent's `setup()` makes the same check for a direct `harbor run`. Do not change the version for the remaining Phase 0 trials (PRD, "Version pins").
 
 Launch each job from the repository root with `assay run`, the only supported way to start a job (ADR 0002). It gives the job file to `harbor run` with `-c`, and every other option goes to Harbor unchanged:
 
 ```powershell
-uv run assay run -c jobs/phase0-cross.yaml --dry-run   # check: 8 trials, nothing runs
-uv run assay run -c jobs/phase0-cross.yaml -y --debug
+uv run assay run -c jobs/phase0-cross-control.yaml --dry-run   # check: 4 trials, nothing runs
+uv run assay run -c jobs/phase0-cross-control.yaml -y --debug
+uv run assay run -c jobs/phase0-cross-tdd.yaml -y --debug
 uv run assay run -c jobs/phase0-extra.yaml -y --debug
 ```
 
@@ -193,14 +197,14 @@ The hosted jobs read `ANTHROPIC_API_KEY` from `.env` (see [Setup](#setup)).
 `--debug` shows Harbor's debug log on the console. Harbor writes the same log, at debug level, to `results/<job_name>/job.log` and `<trial>/trial.log` with or without the flag. The console shows only "Running agent" while Claude Code works; to follow the agent, tail `results/<job_name>/<trial>/agent/claude-code.txt`, which Harbor writes while the agent runs (one JSON event per line):
 
 ```powershell
-Get-Content results\phase0-cross\*\agent\claude-code.txt -Wait -Tail 20
+Get-Content results\phase0-cross-tdd\*\agent\claude-code.txt -Wait -Tail 20
 ```
 
 **Re-running a job.** A re-run with the same job file resumes the job in `results/<job_name>/`: Harbor keeps the finished trials and runs the rest. Harbor cannot resume a job whose job file has changed. In that case `assay run` stops before Harbor starts and names the folder. To delete the folder and start fresh, add `--overwrite`:
 
 ```powershell
-uv run assay run -c jobs/phase0-cross.yaml -y --debug --overwrite   # deletes results/phase0-cross/ without asking, then runs
-uv run assay run -c jobs/phase0-cross.yaml --overwrite --dry-run   # says what it would delete; deletes nothing
+uv run assay run -c jobs/phase0-cross-tdd.yaml -y --debug --overwrite   # deletes results/phase0-cross-tdd/ without asking, then runs
+uv run assay run -c jobs/phase0-cross-tdd.yaml --overwrite --dry-run   # says what it would delete; deletes nothing
 ```
 
 `--overwrite` deletes the folder even when the job file has not changed. A `--dry-run` without `--overwrite` only warns about a changed job file. `--job-name` and `-o`/`--jobs-dir` on the command line change the folder, as they do in Harbor.
@@ -275,7 +279,7 @@ A person labels the ten hosted trials and compares the labels with `trajectory.p
 3. Run `assay trajectory` on both hosted jobs, then compare. `assay trajectory` writes `analysis\trajectory.jsonl`. `assay compare-labels` prints each difference and exits with 1 when any trial differs:
 
    ```powershell
-   uv run assay trajectory results\phase0-cross results\phase0-extra
+   uv run assay trajectory results\phase0-cross-control results\phase0-cross-tdd results\phase0-extra
    uv run assay compare-labels analysis\sheet.csv analysis\trajectory.jsonl
    ```
 
@@ -290,7 +294,7 @@ A person labels the ten hosted trials and compares the labels with `trajectory.p
 After stages 3 and 4 have run on each job, write the summary of every Phase 0 acceptance value. It goes to `analysis/phase0-summary.md` (for a person) and `analysis/phase0-summary.json`, and the command writes nothing else:
 
 ```powershell
-uv run assay summary results\phase0-cross results\phase0-extra results\phase0-local
+uv run assay summary results\phase0-cross-control results\phase0-cross-tdd results\phase0-extra results\phase0-local
 ```
 
 ## Run the tests

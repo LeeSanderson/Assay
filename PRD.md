@@ -268,7 +268,7 @@ Harbor releases a new version every two to four weeks, often with breaking chang
 
 **Harbor.** The file `pyproject.toml` at the root of the repository pins `harbor==0.24.0` exactly. The repository commits `uv.lock`. Each job runs as `uv run assay run`, which runs the locked `harbor run` (ADR 0002). Both harness hosts use the same lock file. A change of the Harbor version is a commit to `uv.lock`.
 
-**Claude Code.** On the day of the smoke trial, read the version of the `stable` channel of Claude Code. Write this version as `kwargs.version` in all three job files, in one commit, before the smoke trial runs. Do not change it for the remaining trials of phase 0.
+**Claude Code.** On the day of the smoke trial, read the version of the `stable` channel of Claude Code. Write this version as `kwargs.version` in all the job files, in one commit, before the smoke trial runs. Do not change it for the remaining trials of phase 0.
 
 **A change of the Claude Code version.** If the pinned version fails, use the same rule to find a new pin: the version of the `stable` channel on the day of the change. Run again each phase 0 trial that used the old version. These trials count against the limit of £15. Change the version first only if the failure is a known regression of Claude Code. For other failures of the local route, Risk 9 applies.
 

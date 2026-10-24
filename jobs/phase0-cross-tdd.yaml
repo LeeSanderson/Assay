@@ -1,0 +1,37 @@
+# Phase 0, the cross job, instrument-tdd half: Haiku and Sonnet x instrument-tdd
+# x TypeScript and Go, at -k 1. 4 trials. phase0-cross-control.yaml is the
+# control half: Harbor sets extra instructions per job, so the two conditions
+# are two jobs.
+#
+# Launch from the repository root:  uv run assay run -c jobs/phase0-cross-tdd.yaml -y --debug
+# See README.md, "Run the Phase 0 jobs".
+
+job_name: phase0-cross-tdd
+jobs_dir: results
+n_attempts: 1
+# instrument-tdd: the skill's description alone did not load it on the smoke
+# trial, so the prompt names it (PRD "The phase 0 instrument").
+extra_instruction_paths: [variants/instrument-tdd/extra-instruction.md]
+
+tasks:
+  - path: tasks/typescript/split-second-stopwatch
+  - path: tasks/go/split-second-stopwatch
+
+agents:
+  # instrument-tdd (variants/variants.toml): the skill, and the extra instruction above.
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-haiku-5-5
+    skills: [variants/instrument-tdd/tdd]
+    kwargs:
+      # Claude Code version: the same value in all the job files (PRD "Version pins").
+      version: &claude_code_version "2.1.308"
+    env: &hosted_env
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"   # every model tier (L9)
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-sonnet-5-5
+    skills: [variants/instrument-tdd/tdd]
+    kwargs:
+      version: *claude_code_version
+    env: *hosted_env

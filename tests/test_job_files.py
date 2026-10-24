@@ -45,10 +45,15 @@ def trial_key(trial) -> tuple[str, str, str]:
     return trial.agent.model_name, condition, language
 
 
-def test_cross_job_expands_to_the_eight_planned_trials():
-    trials = expand_trials(load_job("phase0-cross.yaml"))
+def test_the_two_cross_jobs_expand_to_the_eight_planned_trials():
+    # Harbor sets extra instructions per job, so control and instrument-tdd
+    # are two jobs: only the instrument-tdd job names the skill.
+    control = expand_trials(load_job("phase0-cross-control.yaml"))
+    tdd = expand_trials(load_job("phase0-cross-tdd.yaml"))
 
-    assert sorted(trial_key(t) for t in trials) == sorted(
+    assert {trial_key(t)[1] for t in control} == {"control"}
+    assert {trial_key(t)[1] for t in tdd} == {"instrument-tdd"}
+    assert sorted(trial_key(t) for t in control + tdd) == sorted(
         (model, condition, language)
         for model in ("anthropic/claude-haiku-5-5", "anthropic/claude-sonnet-5-5")
         for condition in ("control", "instrument-tdd")
@@ -87,7 +92,7 @@ def test_smoke_job_is_one_haiku_instrument_tdd_trial():
     ]
 
 
-JOB_FILES = ("phase0-cross.yaml", "phase0-extra.yaml", "phase0-local.yaml", "phase0-smoke.yaml")
+JOB_FILES = ("phase0-cross-control.yaml", "phase0-cross-tdd.yaml", "phase0-extra.yaml", "phase0-local.yaml", "phase0-smoke.yaml")
 
 
 def all_agents():
@@ -109,11 +114,11 @@ def test_every_agent_is_the_instrumented_class_with_the_l9_settings():
 
 
 def test_control_trials_pass_no_variant_flags():
-    config = load_job("phase0-cross.yaml")
-    controls = [a for a in config.agents if not a.skills]
+    config = load_job("phase0-cross-control.yaml")
 
-    assert len(controls) == 2
-    for agent in controls:
+    assert len(config.agents) == 2
+    for agent in config.agents:
+        assert not agent.skills
         assert "config" not in agent.kwargs
         assert not agent.mcp_servers
     assert not config.extra_instruction_paths
@@ -123,7 +128,9 @@ def test_control_trials_pass_no_variant_flags():
 INSTRUMENT_INSTRUCTION = "variants/instrument-tdd/extra-instruction.md"
 
 
-@pytest.mark.parametrize("name", ["phase0-extra.yaml", "phase0-local.yaml", "phase0-smoke.yaml"])
+@pytest.mark.parametrize("name", [
+    "phase0-cross-tdd.yaml", "phase0-extra.yaml", "phase0-local.yaml", "phase0-smoke.yaml",
+])
 def test_instrument_only_jobs_name_the_skill_in_an_extra_instruction(name):
     # PRD "The phase 0 instrument": the smoke trial did not load the skill
     # from its description alone, so the prompt names it.
