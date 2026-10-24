@@ -11,7 +11,7 @@ import yaml
 from dotenv import dotenv_values
 from harbor.models.job.config import JobConfig
 
-from assay.cli import main
+from assay.cli import main, run_harbor
 from instruments.agent import IMPORT_PATH as INSTRUMENTED
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -418,3 +418,46 @@ def test_env_example_holds_no_value_for_any_key():
 
     assert {"ANTHROPIC_API_KEY", "ASSAY_LOCAL_BASE_URL"} <= keys.keys()
     assert {key: value for key, value in keys.items() if value} == {}
+
+
+class FakePopen:
+    """Stands in for the Harbor process: records its command and environment."""
+
+    started = []
+
+    def __init__(self, command, env):
+        FakePopen.started.append((command, env))
+
+    def wait(self):
+        return 0
+
+
+def harbor_env(monkeypatch):
+    FakePopen.started = []
+    monkeypatch.setattr("assay.cli.subprocess.Popen", FakePopen)
+    run_harbor(["-c", "jobs/x.yaml"])
+    ((command, env),) = FakePopen.started
+    assert command == ["harbor", "run", "-c", "jobs/x.yaml"]
+    return env
+
+
+def test_harbor_runs_with_utf8_file_reads_and_telemetry_off(monkeypatch):
+    # Harbor reads trajectory.json without an encoding; on Windows that is
+    # cp1252, which fails on a trajectory with other characters.
+    monkeypatch.delenv("PYTHONUTF8", raising=False)
+    monkeypatch.delenv("HARBOR_TELEMETRY", raising=False)
+
+    env = harbor_env(monkeypatch)
+
+    assert env["PYTHONUTF8"] == "1"
+    assert env["HARBOR_TELEMETRY"] == "0"
+
+
+def test_a_shell_value_wins_over_the_launcher_defaults(monkeypatch):
+    monkeypatch.setenv("PYTHONUTF8", "0")
+    monkeypatch.setenv("HARBOR_TELEMETRY", "1")
+
+    env = harbor_env(monkeypatch)
+
+    assert env["PYTHONUTF8"] == "0"
+    assert env["HARBOR_TELEMETRY"] == "1"

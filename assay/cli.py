@@ -68,6 +68,7 @@ USAGE = "\n".join([
 OVERWRITE = "--overwrite"
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"  # at the repository root
 TELEMETRY = "HARBOR_TELEMETRY"  # harbor/telemetry.py; "0" turns it off
+UTF8_MODE = "PYTHONUTF8"  # "1": Python's UTF-8 mode, the default encoding for files
 
 HarborRunner = Callable[[Sequence[str]], int]
 
@@ -76,8 +77,10 @@ def run_harbor(args: Sequence[str]) -> int:
     """`harbor run <args>` as a subprocess; returns its exit code."""
     sys.stdout.flush()  # assay's own lines come before Harbor's
     # Harbor's telemetry sender flashes a console window on Windows and sends
-    # the job's model names and cost off the machine; a shell value wins.
-    env = {TELEMETRY: "0", **os.environ}
+    # the job's model names and cost off the machine. Harbor reads files such
+    # as trajectory.json without an encoding, which on Windows is cp1252 and
+    # fails on other characters; UTF-8 mode fixes that. A shell value wins.
+    env = {TELEMETRY: "0", UTF8_MODE: "1", **os.environ}
     process = subprocess.Popen(["harbor", "run", *args], env=env)
     while True:
         try:
