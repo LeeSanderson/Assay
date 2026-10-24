@@ -1,5 +1,4 @@
 {
-  "display": "Configuration for Exercism TypeScript Exercises",
   "compilerOptions": {
     // Allows you to use the newest syntax, and have access to console.log
     // https://www.typescriptlang.org/tsconfig#lib
@@ -30,8 +29,6 @@
   "include": [
     "*.ts",
     "*.tsx",
-    ".meta/*.ts",
-    ".meta/*.tsx",
     "__typetests__/*.tst.ts"
   ],
   "exclude": ["node_modules"]

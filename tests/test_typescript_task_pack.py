@@ -100,6 +100,48 @@ def test_metadata_image_digest_is_the_dockerfile_base_image():
     assert _metadata()["base_image"] == base
 
 
+def test_no_seed_file_mentions_exercism():
+    # Earlier trials recognised the exercise from these fingerprints and
+    # fetched its solution.
+    for path in SEED.rglob("*"):
+        if path.is_file():
+            assert "exercism" not in path.read_text(encoding="utf-8").lower(), path
+
+
+# The exported names and signatures of the source stub (Exercism commit
+# a24e6ae, exercises/practice/split-second-stopwatch/split-second-stopwatch.ts).
+SOURCE_STUB_SIGNATURES = [
+    "export class SplitSecondStopwatch {",
+    "constructor() {",
+    "public get state(): unknown {",
+    "public get currentLap(): unknown {",
+    "public get total(): unknown {",
+    "public get previousLaps(): unknown[] {",
+    "public start(): unknown {",
+    "public stop(): unknown {",
+    "public lap(): unknown {",
+    "public reset(): unknown {",
+    "public advanceTime(duration: unknown): unknown {",
+]
+
+
+def test_stub_keeps_the_source_signatures_with_neutral_bodies():
+    text = (SEED / STUB).read_text(encoding="utf-8")
+    signatures = [line.strip() for line in text.splitlines()
+                  if re.match(r"\s*(export |public |constructor\()", line)]
+    assert signatures == SOURCE_STUB_SIGNATURES
+    assert "Remove this line" not in text
+
+
+def test_metadata_records_the_scrub_and_the_tooling_swap():
+    changes = " ".join(_metadata()["mechanical_changes"])
+    for edited in ["package.json", "tsconfig.json", "babel.config.cjs",
+                   "eslint.config.mjs", "yarn.lock", STUB]:
+        assert edited in changes, edited
+    assert "@babel/preset-env" in changes
+    assert "typescript-eslint" in changes
+
+
 def test_pack_files_have_lf_line_endings():
     for path in PACK.rglob("*"):
         if path.is_file():
@@ -312,6 +354,30 @@ def test_seed_stub_gives_zero_reward(image, tmp_path):
     assert reward["reference_compiles"] == 1
     assert reward["reference_total"] == REFERENCE_TEST_COUNT
     assert reward["reference_passed"] < REFERENCE_TEST_COUNT
+
+
+@pytest.mark.slow
+def test_yarn_cache_holds_no_exercism_package(image):
+    result = _run_in_image(image, "ls /root/.yarn/berry/cache | wc -l; ls /root/.yarn/berry/cache | grep -i exercism; true")
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert int(lines[0]) > 0, "the image's Yarn cache is empty or moved"
+    assert lines[1:] == []
+
+
+# The final split-second-stopwatch.ts of the phase0-smoke trial `miXZGpR`, run
+# on the pack before the Exercism scrub. It scored 7 of 29 reference tests there.
+SMOKE_TRIAL_IMPLEMENTATION = (
+    REPO_ROOT / "tests" / "fixtures" / "typescript" / "phase0-smoke-miXZGpR.split-second-stopwatch.ts")
+
+
+@pytest.mark.slow
+def test_smoke_trial_implementation_still_scores_seven_of_twenty_nine(image, tmp_path):
+    reward = _verify(image, tmp_path, {STUB: SMOKE_TRIAL_IMPLEMENTATION.read_text(encoding="utf-8")})
+    assert reward["reference_compiles"] == 1
+    assert reward["reference_passed"] == 7
+    assert reward["reference_total"] == REFERENCE_TEST_COUNT
+    assert reward["reward"] == 0
 
 
 @pytest.mark.slow

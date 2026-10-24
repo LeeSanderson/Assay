@@ -1,19 +1,15 @@
 {
-  "name": "@exercism/typescript-split-second-stopwatch",
+  "name": "split-second-stopwatch",
   "version": "1.0.0",
-  "description": "Exercism exercises in Typescript.",
   "private": true,
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/exercism/typescript"
-  },
   "type": "module",
   "engines": {
     "node": "^18.16.0 || >=20.0.0"
   },
   "devDependencies": {
-    "@exercism/babel-preset-typescript": "^0.6.0",
-    "@exercism/eslint-config-typescript": "^0.8.0",
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@babel/preset-typescript": "^7.24.7",
     "@jest/globals": "^29.7.0",
     "@types/node": "~22.7.6",
     "babel-jest": "^29.7.0",

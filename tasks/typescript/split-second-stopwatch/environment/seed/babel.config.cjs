@@ -1,5 +1,10 @@
 module.exports = {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  presets: [[require('@exercism/babel-preset-typescript'), { corejs: '3.38' }]],
+  presets: [
+    [
+      '@babel/preset-env',
+      { targets: { node: 'current' }, useBuiltIns: 'usage', corejs: '3.38' },
+    ],
+    '@babel/preset-typescript',
+  ],
   plugins: [],
 }
