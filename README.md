@@ -64,7 +64,13 @@ Phase 0 needs replay to work on all eleven trials. A trial where it does not wor
 
 Checks each test run of the agent against the replay of the same snapshot.
 
-The agent's own test runs are a second view of the test state: each one gives an exit code at the moment the agent ran it. `assay agent-runs` finds each `Bash` call that runs the pack's test command in the seed repository (for example `go test` or `npm test`). It ties the run to the last snapshot before it, and checks that the exit code agrees with the replay of that snapshot. A pass agrees with exit code 0; `fail` and `red-compile` agree with any other exit code. A run that selects some of the tests (for example `go test -run X`) is `partial`, and it is not compared. The runs that agree are the "seen states" that red-to-green order and the TDD loop use.
+The agent's own test runs are a second view of the test state: each one shows red or green at the moment the agent ran it. `assay agent-runs` finds each `Bash` call that runs the pack's test command in the seed repository (for example `go test` or `npm test`). It ties the run to the last snapshot before it, and gives the run a `result`:
+
+- The test framework's summary in the run's output decides when there is one. For jest, failed tests, failed suites or "Test suite failed to run" give `red`; passed tests and no failures give `green`.
+- A piped run (the test command is followed by `|`, for example `yarn jest 2>&1 | tail -20`) gets its result from the output only, because its exit code is `tail`'s. With no summary in the output (for example cut off by `head`), the result is `unknown`.
+- A run that is not piped and has no summary falls back to its exit code: 0 is `green`, anything else `red`.
+
+Each line of `agent-runs.jsonl` records `result` (`red`, `green` or `unknown`), `result_source` (`output` or `exit_code`) and the raw `exit_code`. The command then checks that the result agrees with the replay of that snapshot. A pass agrees with `green`; `fail` and `red-compile` agree with `red`. A run that selects some of the tests (for example `go test -run X`) is `partial`; partial runs and runs with an `unknown` result are not compared. The runs that agree are the "seen states" that red-to-green order and the TDD loop use; an `unknown` run is never a seen state.
 
 **Expected result:** one JSON line per trial, and exit code 0. Each line gives two values:
 
@@ -243,7 +249,7 @@ Harbor deletes each trial's task image, so replay rebuilds it from the pack's Do
 
 ### Stage 4: Cross-check the agent's test runs
 
-`assay agent-runs` finds each test run of the agent and compares its exit code with the replay of the same snapshot. Run it after stage 3:
+`assay agent-runs` finds each test run of the agent and compares its result (from the test summary in its output, or its exit code) with the replay of the same snapshot. Run it after stage 3:
 
 ```powershell
 uv run assay agent-runs results\$job

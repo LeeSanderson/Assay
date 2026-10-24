@@ -132,6 +132,8 @@ def test_each_test_run_gives_one_line_against_the_last_snapshot_before_it(make_t
         "command": "go test ./...",
         "partial": False,
         "exit_code": 1,
+        "result": "red",
+        "result_source": "exit_code",
         "snapshot_seq": 1,
         "snapshot_commit": replay[1]["commit"],
         "snapshot_tool_use_id": write,
@@ -292,3 +294,130 @@ def test_a_trial_without_test_runs_has_no_agreement_value(make_trial):
     summary = cross_check(replay, lines)
 
     assert (summary["coverage"], summary["agreement"]) == (0.0, None)
+
+
+# --- the result of a run, from jest's summary or the exit code (#37) ----------
+
+JEST_RED = """FAIL ./split-second-stopwatch.test.ts
+  ● stopwatch › starts
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 2 passed, 3 total
+Snapshots:   0 total
+Time:        1.2 s
+"""
+JEST_GREEN = """PASS ./split-second-stopwatch.test.ts
+
+Test Suites: 1 passed, 1 total
+Tests:       3 passed, 3 total
+Snapshots:   0 total
+Time:        1.1 s
+"""
+JEST_FAILED_TO_RUN = """FAIL ./split-second-stopwatch.test.ts
+  ● Test suite failed to run
+
+    split-second-stopwatch.test.ts:1:24 - error TS2835: Relative import paths need explicit file extensions
+"""
+
+
+def ts_trial(make_trial):
+    trial = make_trial("typescript")
+    trial.seed({"split-second-stopwatch.ts": "export {}\n"})
+    return trial
+
+
+def jest_run(trial, command, output, code=0):
+    """One step that runs jest with the given output and exit code."""
+    if code == 0:
+        return trial.step().call("Bash", {"command": command}, result=output)
+    return trial.step().call("Bash", {"command": command},
+                             result=f"Exit code {code}\n{output}", is_error=True)
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_a_piped_jest_run_whose_output_reports_failures_is_red_whatever_its_exit_code(make_trial, code):
+    trial = ts_trial(make_trial)
+    jest_run(trial, "yarn jest 2>&1 | tail -20", JEST_RED, code)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["result_source"], line["exit_code"]) == ("red", "output", code)
+
+
+def test_a_piped_jest_run_whose_output_reports_only_passes_is_green(make_trial):
+    trial = ts_trial(make_trial)
+    jest_run(trial, "corepack yarn jest | tail -5", JEST_GREEN)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["result_source"]) == ("green", "output")
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_a_piped_run_with_no_summary_in_its_output_is_unknown(make_trial, code):
+    trial = ts_trial(make_trial)
+    jest_run(trial, "yarn jest 2>&1 | head -3", "FAIL ./split-second-stopwatch.test.ts\n  ●", code)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["result_source"], line["exit_code"]) == ("unknown", "output", code)
+
+
+@pytest.mark.parametrize("code, result", [(0, "green"), (1, "red")])
+def test_an_unpiped_run_with_no_summary_falls_back_to_its_exit_code(make_trial, code, result):
+    trial = ts_trial(make_trial)
+    jest_run(trial, "yarn test > /tmp/out.txt 2>&1", "", code)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["result_source"]) == (result, "exit_code")
+
+
+def test_an_unpiped_run_with_a_summary_takes_its_result_from_the_output(make_trial):
+    trial = ts_trial(make_trial)
+    jest_run(trial, "yarn jest", JEST_RED, 0)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["result_source"]) == ("red", "output")
+
+
+def test_a_run_whose_output_has_neither_summary_nor_exit_code_is_unknown(make_trial):
+    trial = ts_trial(make_trial)
+    trial.step().call("Bash", {"command": "yarn jest"}, result=None)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["exit_code"]) == ("unknown", None)
+
+
+@pytest.mark.parametrize("command", ["yarn jest 2>&1 | tail -30", "yarn jest"])
+def test_a_suite_that_failed_to_run_reads_as_red(make_trial, command):
+    trial = ts_trial(make_trial)
+    jest_run(trial, command, JEST_FAILED_TO_RUN, 0)
+
+    [line], _ = runs_of(trial)
+
+    assert (line["result"], line["result_source"]) == ("red", "output")
+
+
+@pytest.mark.parametrize("output, state, agrees", [
+    (JEST_RED, "red-compile", True),
+    (JEST_RED, "fail", True),
+    (JEST_RED, "pass", False),
+    (JEST_GREEN, "pass", True),
+    (JEST_GREEN, "fail", False),
+    ("Done in 2s", "fail", None),
+    ("Done in 2s", "pass", None),
+])
+def test_agreement_compares_the_result_and_an_unknown_result_is_not_compared(
+        make_trial, output, state, agrees):
+    trial = ts_trial(make_trial)
+    write = trial.step().call("Write", {"file_path": "/app/split-second-stopwatch.test.ts"},
+                              files={"split-second-stopwatch.test.ts": "test('x', () => {})\n"})
+    jest_run(trial, "yarn jest 2>&1 | tail", output, 0)
+
+    lines, replay = runs_of(trial, {write: state})
+
+    assert lines[0]["agrees"] is agrees
+    assert cross_check(replay, lines)["compared_runs"] == (0 if agrees is None else 1)

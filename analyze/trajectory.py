@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from analyze.agent_runs import AGENT_RUNS_FILE, SEED_REPOSITORY, read_agent_runs
+from analyze.agent_runs import AGENT_RUNS_FILE, GREEN, RED, SEED_REPOSITORY, read_agent_runs
 from analyze.languages import IMPLEMENTATION, LANGUAGES, TEST, classify, is_test_file
 from analyze.replay import FAIL, PASS, RED_COMPILE, REPLAY_FILE, read_replay
 from analyze.shell import simple_commands, without_heredoc_bodies, without_prefixes, written_paths
@@ -254,22 +254,21 @@ class SeenState:
 def seen_states(replay: list[dict], runs: list[dict]) -> list[SeenState]:
     """The seen states of one trial, in ATIF order (PRD section 5).
 
-    A test run gives a seen state when it agrees with the replay: exit code
-    not 0 on a fail or red-compile snapshot (seen red), or exit code 0 on a
-    pass snapshot (seen green). A partial run counts. A run on a no-tests
-    snapshot, or with no exit code or no test state, gives none.
+    A test run gives a seen state when its result (agent-runs.jsonl) agrees
+    with the replay: a red result on a fail or red-compile snapshot (seen
+    red), or a green result on a pass snapshot (seen green). A partial run
+    counts. A run on a no-tests snapshot, an unknown result, or no test
+    state gives none.
     """
     snapshots = {line["seq"]: line for line in replay}
     seen = []
     for run in runs:
-        code = run["exit_code"]
+        result = run["result"]
         snapshot = snapshots.get(run["snapshot_seq"], {})
         state = snapshot.get("test_state")
-        if code is None:
-            continue
-        if code != 0 and state in (FAIL, RED_COMPILE):
+        if result == RED and state in (FAIL, RED_COMPILE):
             color = SEEN_RED
-        elif code == 0 and state == PASS:
+        elif result == GREEN and state == PASS:
             color = SEEN_GREEN
         else:
             continue

@@ -54,6 +54,12 @@ def written_paths(command: str) -> list[str]:
 def simple_commands(command: str) -> list[list[str]]:
     """The words of each simple command, split at ;, &&, ||, |, & and new lines;
     redirections and their targets are dropped."""
+    return [words for words, _ in piped_simple_commands(command)]
+
+
+def piped_simple_commands(command: str) -> list[tuple[list[str], bool]]:
+    """Each simple command, as in simple_commands, with whether a | (or |&)
+    follows it in its pipeline, so that its output goes to another command."""
     lexer = shlex.shlex(command, posix=True, punctuation_chars=_PUNCTUATION)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -62,6 +68,7 @@ def simple_commands(command: str) -> list[list[str]]:
     except ValueError:  # unbalanced quotes
         tokens = command.split()
     commands: list[list[str]] = [[]]
+    piped: list[bool] = [False]
     redirect = False
     for token in tokens:
         if redirect:
@@ -72,10 +79,12 @@ def simple_commands(command: str) -> list[list[str]]:
                 if commands[-1] and commands[-1][-1].isdigit():
                     commands[-1].pop()  # the 2 of 2>file
             else:
+                piped[-1] = token in ("|", "|&")
                 commands.append([])
+                piped.append(False)
         else:
             commands[-1].append(token)
-    return [c for c in commands if c]
+    return [(c, p) for c, p in zip(commands, piped) if c]
 
 
 def without_prefixes(words: list[str]) -> list[str]:
