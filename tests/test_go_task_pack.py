@@ -47,6 +47,9 @@ def test_metadata_records_the_provenance():
     assert any(p.endswith(".meta/example.go") for p in meta["copied_paths"])
     assert any(p.endswith("cases_test.go") for p in meta["copied_paths"])
     assert meta["mechanical_changes"]
+    edits = " ".join(meta["mechanical_changes"])
+    assert "Interface section" in edits
+    assert "split_second_stopwatch.go" in edits and "not implemented" in edits
     dockerfile = (PACK / "environment" / "Dockerfile").read_text(encoding="utf-8")
     from_image = re.search(r"^FROM (\S+)", dockerfile, re.M).group(1)
     assert re.fullmatch(r"golang:[\d.]+-bookworm@sha256:[0-9a-f]{64}", from_image)
@@ -69,6 +72,71 @@ def test_prompt_is_the_exercism_instructions_plus_the_footer():
         "as they are. Tests that you cannot see will check your solution."
     )
     assert "test" not in prompt.split("Implement the solution in")[0].lower()
+
+
+def test_seed_repository_does_not_identify_its_source():
+    for path in SEED.rglob("*"):
+        if path.is_file():
+            text = path.read_text(encoding="utf-8").lower()
+            assert "exercism" not in text, path.name
+            assert "please implement" not in text, path.name
+
+
+# The exported signatures of the source stub, at `source_commit`.
+SOURCE_SIGNATURES = [
+    "func (sss *SplitSecondStopwatch) Start() error",
+    "func (sss *SplitSecondStopwatch) Stop() error",
+    "func (sss *SplitSecondStopwatch) Reset() error",
+    "func (sss *SplitSecondStopwatch) Lap() error",
+    "func (sss *SplitSecondStopwatch) AdvanceTime(by string)",
+    "func (sss *SplitSecondStopwatch) State() string",
+    "func (sss *SplitSecondStopwatch) CurrentLap() string",
+    "func (sss *SplitSecondStopwatch) Total() string",
+    "func (sss *SplitSecondStopwatch) PreviousLaps() []string",
+    "func NewSplitSecondStopwatch() *SplitSecondStopwatch",
+]
+
+
+def test_stub_keeps_the_source_signatures_and_module():
+    stub = (SEED / STUB).read_text(encoding="utf-8")
+    assert stub.startswith("package splitsecondstopwatch\n")
+    assert "type SplitSecondStopwatch struct{}" in stub
+    signatures = re.findall(r"^(func .*?)\s*\{", stub, re.M)
+    assert signatures == SOURCE_SIGNATURES
+    go_mod = (SEED / "go.mod").read_text(encoding="utf-8")
+    assert go_mod.startswith("module splitsecondstopwatch\n")
+
+
+def _interface_section():
+    prompt = (PACK / "instruction.md").read_text(encoding="utf-8")
+    prose, _, rest = prompt.partition("\n## Interface\n")
+    assert rest, "instruction.md has no Interface section"
+    section, _, footer = rest.partition("Implement the solution in")
+    assert footer, "the Interface section must come before the Assay footer"
+    assert "| Command | Begin state |" in prose
+    return section
+
+
+def test_interface_section_states_the_getter_and_advance_time_formats():
+    section = _interface_section()
+    for name in ("CurrentLap", "Total", "PreviousLaps", "AdvanceTime", "State"):
+        assert f"`{name}" in section, name
+    assert '"HH:MM:SS"' in section
+    assert '"00:00:00"' in section
+    for state in ('"ready"', '"running"', '"stopped"'):
+        assert state in section, state
+
+
+def test_interface_section_gives_each_error_message_exactly():
+    # The messages the reference tests compare with err.Error().
+    section = _interface_section()
+    for message in (
+        "cannot start an already running stopwatch",
+        "cannot stop a stopwatch that is not running",
+        "cannot lap a stopwatch that is not running",
+        "cannot reset a stopwatch that is not stopped",
+    ):
+        assert f'"{message}"' in section, message
 
 
 # --- Slow: the pack image and tests/test.sh -------------------------------

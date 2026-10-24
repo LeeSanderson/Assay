@@ -67,6 +67,50 @@ def test_prompt_is_the_exercism_instructions_plus_the_footer():
     )
 
 
+FOOTER_START = "Implement the solution in `split-second-stopwatch.ts`."
+
+
+def _interface_section() -> str:
+    """The instruction's Interface section: from its heading up to the footer."""
+    text = (PACK / "instruction.md").read_text(encoding="utf-8")
+    heading = re.search(r"^## Interface$", text, re.MULTILINE)
+    assert heading, "instruction.md has no '## Interface' section"
+    footer = text.index(FOOTER_START)
+    assert heading.start() < footer
+    return text[heading.start():footer]
+
+
+def _reference_error_messages() -> set[str]:
+    text = (PACK / "tests" / REFERENCE_TEST).read_text(encoding="utf-8")
+    return set(re.findall(r"toThrow\(\s*'([^']+)'\s*\)", text))
+
+
+def test_instruction_interface_states_the_getter_and_advance_time_formats():
+    section = _interface_section()
+    for name in ("currentLap", "total", "previousLaps", "state", "advanceTime"):
+        assert re.search(rf"`{name}[`(]", section), name
+    assert '`"HH:MM:SS"`' in section
+    for state in ("ready", "running", "stopped"):
+        assert f'`"{state}"`' in section, state
+
+
+def test_instruction_interface_names_exactly_the_reference_error_messages():
+    messages = _reference_error_messages()
+    assert len(messages) == 4
+    stated = set(re.findall(r'`"(cannot [^"`]+)"`', _interface_section()))
+    assert stated == messages
+
+
+def test_instruction_does_not_name_a_test_command():
+    text = (PACK / "instruction.md").read_text(encoding="utf-8")
+    for command in ("yarn", "npm", "jest", "npx"):
+        assert command not in text.lower(), command
+
+
+def test_task_toml_records_the_interface_section():
+    assert any("Interface section" in change for change in _metadata()["mechanical_changes"])
+
+
 def test_task_toml_sets_the_prd_limits():
     config = tomllib.loads((PACK / "task.toml").read_text(encoding="utf-8"))
     assert config["agent"]["timeout_sec"] == 1800

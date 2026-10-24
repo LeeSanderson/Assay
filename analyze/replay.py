@@ -3,7 +3,8 @@
 PRD section 5, "Replay of the trace snapshots". For each snapshot, the task
 pack's unchanged test.sh runs in a fresh container from the pack's image,
 with no network and the verifier timeout. The agent-pass fields of the
-reward.json it writes give the test state.
+reward.json it writes give the test state. The verifier's log folder of each
+snapshot is kept in replay-logs/<seq>/, beside replay.jsonl.
 
 The PRD pins the replay image by digest. Harbor deletes each trial's task
 image, so replay cannot run that exact image: it rebuilds it from the
@@ -18,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -31,6 +33,7 @@ from typing import Protocol
 from analyze.trial import REPO_ROOT, Trial, read_job, read_jsonl, write_jsonl
 
 REPLAY_FILE = "replay.jsonl"
+LOGS_FOLDER = "replay-logs"
 
 NO_TESTS = "no-tests"
 RED_COMPILE = "red-compile"
@@ -44,11 +47,12 @@ class RunnerError(Exception):
 
 
 class Runner(Protocol):
-    def run(self, image: str, snapshot: Path, timeout: float) -> dict:
+    def run(self, image: str, snapshot: Path, timeout: float, logs: Path) -> dict:
         """Runs test.sh on the snapshot tree in a fresh container from the image.
 
-        Returns the fields of the reward.json that test.sh writes. Raises
-        RunnerError on a timeout or a container error.
+        Copies the verifier's log folder into the empty folder `logs`, also
+        when it then fails. Returns the fields of the reward.json that test.sh
+        writes. Raises RunnerError on a timeout or a container error.
         """
         ...
 
@@ -84,24 +88,28 @@ class DockerRunner:
             raise RunnerError(f"docker build of the replay image failed: {replay.stderr}")
         return replay.stdout.strip()
 
-    def run(self, image: str, snapshot: Path, timeout: float) -> dict:
+    def run(self, image: str, snapshot: Path, timeout: float, logs: Path) -> dict:
         name = f"assay-replay-{uuid.uuid4().hex[:12]}"
         # /app becomes the snapshot. The trace leaves out .git/ and every
         # node_modules/ (Yarn's .yarn/unplugged/*/node_modules too), so the
         # image's own copies of those stay; any other file not in the
-        # snapshot goes.
+        # snapshot goes. test.sh's own output goes to test-stdout.txt, as
+        # Harbor's verifier keeps it, and the log folder is copied out to
+        # /replay-logs whatever the result.
         script = (
             "set -e; cd /app; "
             "find . -path ./.git -prune -o -name node_modules -prune -o ! -type d -print0"
             " | while IFS= read -r -d '' f; do [ -e \"/snapshot/$f\" ] || rm -f -- \"$f\"; done; "
-            "cp -a /snapshot/. /app/; set +e; "
-            f"timeout {int(timeout)} bash /tests/test.sh >/dev/null 2>&1; "
-            "if [ $? -eq 124 ]; then exit 124; fi; cat /logs/verifier/reward.json"
+            "cp -a /snapshot/. /app/; set +e; mkdir -p /logs/verifier; "
+            f"timeout {int(timeout)} bash /tests/test.sh >/logs/verifier/test-stdout.txt 2>&1; "
+            "code=$?; cp -r /logs/verifier/. /replay-logs/; "
+            "if [ $code -eq 124 ]; then exit 124; fi; cat /logs/verifier/reward.json"
         )
         try:
             done = _docker(
                 "run", "--rm", "--name", name, "--network", "none",
-                "-v", f"{snapshot.resolve()}:/snapshot:ro", image, "bash", "-c", script,
+                "-v", f"{snapshot.resolve()}:/snapshot:ro",
+                "-v", f"{logs.resolve()}:/replay-logs", image, "bash", "-c", script,
                 timeout=timeout + 120,
             )
         except subprocess.TimeoutExpired:
@@ -143,8 +151,14 @@ def test_state(reward: dict) -> str:
     return PASS
 
 
-def replay_trial(trial: Trial, runner: Runner, image: str, timeout: float) -> list[dict]:
-    """One replay.jsonl line for each snapshot in the trial's trace, in seq order."""
+def replay_trial(
+    trial: Trial, runner: Runner, image: str, timeout: float, logs: Path | None = None,
+) -> list[dict]:
+    """One replay.jsonl line for each snapshot in the trial's trace, in seq order.
+
+    With `logs`, each snapshot's verifier logs go to logs/<seq>/; without it
+    they are thrown away.
+    """
     step_ids = {call.tool_use_id: call.step_id for call in trial.tool_calls}
     lines = []
     for trace_line in trial.trace:
@@ -155,9 +169,12 @@ def replay_trial(trial: Trial, runner: Runner, image: str, timeout: float) -> li
         state = error = None
         try:
             with tempfile.TemporaryDirectory(prefix="assay-snapshot-") as tmp:
-                snapshot = Path(tmp)
+                snapshot = Path(tmp) / "snapshot"
+                snapshot.mkdir()
+                snapshot_logs = (logs / str(trace_line.seq)) if logs else Path(tmp) / "logs"
+                snapshot_logs.mkdir(parents=True)
                 _export(trial.trace_git, trace_line.commit, snapshot)
-                fields = runner.run(image, snapshot, timeout)
+                fields = runner.run(image, snapshot, timeout, snapshot_logs)
             missing = [f for f in AGENT_PASS_FIELDS if not isinstance(fields.get(f), (int, float))]
             if missing:
                 raise RunnerError(f"reward.json lacks numeric {', '.join(missing)}")
@@ -234,7 +251,8 @@ def replay_job(
     """Replays each trial of a job two times and writes the results.
 
     For each trial it writes analysis/<job-id>/<trial>/replay.jsonl (the first
-    run) and replay-works.json (the verdict). It never writes in job_dir.
+    run), replay-logs/<seq>/ (the first run's verifier logs of each snapshot)
+    and replay-works.json (the verdict). It never writes in job_dir.
     """
     job_dir = Path(job_dir)
     verdicts = {}
@@ -245,10 +263,11 @@ def replay_job(
         image = runner.image(pack)
         config = tomllib.loads((pack / "task.toml").read_text(encoding="utf-8"))
         timeout = float(config["verifier"]["timeout_sec"])
-        first = replay_trial(trial, runner, image, timeout)
+        out = Path(analysis_root) / job_dir.name / trial.name
+        shutil.rmtree(out / LOGS_FOLDER, ignore_errors=True)
+        first = replay_trial(trial, runner, image, timeout, out / LOGS_FOLDER)
         second = replay_trial(trial, runner, image, timeout)
         verdict = replay_works(trial, first, second)
-        out = Path(analysis_root) / job_dir.name / trial.name
         write_replay(out, first)
         # Provenance: the image replay ran, and the pack's base image pinned by digest.
         (out / "replay-works.json").write_text(json.dumps({

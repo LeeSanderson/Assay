@@ -138,7 +138,7 @@ A task pack comes from one Exercism exercise. The same exercise gives one pack i
 
 Do not copy these parts of the Exercism directory: `.meta/` (it holds the solution), `.docs/`, `.exercism/`, `.vscode/`, `test-runner.mjs`, and each test file. A seed repository holds no `.claude/` directory, and a task image holds no `~/.claude/skills`.
 
-**The prompt.** `instruction.md` is the `.docs/instructions.md` file of the exercise without change. One footer follows it. The footer is the same in each pack, and only the file name changes:
+**The prompt.** `instruction.md` is the `.docs/instructions.md` file of the exercise without change, then an **Interface** section, then one footer. The Interface section states the interface that the reference tests check: the type and format of each value the stub returns, the format of each input, and each error case with its exact message. It is written from the reference tests only and adds no behaviour that they do not check. It does not show the reference tests, and it does not name a test command. The footer is the same in each pack, and only the file name changes:
 
 > Implement the solution in `<stub file>`. Keep the exported names and signatures as they are. Tests that you cannot see will check your solution.
 

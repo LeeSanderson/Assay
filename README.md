@@ -48,6 +48,8 @@ Runs the task pack's tests on each snapshot of each trial, to find the test stat
 
 The trajectory of a trial shows the order in which the agent wrote files, but not whether the tests passed or failed between the writes. The trace hook saves a snapshot of the repository after each tool call that changes it. After the trial, `assay replay` runs the task pack's unchanged `tests/test.sh` on each snapshot, in a fresh container with no network, and reads the test state from the `reward.json` that the script writes.
 
+Replay keeps the verifier's log folder of each snapshot in `analysis/<job-id>/<trial>/replay-logs/<seq>/`, beside `replay.jsonl`: `test-stdout.txt` (the output of `test.sh`) and the logs it writes, such as `agent-tsc.log`, `outcome-tsc.log` and `outcome-jest.log`. Read them to find why a snapshot is `red-compile` or `fail`, or why it gives no test state. A snapshot that times out keeps the logs that exist at that time.
+
 Replay is the only source of the test state, for every trial and every condition, so that all conditions are measured the same way. It also works when the agent writes files through `Bash`, and when the agent never runs the tests itself. The test runs of the agent are only a cross-check (`assay agent-runs`). `assay trajectory` needs the replay for red-to-green order and the TDD loop; without it, both are null.
 
 Phase 0 replays each trial two times, to show that replay can rebuild the environment of the trial (PRD section 8, risk 1). Harbor deletes each trial's task image, so replay rebuilds it from the pack's Dockerfile, whose base image is pinned by digest.
@@ -243,7 +245,7 @@ An empty `failed_checks` list means that the trial passes. A trial that fails is
 uv run assay replay results\$job
 ```
 
-For each trial, the command prints `replay works` or `replay does not work` and the causes. It exits with 1 when replay does not work on a trial. It writes `analysis/<job-id>/<trial>/replay.jsonl` (one line for each snapshot) and `replay-works.json` (the verdict).
+For each trial, the command prints `replay works` or `replay does not work` and the causes. It exits with 1 when replay does not work on a trial. It writes `analysis/<job-id>/<trial>/replay.jsonl` (one line for each snapshot), `replay-works.json` (the verdict) and `replay-logs/<seq>/` (the verifier's logs of each snapshot, from the first run).
 
 Harbor deletes each trial's task image, so replay rebuilds it from the pack's Dockerfile, whose base image is pinned by digest. `replay-works.json` records the rebuilt image ID and that base image. For each failure, find the cause, fix it, and replay all the trials again (PRD section 7, Phase 0).
 
