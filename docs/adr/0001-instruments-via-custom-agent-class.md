@@ -11,4 +11,4 @@ Every Assay job runs `instruments.agent:InstrumentedClaudeCode`, a small subclas
 
 ## Consequences
 
-The subclass is coupled to Harbor internals (`setup()`, `upload_dir`), so the Harbor version pin matters more. Harbor records only the class's import path, so `instruments.json` carries our own digest of `instruments/` (which includes the class).
+The subclass is coupled to Harbor internals (`setup()`, `upload_dir`), so the Harbor version pin matters more. Harbor records only the class's import path, so `instruments.json` carries our own digest of `instruments/` (which includes the class). Because the class runs in Harbor's process, it also gives a local model a zero price in LiteLLM's price table, which is global to that process, so that Harbor's per-step cost estimate succeeds (issue #33). That couples it to `model_connection` and to how `_estimate_step_costs` prices a step too.

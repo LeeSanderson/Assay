@@ -1,8 +1,10 @@
-"""`InstrumentedClaudeCode`: Harbor's `claude-code` agent plus the measurement instruments.
+"""`InstrumentedClaudeCode`: Harbor's `claude-code` agent plus the measurement
+instruments, and a price for a local model.
 
 PRD section 5, "How the hook gets into the container", and ADR 0001. Every
 Assay job runs this class through `import_path:
-instruments.agent:InstrumentedClaudeCode`. It overrides `setup()` only.
+instruments.agent:InstrumentedClaudeCode`. It overrides `__init__()` (the web
+tools and a local model's price) and `setup()` (the instruments).
 """
 
 import copy
@@ -14,6 +16,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import litellm
 from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.environments.base import BaseEnvironment
 
@@ -92,6 +95,20 @@ def merge_instrument_hooks(variant: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def has_price(model: str) -> bool:
+    """Whether LiteLLM can price a step of `model`, the way Harbor's
+    `_estimate_step_costs` asks it."""
+    try:
+        litellm.cost_per_token(
+            model=model, prompt_tokens=1, completion_tokens=1,
+            cache_creation_input_tokens=1, cache_read_input_tokens=1,
+            service_tier="standard",
+        )
+    except Exception:  # LiteLLM raises several error types for an unknown model
+        return False
+    return True
+
+
 class InstrumentedClaudeCode(ClaudeCode):
     def __init__(self, *args, allow_web: bool = False, **kwargs):
         # ADR 0003: the web tools are disallowed unless the job sets
@@ -100,6 +117,25 @@ class InstrumentedClaudeCode(ClaudeCode):
         # which removes the tools even under `bypassPermissions`.
         kwargs["disable_web_search"] = not allow_web
         super().__init__(*args, **kwargs)
+        # A local model (#33): after the trial, Harbor prices each step with
+        # `litellm.cost_per_token`, which raises for a model LiteLLM does not
+        # know and logs an error per step. A zero price makes it succeed.
+        # Local means Harbor gives Claude Code a base URL: from the job's env
+        # or the host's, an empty value being none (PRD L10). A model LiteLLM
+        # already prices keeps its price: the base URL may be a proxy in front
+        # of Anthropic, and the price table is global to Harbor's process.
+        # Harbor names each step's model as the server reports it, which for
+        # the local server is the job's model_name. `analyze.trial` reads only
+        # the job env (it labels trials after the run), so a base URL set only
+        # on the host is local here but not there.
+        if (self.model_connection.configured_base_url and self.model_name
+                and not has_price(self.model_name)):
+            litellm.register_model({self.model_name: {
+                "input_cost_per_token": 0.0,
+                "output_cost_per_token": 0.0,
+                "litellm_provider": "anthropic",  # the server speaks Anthropic's API
+                "mode": "chat",
+            }})
 
     async def setup(self, environment: BaseEnvironment) -> None:
         # `self._base_settings` is the job's `kwargs.config` (the variant's

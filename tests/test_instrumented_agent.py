@@ -11,6 +11,7 @@ import copy
 import json
 from pathlib import Path
 
+import litellm
 import pytest
 from harbor.environments.base import ExecResult
 from harbor.models.agent.context import AgentContext
@@ -62,13 +63,14 @@ class FakeEnvironment:
         return self.calls[self.index("upload_file", lambda c: c[1] == target)][2]
 
 
-def make_agent(tmp_path, config, version=CLAUDE_VERSION, **kwargs):
+def make_agent(tmp_path, config, version=CLAUDE_VERSION,
+               model_name="anthropic/claude-haiku-4-5", env=None, **kwargs):
     return InstrumentedClaudeCode(
         logs_dir=tmp_path / "agent",
-        model_name="anthropic/claude-haiku-4-5",
+        model_name=model_name,
         version=version,
         config=config,
-        extra_env={"ANTHROPIC_API_KEY": "sk-test"},
+        extra_env={"ANTHROPIC_API_KEY": "sk-test", **(env or {})},
         **kwargs,
     )
 
@@ -238,6 +240,64 @@ def test_a_version_the_bootstrap_script_does_not_accept_is_rejected(version):
 @pytest.mark.parametrize("version", ["2.1.308", "10.0.0", "stable", "latest"])
 def test_a_real_version_is_accepted(version):
     check_version_set(version)
+
+
+def step_cost(model, service_tier="standard"):
+    """`litellm.cost_per_token` called as Harbor's `_estimate_step_costs` calls it."""
+    return litellm.cost_per_token(
+        model=model, prompt_tokens=100, completion_tokens=50,
+        cache_creation_input_tokens=10, cache_read_input_tokens=20,
+        service_tier=service_tier,
+    )
+
+
+LOCAL_SERVER = "http://192.0.2.1:8080"
+
+
+@pytest.fixture
+def isolated_prices(monkeypatch):
+    """LiteLLM's price table is global to the process: put it back after the
+    test. The host's ANTHROPIC_BASE_URL is cleared so each test sets its own."""
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    saved = copy.deepcopy(litellm.model_cost)
+    yield
+    litellm.model_cost.clear()
+    litellm.model_cost.update(saved)
+
+
+@pytest.mark.parametrize("service_tier", ["standard", "priority", None])
+def test_a_local_agents_model_is_priced_at_zero(tmp_path, isolated_prices, service_tier):
+    # Without a price, Harbor logs an error for each step of a local trial (#33).
+    make_agent(tmp_path, None, model_name="assay-test-local-model",
+               env={"ANTHROPIC_BASE_URL": LOCAL_SERVER})
+    assert step_cost("assay-test-local-model", service_tier) == (0.0, 0.0)
+
+
+def test_a_base_url_from_the_host_env_is_a_local_server(tmp_path, isolated_prices, monkeypatch):
+    # With no job env, Harbor gives Claude Code the shell's (or .env's) base URL.
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", LOCAL_SERVER)
+    make_agent(tmp_path, None, model_name="assay-test-local-model")
+    assert step_cost("assay-test-local-model") == (0.0, 0.0)
+
+
+@pytest.mark.parametrize("env", [
+    {},  # a hosted model
+    {"ANTHROPIC_BASE_URL": ""},  # Harbor reads an empty value as unset and calls Anthropic
+])
+def test_a_hosted_model_litellm_does_not_know_stays_unpriced(tmp_path, isolated_prices, env):
+    # Harbor's cost for it is then None, not a false $0.
+    make_agent(tmp_path, None, model_name="assay-test-hosted-model", env=env)
+    with pytest.raises(Exception, match="assay-test-hosted-model"):
+        step_cost("assay-test-hosted-model")
+
+
+def test_a_model_litellm_prices_keeps_its_price_behind_a_base_url(tmp_path, isolated_prices):
+    # A base URL may be a proxy in front of Anthropic; the price is global to
+    # Harbor's process, so a $0 would hide every hosted step's real cost.
+    hosted_cost = step_cost("claude-sonnet-4-5")
+    make_agent(tmp_path, None, model_name="claude-sonnet-4-5",
+               env={"ANTHROPIC_BASE_URL": LOCAL_SERVER})
+    assert step_cost("claude-sonnet-4-5") == hosted_cost != (0.0, 0.0)
 
 
 @pytest.mark.parametrize("version", ["SET-ON-SMOKE-TRIAL-DAY", None])
