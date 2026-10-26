@@ -1,6 +1,6 @@
 # Assay
 
-Assay measures how much a context artifact changes a coding agent's work and cost, across model tiers and target languages, as a controlled experiment.
+Assay measures how context artifacts, model tiers and harnesses change a coding agent's work and cost, as controlled experiments.
 
 ## Language
 
@@ -23,6 +23,18 @@ A skill in the repository's own agent configuration that helps build Assay, and 
 _Avoid_: Installed skill
 
 ### Experiment design
+
+**Experiment**:
+One question Assay answers, defined by the factors it varies, the baseline it compares against, its task packs, its repetitions and its evaluations.
+_Avoid_: Study, benchmark, suite
+
+**Factor**:
+One axis an experiment varies (harness, model tier or condition), each with a declared baseline level that every comparison is made against.
+_Avoid_: Arm, dimension
+
+**Harness**:
+The agent program that drives the model in a trial, with its own system prompt and tools, such as Claude Code or opencode; its prompts and tools are part of what a harness comparison measures.
+_Avoid_: Adapter, runner, agent
 
 **Condition**:
 What the agent receives in addition to the task prompt in one trial: either the control or one variant.
@@ -56,7 +68,7 @@ One model on the model axis of the matrix, hosted or local.
 _Avoid_: Arm
 
 **Cell**:
-One combination of model tier, condition, and language, holding the trials across task packs and repetitions.
+One combination of harness, model tier, condition, and language, holding the trials across task packs and repetitions.
 _Avoid_: Arm, slot
 
 **Local setup**:
@@ -66,6 +78,24 @@ _Avoid_: Local stack, local config
 **Reference setup**:
 The one local setup that Assay documents as guidance; any other local setup may differ from it, provided it is recorded in the same way.
 _Avoid_: Required setup, default setup
+
+### Telemetry and evaluation
+
+**Trial record**:
+The fixed, harness-neutral telemetry of one trial: every tool call in order, tokens, cost, time, and the repository's history through the trial; every supported harness produces it in full, and states how finely it captured that history.
+_Avoid_: Logs, trace, results
+
+**Evaluation**:
+An experiment-specific step that turns trial records and the final repository into higher-level metrics, such as test-first order or new security findings.
+_Avoid_: Analyzer, grader, scorer
+
+**Summary**:
+The optional last step of an experiment, which combines the evaluation results of all its trials into comparisons against the baseline.
+_Avoid_: Report generator, aggregation
+
+**Infrastructure failure**:
+A trial that went wrong for a reason outside the agent's work, such as a crashed container or a broken trial record; it is discarded and run again, unlike a trial in which the agent simply failed the task.
+_Avoid_: Failed trial, error
 
 ### Process metrics
 
