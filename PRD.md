@@ -637,7 +637,11 @@ The record does not copy the arguments or the result of the tool. ATIF holds the
 7. The `harbor_version` value in `instruments.json` is the same as the Harbor version in the committed `uv.lock`.
 8. Each `Edit` or `MultiEdit` call that succeeded on a path in the seed repository has that path in its line. Each `Write` call that succeeded on a path in the seed repository and changed the content of the file also has that path in its line. To find a change, the analyzer compares the content of the `Write` call with the file in the previous snapshot.
 
-A trial that fails the trace check is a failure of the infrastructure. It runs again in the same cell.
+The result of the trace check sorts each trial:
+
+- Checks 1, 6 and 7 find a change in the configuration. Another run of the trial gives the same failure. A trial that fails one of these checks is a halt: the experiment stops after the current job.
+- Checks 2, 3, 4 and 8 find data that the trace hook lost. A trial that fails one of these checks is an infrastructure failure. It runs again in the same cell.
+- Check 5 does not find a failure of the infrastructure. A trial in which the agent changes no file is a result. The TDD evaluations report it as a trial with no file writes.
 
 ### Reporting rules
 

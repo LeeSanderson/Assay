@@ -94,8 +94,16 @@ The optional last step of an experiment, which combines the evaluation results o
 _Avoid_: Report generator, aggregation
 
 **Infrastructure failure**:
-A trial that went wrong for a reason outside the agent's work, such as a crashed container or a broken trial record; it is discarded and run again, unlike a trial in which the agent simply failed the task.
+A trial whose outcome does not reflect the agent working on the task under its declared conditions, such as one cut short by a model service outage, a crashed container or a broken trial record; it is discarded and run again in its place, unlike a trial in which the agent ran out of time or simply failed the task.
 _Avoid_: Failed trial, error
+
+**Halt**:
+An infrastructure failure that running the trial again would only repeat, such as an exhausted quota or a pinned version that drifted; it stops the experiment until a person fixes the cause.
+_Avoid_: Abort, fatal error
+
+**Experiment log**:
+The running record of everything that happened to one experiment across all its invocations, including each discarded trial and what it cost.
+_Avoid_: Discard list, run history
 
 ### Process metrics
 
