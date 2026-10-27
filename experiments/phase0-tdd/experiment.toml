@@ -1,0 +1,78 @@
+# PROTOTYPE (wayfinder #49): throwaway, on branch prototype/experiment-contracts.
+# The Phase 0 TDD experiment as `uv run assay experiment phase0-tdd` would read it.
+#
+# Results go to results/<experiment>/<job_name>/ (assay passes --jobs-dir), so two
+# experiments that reference the same job file never share a Harbor job folder.
+
+name = "phase0-tdd"
+question = """
+Does the measurement work: test-first order, red-to-green order and the TDD loop
+agree with a person, replay works on every trial, and the hosted trials cost 15 GBP
+or less, discarded attempts included.
+"""
+
+# --- Factors -------------------------------------------------------------------
+# Each factor names its baseline level. The levels of harness and model tier are
+# read from each trial (the trial record), never declared twice; the condition of a
+# trial comes from its job (below). A factor left out here is not varied: Assay
+# checks that every trial has one and the same level of it.
+
+[factors.condition]
+baseline = "control"
+levels = ["control", "instrument-tdd"]      # names from variants/variants.toml
+
+[factors.model_tier]
+baseline = "anthropic/claude-sonnet-5-5"
+levels = ["anthropic/claude-haiku-5-5", "anthropic/claude-sonnet-5-5", "local/reference"]
+
+# harness: not varied (claude-code in every trial).
+# language is not a factor: it is part of the cell, read from the task pack path.
+
+# --- Jobs ----------------------------------------------------------------------
+# Committed job files, never generated (ADR 0004). Run in this order, one at a time.
+# Repetitions are what the jobs hold (n_attempts, and a job such as phase0-extra
+# that adds trials to a cell); the expected trial count of each cell comes from the
+# job configs, so the summary can tell a short cell.
+
+[[jobs]]
+file = "jobs/phase0-cross-control.yaml"
+condition = "control"
+
+[[jobs]]
+file = "jobs/phase0-cross-tdd.yaml"
+condition = "instrument-tdd"
+
+[[jobs]]
+file = "jobs/phase0-extra.yaml"
+condition = "instrument-tdd"
+
+[[jobs]]
+file = "jobs/phase0-local.yaml"
+condition = "instrument-tdd"
+
+# --- Evaluations ----------------------------------------------------------------
+# The trial-record check (today's trace-check) is not listed: it always runs, after
+# each job, and only trials that pass it reach the evaluations.
+# Listed in run order. Each evaluation declares its own dependencies in code;
+# Assay stops before any job runs if one is listed before what it depends on, or
+# its dependency is not listed.
+# `use` is a built-in name, or a path relative to this folder (./...).
+# `options` is passed to the evaluation and counts in its input digest.
+
+[[evaluations]]
+use = "replay"
+
+[[evaluations]]
+use = "agent-runs"
+
+[[evaluations]]
+use = "trajectory"
+
+# --- Summary --------------------------------------------------------------------
+# Optional. Always reruns. Phase 0's acceptance numbers are specific to this
+# experiment, so its summary is experiment-local; a general paired-delta summary
+# would be a built-in (use = "paired").
+
+[summary]
+use = "./summary.py"
+options = { cap_gbp = 15, usd_per_gbp = 1.27 }
