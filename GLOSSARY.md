@@ -82,7 +82,7 @@ _Avoid_: Required setup, default setup
 ### Telemetry and evaluation
 
 **Trial record**:
-The fixed, harness-neutral telemetry of one trial: every tool call in order, tokens, cost, time, and the repository's history through the trial; every supported harness produces it in full, and states how finely it captured that history.
+The fixed, harness-neutral telemetry of one trial: every tool call in order, tokens, cost, time, and the repository's history through the trial; every supported harness produces its required core in full and states how finely it captured that history, while an optional part, such as each call's result or exit code, is either given or marked absent, never guessed.
 _Avoid_: Logs, trace, results
 
 **Evaluation**:
