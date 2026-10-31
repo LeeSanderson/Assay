@@ -1,0 +1,18 @@
+# Probe (wayfinder ticket 55): an image-type environment mount through harbor run.
+# Throwaway; not a job file. Launch: uv run assay run -c probe/image-mount.yaml -y
+job_name: probe-bad-digest
+jobs_dir: probe/results
+n_attempts: 1
+
+environment:
+  mounts:
+    - type: image
+      source: assay-probe-tools@sha256:000000000000586beeee9f7d2cc3723a0ead9e8c4abcf85e68eee370a801c3ad
+      target: /opt/assay-tools
+      read_only: true
+
+tasks:
+  - path: probe/tasks/mount-probe
+
+agents:
+  - name: oracle
