@@ -55,12 +55,16 @@ _Avoid_: Treatment, arm
 One self-contained task with its prompt, seed repository, pinned toolchain image, gold solution, and withheld reference tests.
 _Avoid_: Task, exercise, benchmark item
 
+**Pack recipe**:
+An experiment's rules for making its task packs: where the tasks come from and what each seed repository, prompt and set of reference tests holds.
+_Avoid_: Pack format, task template
+
 **Seed repository**:
-The files an agent starts from in a trial: the task's public interface as a stub and the toolchain configuration, with no tests.
+The files an agent starts from in a trial, committed as `seed`; what they hold is set by the experiment's pack recipe, such as a stub with no tests for test-driven development or a working codebase with its own tests for refactoring.
 _Avoid_: Starter code, scaffold, template
 
 **Trial**:
-One run of one agent, under one condition, on one task pack, at one model tier.
+One run of one agent, under one condition, on one task pack, at one model tier; it belongs to the one experiment that ran it, while its inputs, such as the task pack, may be shared by many experiments.
 _Avoid_: Run, episode
 
 **Model tier**:
