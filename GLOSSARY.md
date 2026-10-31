@@ -75,6 +75,10 @@ _Avoid_: Arm
 One combination of harness, model tier, condition, and language, holding the trials across task packs and repetitions.
 _Avoid_: Arm, slot
 
+**Short cell**:
+A cell that holds fewer kept trials than its jobs promise, because a job has not run yet or a discarded trial was not replaced; the summary shows it rather than failing.
+_Avoid_: Missing cell, incomplete cell
+
 **Local setup**:
 The hardware, inference server, model file, and settings that together serve a local model tier, recorded in full beside its results.
 _Avoid_: Local stack, local config
