@@ -24,8 +24,9 @@ class FakeHarbor:
     """Plays `harbor run`: one fixture trial (seed, one Write, final) for each
     task, agent and attempt that has no result.json yet."""
 
-    def __init__(self):
+    def __init__(self, halt=()):
         self.ran = []
+        self.halt = set(halt)  # <job>/<trial>: a wrong instruments digest, a halt
 
     def __call__(self, args):
         args = list(args)
@@ -35,7 +36,7 @@ class FakeHarbor:
         (folder / "config.json").write_text(config.model_dump_json(), encoding="utf-8")
         for task in config.tasks:
             language, slug = Path(task.path).parts[-2:]
-            for a, _agent in enumerate(config.agents):
+            for a, agent in enumerate(config.agents):
                 for attempt in range(config.n_attempts):
                     name = f"{slug}__{a}{attempt}"
                     if (folder / name / "result.json").exists():
@@ -46,7 +47,12 @@ class FakeHarbor:
                     builder.step().call("Write", files=gives(REWARD))
                     builder.finish()
                     builder.reward = REWARD
+                    if f"{config.job_name}/{name}" in self.halt:
+                        builder.instruments["digest"] = "sha256:other"
                     builder.build()
+                    trial_config = {"trial_name": name, "agent": agent.model_dump(mode="json")}
+                    (folder / name / "config.json").write_text(json.dumps(trial_config),
+                                                               encoding="utf-8")
                     shutil.rmtree(builder.app)
                     self.ran.append(f"{config.job_name}/{name}")
         return 0
@@ -216,17 +222,23 @@ def test_the_evaluations_cover_every_trial_whichever_jobs_ran(repo):
     assert (last["ran"], last["reused"]) == (1, 1)  # a's trial was kept and reused
 
 
-def test_a_trial_that_failed_the_validity_check_gets_no_evaluation(repo):
+def test_a_halted_invocation_runs_no_evaluation_and_the_next_one_evaluates_the_rerun(
+        repo, capsys):
     write_experiment(repo, [write_job(repo, "a", n_attempts=2)], ["replay"])
-    check = repo / "analysis" / "exp" / "a" / "slug__01" / "trial-check.json"
-    check.parent.mkdir(parents=True)
-    check.write_text(json.dumps({"trial": "slug__01", "passed": False,
-                                 "failed_checks": ["seed"]}), encoding="utf-8")
 
-    assert experiment(FakeHarbor(), FakeContainers()) == 0
+    assert experiment(FakeHarbor(halt={"a/slug__00"}), NoContainers()) == 3
 
-    assert not (repo / "analysis" / "exp" / "a" / "slug__01" / "replay").exists()
-    assert finished(repo, "replay")[-1]["ran"] == 1
+    assert finished(repo, "replay") == []
+    # The dry run leaves the halted trial out: the next invocation deletes it.
+    capsys.readouterr()
+    assert plan(capsys)[1].out.count("replay: 0 reused, 1 to run") == 1
+
+    harbor = FakeHarbor()
+    assert experiment(harbor, FakeContainers()) == 0
+
+    assert harbor.ran == ["a/slug__00"]
+    last = finished(repo, "replay")[-1]
+    assert (last["ran"], last["reused"], last["errors"]) == (2, 0, 0)
 
 
 def test_an_interrupted_job_runs_no_evaluation(repo):

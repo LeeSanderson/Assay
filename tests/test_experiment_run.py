@@ -21,10 +21,15 @@ class FakeHarbor:
     config.json and one fixture trial for each task, agent and attempt. Like
     Harbor, it resumes: it keeps each trial that has a result.json and deletes
     and reruns the rest. With `stop_after=n` it is interrupted (Ctrl-C) after
-    n new trials, leaving the next trial unfinished."""
+    n new trials, leaving the next trial unfinished.
 
-    def __init__(self, stop_after=None):
+    Each trial it writes passes the validity check, unless `outcomes` gives
+    its <job>/<trial> a list of changes: each run of that trial applies the
+    next change to its TrialBuilder (then the trial passes again)."""
+
+    def __init__(self, stop_after=None, outcomes=None):
         self.stop_after = stop_after
+        self.outcomes = {name: list(changes) for name, changes in (outcomes or {}).items()}
         self.calls = []
         self.ran = []  # the trials this fake ran, as <job>/<trial>
 
@@ -38,7 +43,7 @@ class FakeHarbor:
         new = 0
         for task in config.tasks:
             language, slug = Path(task.path).parts[-2:]
-            for a, _agent in enumerate(config.agents):
+            for a, agent in enumerate(config.agents):
                 for attempt in range(config.n_attempts):
                     name = f"{slug}__{a}{attempt}"
                     if (folder / name / "result.json").exists():
@@ -49,8 +54,17 @@ class FakeHarbor:
                         (folder / name).mkdir()  # started, never finished
                         raise KeyboardInterrupt
                     builder = TrialBuilder(folder, language=language, name=name)
+                    builder.lock["agent"]["model_name"] = agent.model_name
                     builder.seed({"README.md": "seed\n"})
+                    builder.finish()
+                    changes = self.outcomes.get(f"{config.job_name}/{name}")
+                    if changes:
+                        changes.pop(0)(builder)
                     builder.build()
+                    # Harbor's trial config, which names the trial's agent.
+                    trial_config = {"trial_name": name, "agent": agent.model_dump(mode="json")}
+                    (folder / name / "config.json").write_text(json.dumps(trial_config),
+                                                               encoding="utf-8")
                     shutil.rmtree(builder.app)
                     self.ran.append(f"{config.job_name}/{name}")
                     new += 1
@@ -208,7 +222,7 @@ def test_from_scratch_deletes_the_results_and_the_analysis_then_runs(repo):
     write_experiment(repo, write_job(repo, "a"))
     assert experiment(FakeHarbor()) == 0
     (repo / "results" / "exp" / "a" / "slug__00" / "kept.txt").write_text("old")
-    (repo / "analysis" / "exp" / "a").mkdir(parents=True)
+    (repo / "analysis" / "exp" / "a").mkdir(parents=True, exist_ok=True)
     (repo / "analysis" / "exp" / "a" / "old.json").write_text("{}")
 
     harbor = FakeHarbor()
@@ -216,7 +230,7 @@ def test_from_scratch_deletes_the_results_and_the_analysis_then_runs(repo):
 
     assert harbor.ran == ["a/slug__00"]
     assert not (repo / "results" / "exp" / "a" / "slug__00" / "kept.txt").exists()
-    assert not (repo / "analysis" / "exp" / "a").exists()
+    assert not (repo / "analysis" / "exp" / "a" / "old.json").exists()
     assert len({e["invocation"] for e in log(repo)}) == 1  # the old log is gone
 
 

@@ -252,9 +252,13 @@ def folder_digest(folder: Path) -> str:
 # --- The trials -------------------------------------------------------------------
 
 
-def kept_trials(plan: Plan, results_root: Path, analysis_root: Path) -> list[KeptTrial]:
+def kept_trials(plan: Plan, results_root: Path, analysis_root: Path,
+                excluded: set[tuple[str, str]] = frozenset()) -> list[KeptTrial]:
     """Every finished trial of every job of the experiment, but those whose
-    validity check failed."""
+    validity check failed and the `excluded` (job, trial) pairs. After a run
+    an infrastructure failure is already deleted; a halted trial stays until
+    the next invocation, but then the invocation is halted and no evaluation
+    runs."""
     trials = []
     for job in plan.jobs:
         folder = results_root / plan.experiment / job.name
@@ -263,6 +267,8 @@ def kept_trials(plan: Plan, results_root: Path, analysis_root: Path) -> list[Kep
         for path in sorted(p for p in folder.iterdir() if (p / "result.json").is_file()):
             check = read_json(analysis_root / plan.experiment / job.name / path.name / TRIAL_CHECK)
             if check is not None and check.get("passed") is False:
+                continue
+            if (job.name, path.name) in excluded:
                 continue
             trials.append(KeptTrial(job.name, path.name, path))
     return trials
@@ -274,14 +280,16 @@ def task_pack(record: Trial) -> Path:
     return Path(*record.task_path) if record.task_path else Path("tasks", "no-task-path")
 
 
-def trial_cell(job: JobPlan, record: Trial):
-    """The cell of a trial: its agent's levels in the plan, and its language."""
-    from assay.experiment import Cell
+def trial_cell(plan: Plan, job: JobPlan, trial_dir: Path, record: Trial):
+    """The cell of a trial: the levels of the plan's agent that ran it (matched
+    as the validity check matches it, by Harbor's trial config.json), and its
+    language. None when no agent of the job file matches."""
+    from assay.experiment import Cell, job_agents, trial_agent
 
-    agents = [a for a in job.agents if a.model_tier == record.model_tier] or job.agents
-    agent = agents[0] if agents else None
-    return Cell(agent.harness if agent else "", record.model_tier or "",
-                agent.condition if agent else "", record.language or "unknown")
+    agent = trial_agent(job, trial_dir, job_agents(plan, job))
+    if agent is None:
+        return None
+    return Cell(agent.harness, agent.model_tier, agent.condition, record.language or "unknown")
 
 
 # --- Reuse and the run --------------------------------------------------------------
@@ -324,13 +332,15 @@ def _now() -> str:
 
 def run_evaluations(plan: Plan, planned: list[PlannedEvaluation], containers: Containers,
                     log: ExperimentLog | None, results_root: Path, analysis_root: Path,
-                    dry_run: bool = False) -> dict[str, tuple[int, int]]:
+                    dry_run: bool = False, excluded: set[tuple[str, str]] = frozenset()
+                    ) -> dict[str, tuple[int, int]]:
     """Runs each evaluation over every kept trial, reusing what it can. With
     dry_run, calls nothing and writes nothing: it returns, for each
     evaluation, how many results it would reuse and how many it would run."""
     jobs = {job.name: job for job in plan.jobs}
-    trials = kept_trials(plan, results_root, analysis_root)
+    trials = kept_trials(plan, results_root, analysis_root, excluded)
     records: dict[tuple[str, str], Trial] = {}
+    cells: dict[tuple[str, str], Any] = {}
     digests: dict[tuple[str, str], tuple[str, str]] = {}
     outcomes: dict[tuple[str, str], dict[str, Outcome | _Unknown]] = {t.key: {} for t in trials}
     counts = {}
@@ -342,13 +352,14 @@ def run_evaluations(plan: Plan, planned: list[PlannedEvaluation], containers: Co
             if t.key not in records:
                 records[t.key] = read_trial(t.path)
                 record = records[t.key]
+                cells[t.key] = trial_cell(plan, jobs[t.job], t.path, record)
                 digests[t.key] = (record_digest(t.path),
                                   folder_digest(task_pack(record)))
             record = records[t.key]
             folder = analysis_root / plan.experiment / t.job / t.name / p.name
             deps = {d: outcomes[t.key][d] for d in p.evaluation.depends_on}
             inp = TrialInput(
-                job=t.job, trial=t.name, cell=trial_cell(jobs[t.job], record),
+                job=t.job, trial=t.name, cell=cells[t.key],
                 task_pack=task_pack(record), record=record,
                 deps={d: o.value for d, o in deps.items() if isinstance(o, Outcome)},
                 options=dict(p.options), out=folder / OUT_FOLDER, containers=guarded)
@@ -425,12 +436,13 @@ def print_evaluation_plan(planned: list[PlannedEvaluation]) -> None:
 
 
 def print_evaluation_reuse(plan: Plan, planned: list[PlannedEvaluation], results_root: Path,
-                           analysis_root: Path) -> None:
+                           analysis_root: Path, excluded: set[tuple[str, str]] = frozenset()
+                           ) -> None:
     """What the evaluations would reuse and run over the trials so far."""
     if not planned:
         return
     counts = run_evaluations(plan, planned, _NoContainers(), None, results_root,
-                             analysis_root, dry_run=True)
+                             analysis_root, dry_run=True, excluded=excluded)
     print("evaluation results (over the trials so far; new trials run too):")
     for p in planned:
         reused, ran = counts[p.name]

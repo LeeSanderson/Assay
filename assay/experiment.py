@@ -1,7 +1,7 @@
 """`assay experiment <name>`: the plan and the run of an experiment (PRD v3
 sections 5, 7 and 11; issues #60 and #61).
 
-    uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--debug]
+    uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--retries N] [--debug]
 
 `<name>` is `experiments/<name>/experiment.toml`, from the current directory
 (the repository root). The plan reads the experiment's job files, and from
@@ -24,6 +24,14 @@ that Harbor does not finish (Ctrl-C, or a non-zero exit) stops the
 invocation. After the last job, the evaluations run over every trial of
 the experiment, whichever jobs ran. --from-scratch first deletes `results/<name>` and
 `analysis/<name>`, the log included.
+
+After each run of a job, each finished trial gets the validity check and a
+class (assay.trial_outcomes, issue #63). An infrastructure failure is logged
+as `trial-discarded` and deleted, and --retries N runs the job again for them
+up to N times. A halt is logged as `halt` and kept; the invocation stops
+after that job as `halted`, and the next invocation deletes the trial (after
+a `trial-discarded` with `after_halt`) and runs it again. A job file must
+leave Harbor's own retry.max_retries at 0.
 """
 
 from __future__ import annotations
@@ -47,11 +55,14 @@ from pathlib import Path
 import yaml
 from harbor.models.job.config import JobConfig
 
+from analyze.trace_check import HALT, INFRASTRUCTURE_FAILURE
 from assay.evaluation import Containers
 from assay.evaluations import (
     EvaluationPlanError, plan_evaluations, print_evaluation_plan, print_evaluation_reuse,
     run_evaluations,
 )
+from assay.trial_outcomes import (TrialOutcome, agent_index, classify, logged_digests,
+                                  read_log)
 from instruments.agent import IMPORT_PATH
 
 EXPERIMENTS_DIR = Path("experiments")
@@ -59,6 +70,7 @@ VARIANTS_DIR = Path("variants")
 RESULTS_DIR = Path("results")
 ANALYSIS_DIR = Path("analysis")
 INTERRUPTED = 130  # the exit code of a job stopped by Ctrl-C (assay.cli.INTERRUPTED)
+HALTED = 3  # the exit code of an invocation that a halt stopped
 CONTROL = "control"
 # The harness level of an agent class (PRD section 5, "Factors"); any other
 # agent's level is its name or import path.
@@ -253,6 +265,10 @@ def plan_job(file: Path, experiment: str, selected: set[str] | None) -> JobPlan:
     except (OSError, ValueError, yaml.YAMLError) as e:
         raise PlanError(f"cannot read job file {file.as_posix()}: {e}") from e
     name = config.job_name
+    if config.retry.max_retries != 0:
+        raise PlanError(f"{name}: retry.max_retries is {config.retry.max_retries} in "
+                        f"{file.as_posix()}; it must stay 0, so that only Assay retries, "
+                        f"after a validity check (--retries)")
     is_selected = selected is None or name in selected
     if is_selected:
         unset = sorted({var for var, default in env_templates(raw)
@@ -350,18 +366,26 @@ def print_resume(plan: Plan, from_scratch: bool) -> None:
             print(f"from scratch: would delete {folder.as_posix()}" if folder.exists()
                   else f"from scratch: nothing to delete, {folder.as_posix()} does not exist")
     print("resume (finished trials are kept; Harbor runs the rest):")
+    halted = {} if from_scratch else {(e["job"], e["trial"]): e for e in halted_trials(plan)}
     for job in plan.jobs:
         if not job.selected:
             continue
         folder = job_folder(plan, job)
-        finished = [] if from_scratch else finished_trials(folder)
+        finished = [] if from_scratch else [
+            t for t in finished_trials(folder) if (job.name, t) not in halted]
         to_run = max(sum(job.expected.values()) - len(finished), 0)
         noun = "trial" if len(finished) == 1 else "trials"
         print(f"  {job.name:<22} {len(finished)} finished {noun} kept, {to_run} to run")
         for trial in [] if from_scratch else unfinished_trials(folder):
             print(f"    {trial} (unfinished, Harbor deletes it)")
+        for (name, trial), event in halted.items():
+            if name == job.name:
+                cause = event["cause"]
+                what = cause.get("exception") or ", ".join(cause.get("failed_checks", []))
+                print(f"    {trial} (halted: {what}, Assay deletes it)")
     if not from_scratch:
-        print_evaluation_reuse(plan, plan.planned_evaluations, RESULTS_DIR, ANALYSIS_DIR)
+        print_evaluation_reuse(plan, plan.planned_evaluations, RESULTS_DIR, ANALYSIS_DIR,
+                               excluded=set(halted))
 
 
 class ExperimentLog:
@@ -400,12 +424,15 @@ def agent_fields(agents: Sequence[AgentPlan]) -> list[dict]:
 
 
 def run_job(plan: Plan, job: JobPlan, log: ExperimentLog, debug: bool,
-            run_harbor: Callable[[Sequence[str]], int]) -> int:
+            run_harbor: Callable[[Sequence[str]], int], retry: int = 0) -> int:
     """Run one job through the `assay run` path; return its exit code."""
     from assay.cli import run  # assay.cli imports this module
 
+    # The trials finished before the run, so that check 8 can tell which run
+    # finished each trial (trial_outcomes.logged_digests).
     log.write("job-started", job=job.name, file=job.file.as_posix(),
-              agents=agent_fields(job.agents))
+              agents=agent_fields(job.agents), trials=finished_trials(job_folder(plan, job)),
+              **({"retry": retry} if retry else {}))
     args = ["-c", job.file.as_posix(), "--jobs-dir", (RESULTS_DIR / plan.experiment).as_posix(),
             "-y", *(["--debug"] if debug else [])]
     print(f"\njob {job.name}: assay run {' '.join(args)}", flush=True)
@@ -427,25 +454,127 @@ def run_job(plan: Plan, job: JobPlan, log: ExperimentLog, debug: bool,
     return exit_code
 
 
+def job_agents(plan: Plan, job: JobPlan) -> list[dict]:
+    """The agents of the job file as Harbor writes them in each trial's config.json."""
+    from assay.cli import job_config  # assay.cli imports this module
+
+    config = job_config(job.file, ["--jobs-dir", (RESULTS_DIR / plan.experiment).as_posix()])
+    return [agent.model_dump(mode="json") for agent in config.agents]
+
+
+def trial_agent(job: JobPlan, trial_dir: Path, agents: list[dict]) -> AgentPlan | None:
+    """The plan's agent that ran the trial (trial_outcomes.agent_index); None
+    when no agent of the job file matches."""
+    index = agent_index(trial_dir, agents)
+    return job.agents[index] if index is not None else None
+
+
+def check_job(plan: Plan, job: JobPlan, log: ExperimentLog) -> list[TrialOutcome]:
+    """The validity check and class of each finished trial of the job."""
+    agents = job_agents(plan, job)
+    events = read_log(log.path)
+    folder = job_folder(plan, job)
+    outcomes = []
+    for trial in finished_trials(folder):
+        index = agent_index(folder / trial, agents)
+        agent = asdict(job.agents[index]) if index is not None else None
+        outcomes.append(classify(folder / trial, job.name, agent,
+                                 logged_digests(events, job.name, trial, index),
+                                 ANALYSIS_DIR / plan.experiment / job.name / trial))
+    return outcomes
+
+
+def discard_trial(plan: Plan, fields: dict, cause: dict, log: ExperimentLog,
+                  **extra) -> None:
+    """Log the trial as discarded, then delete its results and analysis folders."""
+    from assay.cli import delete_folder  # assay.cli imports this module
+
+    log.write("trial-discarded", **fields, cause=cause, **extra)
+    for root in (RESULTS_DIR, ANALYSIS_DIR):
+        folder = root / plan.experiment / fields["job"] / fields["trial"]
+        if folder.exists():
+            delete_folder(folder)
+    print(f"  discarded {fields['job']}/{fields['trial']}: {json.dumps(cause)}")
+
+
+def settle_job(plan: Plan, job: JobPlan, log: ExperimentLog) -> tuple[int, int]:
+    """After a run of the job: discard its infrastructure failures and log its
+    halts, which stay until the next invocation. Returns (discarded, halts)."""
+    discarded = halts = 0
+    for outcome in check_job(plan, job, log):
+        if outcome.kind == INFRASTRUCTURE_FAILURE:
+            discard_trial(plan, outcome.fields, outcome.cause, log)
+            discarded += 1
+        elif outcome.kind == HALT:
+            log.write("halt", **outcome.fields, cause=outcome.cause,
+                      message=halt_message(outcome.cause))
+            print(f"  halt {job.name}/{outcome.trial}: {halt_message(outcome.cause)}")
+            halts += 1
+    return discarded, halts
+
+
+def halt_message(cause: dict) -> str:
+    what = cause.get("exception") or f"failed validity check {', '.join(cause['failed_checks'])}"
+    return (f"{what}: running again would repeat it. Fix the cause; the next invocation "
+            f"deletes the trial and runs it again.")
+
+
+def halted_trials(plan: Plan) -> list[dict]:
+    """The halt events of earlier invocations whose trial is still there."""
+    halts: dict[tuple[str, str], dict] = {}
+    for event in read_log(ExperimentLog(plan.experiment).path):
+        key = (event.get("job"), event.get("trial"))
+        if event["event"] == "halt":
+            halts[key] = event
+        elif event["event"] == "trial-discarded":
+            halts.pop(key, None)
+    return [e for (job, trial), e in halts.items()
+            if (RESULTS_DIR / plan.experiment / job / trial).exists()]
+
+
+def discard_halted_trials(plan: Plan, log: ExperimentLog) -> None:
+    """Resume: delete each trial of an earlier halt, after logging it."""
+    for event in halted_trials(plan):
+        fields = {k: v for k, v in event.items()
+                  if k not in ("at", "invocation", "event", "cause", "message")}
+        discard_trial(plan, fields, event["cause"], log, after_halt=True)
+
+
 def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
-                   run_harbor: Callable[[Sequence[str]], int], containers: Containers) -> int:
-    """Run the selected jobs in order, one at a time, then the evaluations
-    over every trial of the experiment, and log the invocation. Stops at the
-    first job that Harbor did not finish."""
+                   run_harbor: Callable[[Sequence[str]], int], containers: Containers,
+                   retries: int = 0) -> int:
+    """Run the selected jobs in order, one at a time, and log the invocation.
+    After each run of a job, check its trials, discard the infrastructure
+    failures and run the job again for them, up to `retries` times. Stops at
+    the first job that Harbor did not finish, and after a job with a halt.
+    When every job completes, run the evaluations over every trial of the
+    experiment."""
     log = ExperimentLog(plan.experiment)
     log.write("invocation-started", command=["assay", "experiment", *argv],
               assay_commit=assay_commit(), harbor_version=harbor_version())
     outcome, code = "complete", 0
     try:
+        discard_halted_trials(plan, log)
         for job in plan.jobs:
             if not job.selected:
                 continue
-            exit_code = run_job(plan, job, log, debug, run_harbor)
+            retry = 0
+            while True:
+                exit_code = run_job(plan, job, log, debug, run_harbor, retry)
+                if exit_code != 0:
+                    break
+                discarded, halts = settle_job(plan, job, log)
+                if halts or not discarded or retry == retries:
+                    break
+                retry += 1
             if exit_code == INTERRUPTED:
                 outcome, code = "interrupted", INTERRUPTED
                 break
             if exit_code != 0:
                 outcome, code = "error", exit_code
+                break
+            if halts:
+                outcome, code = "halted", HALTED
                 break
         if outcome == "complete":
             run_evaluations(plan, plan.planned_evaluations, containers, log, RESULTS_DIR,
@@ -462,7 +591,7 @@ def error(message: str) -> int:
     return 2
 
 
-USAGE = "usage: assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--debug]"
+USAGE = "usage: assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--retries N] [--debug]"
 
 
 def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
@@ -474,6 +603,7 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
     args = list(args)
     names, jobs = [], []
     dry_run = from_scratch = debug = False
+    retries = 0
     while args:
         arg = args.pop(0)
         if arg == "--dry-run":
@@ -488,6 +618,11 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
             jobs.append(args.pop(0))
         elif arg.startswith("--job="):
             jobs.append(arg.split("=", 1)[1])
+        elif arg == "--retries" or arg.startswith("--retries="):
+            value = arg.split("=", 1)[1] if "=" in arg else (args.pop(0) if args else "")
+            if not value.isdigit():
+                return error(f"--retries needs a whole number of 0 or more, not {value!r}")
+            retries = int(value)
         elif arg.startswith("-"):
             return error(f"unknown option {arg} (no option but --debug reaches Harbor)\n{USAGE}")
         else:
@@ -514,4 +649,4 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
         from assay.containers import DockerContainers
 
         containers = DockerContainers()
-    return run_experiment(plan, argv, debug, run_harbor, containers)
+    return run_experiment(plan, argv, debug, run_harbor, containers, retries)
