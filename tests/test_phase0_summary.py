@@ -52,7 +52,7 @@ class FakeHarbor:
                         continue
                     if (folder / name).exists():
                         shutil.rmtree(folder / name)
-                    dumped = agent.model_dump(mode="json")
+                    dumped = agent.model_dump(mode="json", exclude_defaults=True)  # as Harbor writes it
                     builder = TrialBuilder(folder, language=language, name=name,
                                            claude_code_version=agent.kwargs["version"])
                     builder.lock["agent"] = dumped

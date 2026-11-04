@@ -424,9 +424,10 @@ def run_job(plan: Plan, job: JobPlan, log: ExperimentLog, debug: bool,
 
 
 def job_agents(plan: Plan, job: JobPlan) -> list[dict]:
-    """The agents of the job file as Harbor writes them in each trial's config.json."""
+    """The agents of the job file as Harbor writes them in each trial's
+    config.json: without the fields that have their default value."""
     config = job_config(job.file, ["--jobs-dir", plan.paths.results.as_posix()])
-    return [agent.model_dump(mode="json") for agent in config.agents]
+    return [agent.model_dump(mode="json", exclude_defaults=True) for agent in config.agents]
 
 
 @dataclass(frozen=True)

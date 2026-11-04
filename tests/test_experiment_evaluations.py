@@ -50,7 +50,7 @@ class FakeHarbor:
                     if f"{config.job_name}/{name}" in self.halt:
                         builder.instruments["digest"] = "sha256:other"
                     builder.build()
-                    trial_config = {"trial_name": name, "agent": agent.model_dump(mode="json")}
+                    trial_config = {"trial_name": name, "agent": agent.model_dump(mode="json", exclude_defaults=True)}
                     (folder / name / "config.json").write_text(json.dumps(trial_config),
                                                                encoding="utf-8")
                     shutil.rmtree(builder.app)

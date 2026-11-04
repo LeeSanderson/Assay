@@ -61,8 +61,8 @@ class FakeHarbor:
                     if changes:
                         changes.pop(0)(builder)
                     builder.build()
-                    # Harbor's trial config, which names the trial's agent.
-                    trial_config = {"trial_name": name, "agent": agent.model_dump(mode="json")}
+                    # Harbor's trial config, which names the trial's agent (without its defaults).
+                    trial_config = {"trial_name": name, "agent": agent.model_dump(mode="json", exclude_defaults=True)}
                     (folder / name / "config.json").write_text(json.dumps(trial_config),
                                                                encoding="utf-8")
                     shutil.rmtree(builder.app)
