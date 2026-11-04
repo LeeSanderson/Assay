@@ -12,7 +12,9 @@ The evaluation's value merges the verdict and the first run's snapshots:
     {"works", "causes", "image", "base_image", "snapshots": [one line per snapshot]}
 
 and the verifier's log folder of each snapshot of the first run goes to
-`out/<seq>/`. The task pack's content is the evaluation's task-pack input, so
+`out/<seq>/`. A snapshot line of the value holds no time, so that a rerun
+with the same test states reruns nothing that depends on replay; the time
+of each snapshot goes to `out/timings.jsonl`. The task pack's content is the evaluation's task-pack input, so
 a changed pack reruns it. The `final` snapshot that the recorder makes after
 the harness exits is replayed only when it changed something; otherwise it
 is the last call's snapshot again.
@@ -47,6 +49,7 @@ from assay.evaluation import Containers, Evaluation, TrialInput
 REPLAY_FILE = "replay.jsonl"
 LOGS_FOLDER = "replay-logs"
 WORKS_FILE = "replay-works.json"
+TIMINGS_FILE = "timings.jsonl"  # in out/: the seconds each snapshot of the first run took
 # Seconds past test.sh's own timeout before the container is removed, so
 # that the verifier's logs are written first.
 GRACE_SEC = 120
@@ -205,7 +208,11 @@ def _comparable(line: dict) -> dict:
 
 
 def evaluate(inp: TrialInput) -> dict:
-    """Replays the trial two times; the first run's verifier logs go to out/<seq>/."""
+    """Replays the trial two times; the first run's verifier logs go to
+    out/<seq>/ and the time of each of its snapshots to out/timings.jsonl.
+
+    The value holds no time, so a rerun that gives the same test states
+    reruns nothing that depends on replay (PRD section 9)."""
     pack = Path(inp.task_pack)
     config = tomllib.loads((pack / "task.toml").read_text(encoding="utf-8"))
     timeout = float(config["verifier"]["timeout_sec"])
@@ -213,9 +220,13 @@ def evaluate(inp: TrialInput) -> dict:
     first = replay_trial(inp.record, inp.containers, image, timeout, inp.out)
     second = replay_trial(inp.record, inp.containers, image, timeout)
     verdict = replay_works(inp.record, first, second)
+    inp.out.mkdir(parents=True, exist_ok=True)
+    write_jsonl(inp.out / TIMINGS_FILE,
+                [{"seq": line["seq"], "duration_sec": line["duration_sec"]} for line in first])
     # Provenance: the image replay ran, and the pack's base image pinned by digest.
     return {"works": verdict.works, "causes": verdict.causes, "image": image,
-            "base_image": config.get("metadata", {}).get("base_image"), "snapshots": first}
+            "base_image": config.get("metadata", {}).get("base_image"),
+            "snapshots": [_comparable(line) for line in first]}
 
 
 # The base image is pinned by digest in the pack's Dockerfile, which the
@@ -246,7 +257,12 @@ def replay_job(
             job=job_dir.name, trial=trial.name, cell=None,
             task_pack=Path(tasks_root).joinpath(*trial.task_path), record=trial, deps={},
             options={}, out=out / LOGS_FOLDER, containers=containers))
-        write_replay(out, value["snapshots"])
+        # The timings go into replay.jsonl, as before replay was an evaluation.
+        timings_file = out / LOGS_FOLDER / TIMINGS_FILE
+        timings = {t["seq"]: t["duration_sec"] for t in read_jsonl(timings_file)}
+        timings_file.unlink()
+        write_replay(out, [{**line, "duration_sec": timings.get(line["seq"])}
+                           for line in value["snapshots"]])
         (out / WORKS_FILE).write_text(json.dumps(
             {k: v for k, v in value.items() if k != "snapshots"}, indent=2) + "\n",
             encoding="utf-8")

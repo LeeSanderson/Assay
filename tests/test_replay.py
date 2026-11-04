@@ -403,8 +403,14 @@ def test_replay_evaluates_one_trial_into_one_value_with_its_logs_in_out(tmp_path
         (0, None, "no-tests"), (1, write, "pass")]
     assert value["snapshots"][1]["agent_tests_passed"] == 2
     json.dumps(value)  # a JSON value
-    assert _files_under(tmp_path / "out") == {"0/agent-tsc.log": "seed tsc\n",
-                                              "1/agent-jest.log": "2 passed\n"}
+    # The value holds no time, so the same test states give the same value;
+    # the time of each snapshot goes to out/timings.jsonl.
+    assert not any("duration_sec" in s for s in value["snapshots"])
+    files = _files_under(tmp_path / "out")
+    timings = [json.loads(line) for line in files.pop("timings.jsonl").splitlines()]
+    assert [t["seq"] for t in timings] == [0, 1]
+    assert all(isinstance(t["duration_sec"], float) for t in timings)
+    assert files == {"0/agent-tsc.log": "seed tsc\n", "1/agent-jest.log": "2 passed\n"}
     assert containers.packs == [pack]
     assert len(containers.runs) == 4  # two snapshots, replayed twice
 

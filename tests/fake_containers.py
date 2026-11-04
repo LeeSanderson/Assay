@@ -11,6 +11,7 @@ when it then fails.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -35,9 +36,10 @@ def times_out(logs: dict[str, str] | None = None) -> dict[str, str]:
 class FakeContainers:
     """Builds no image: the image of a pack is its folder's path."""
 
-    def __init__(self):
+    def __init__(self, delay: float = 0.0):
         self.packs: list[Path] = []
         self.runs: list[dict] = []
+        self.delay = delay  # seconds each run takes
 
     def pack_image(self, task_pack: Path) -> str:
         self.packs.append(Path(task_pack))
@@ -45,6 +47,8 @@ class FakeContainers:
 
     def run(self, image: str, command: Sequence[str], *, mounts: Mapping[Path, str] = {},
             network: str = "none", timeout: float | None = None) -> RunResult:
+        if self.delay:
+            time.sleep(self.delay)
         self.runs.append({"image": image, "command": list(command), "network": network,
                           "timeout": timeout})
         targets = {target.split(":")[0]: Path(host) for host, target in mounts.items()}

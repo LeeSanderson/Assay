@@ -316,6 +316,21 @@ def test_agent_runs_rerun_with_the_same_value_reruns_no_trajectory(repo, tmp_pat
     assert finished(repo, "trajectory")[-1]["reused"] == 1
 
 
+def test_replay_rerun_with_the_same_value_reruns_neither_agent_runs_nor_trajectory(
+        repo, tmp_path, monkeypatch):
+    import analyze.replay
+
+    write_experiment(repo, [write_job(repo, "a")], BUILT_INS)
+    assert experiment(FakeHarbor(), FakeContainers()) == 0
+    edited_copy(analyze.replay, tmp_path, monkeypatch)
+
+    containers = FakeContainers(delay=0.01)  # the replay takes longer this time
+    assert experiment(FakeHarbor(), containers) == 0
+
+    assert containers.runs  # replay ran again
+    assert [ran(repo, e) for e in BUILT_INS] == [1, 0, 0]
+
+
 def test_a_replay_error_gives_agent_runs_and_trajectory_an_error_without_a_call(repo):
     write_experiment(repo, [write_job(repo, "a")], BUILT_INS)
 
