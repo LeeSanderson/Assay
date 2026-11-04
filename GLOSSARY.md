@@ -48,8 +48,16 @@ Something that records what happens in a trial, runs identically in every condit
 _Avoid_: Probe, monitor, tracer
 
 **Variant**:
-A named, complete bundle of agent configuration (skills, settings, MCP servers, extra instructions) that is one non-control condition.
+A named, complete bundle of agent configuration (skills, settings, MCP servers, extra instructions, instruction file) that is one non-control condition.
 _Avoid_: Treatment, arm
+
+**Extra instructions**:
+Text that a variant adds to the task prompt, so the agent receives it as part of its first message.
+_Avoid_: Instruction file, prompt suffix
+
+**Instruction file**:
+A file of standing instructions that the harness loads from disk on its own, such as `CLAUDE.md` or `AGENTS.md`, which the agent can also read again or change during the trial.
+_Avoid_: Extra instructions, memory file
 
 **Task pack**:
 One self-contained task with its prompt, seed repository, pinned toolchain image, gold solution, and withheld reference tests.
