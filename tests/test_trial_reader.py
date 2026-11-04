@@ -55,8 +55,8 @@ def test_reader_gives_the_language_versions_and_the_json_files(make_trial):
 
     assert t.language == "typescript"
     assert t.task_path == ("tasks", "typescript", "split-second-stopwatch")
-    assert t.agent_version == "2.1.7"
-    assert t.requested_version == "2.1.7"
+    assert t.identity.version == "2.1.7"
+    assert t.identity.pinned_version == "2.1.7"
     assert t.reward == {"reward": 1, "agent_tests_total": 3}
     assert t.instruments["harbor_version"] == "0.24.0"
 
@@ -73,7 +73,8 @@ def test_reader_gives_the_model_tier_usage_duration_and_turns(make_trial):
 
     t = read_trial(trial.build())
 
-    assert (t.model_tier, t.local, t.duration_sec, t.turns) == ("laguna-s-2.1", True, 90, 2)
+    assert (t.identity.model_tier, t.local, t.duration_sec, t.turns) == (
+        "laguna-s-2.1", True, 90, 2)
     assert t.usage == Usage(cost_usd=0.25, input_tokens=10, cache_tokens=4, output_tokens=3)
     assert t.system_step_ids == (3,)
 
@@ -115,7 +116,7 @@ def test_reader_builds_steps_with_their_tokens_cost_and_tool_calls(make_trial):
     assert (agent.input_tokens, agent.cached_tokens, agent.output_tokens, agent.cost_usd) == (
         120, 100, 7, 0.02)
     assert [c.tool_use_id for c in agent.tool_calls] == [read_id, bash_id]
-    assert (agent.tool_calls[1].name, agent.tool_calls[1].arguments) == (
+    assert (agent.tool_calls[1].function_name, agent.tool_calls[1].arguments) == (
         "Bash", {"command": "go test ./...", "description": "run tests"})
 
 
@@ -166,7 +167,7 @@ def test_reader_joins_the_history_to_each_call(make_trial):
     t = read_trial(trial.build())
 
     (call,) = t.tool_calls
-    (line,) = t.history_for(call)
+    (line,) = t.trace_lines_for(call.tool_use_id)
     assert (line.event, line.tool_use_id, line.paths) == (
         "call", write_id, (PathChange("A", "a_test.go"),))
     assert (t.granularity, t.calls_may_overlap) == ("per-tool-call", True)

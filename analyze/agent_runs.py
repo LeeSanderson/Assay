@@ -213,10 +213,8 @@ def cross_check_job(job_dir: Path | str, analysis_root: Path | str) -> dict[str,
     summaries = {}
     for trial in read_job(job_dir):
         out = Path(analysis_root) / job_dir.name / trial.name
-        value = evaluate(TrialInput(
-            job=job_dir.name, trial=trial.name, cell=None, task_pack=Path(), record=trial,
-            deps={"replay": {"snapshots": read_replay(out)}}, options={}, out=out,
-            containers=None))
+        value = evaluate(TrialInput.outside_experiment(
+            trial, out, deps={"replay": {"snapshots": read_replay(out)}}))
         (out / AGENT_RUNS_FILE).write_text(
             "".join(json.dumps(run) + "\n" for run in value["runs"]), encoding="utf-8")
         (out / CROSS_CHECK_FILE).write_text(json.dumps(value["cross_check"], indent=2) + "\n",

@@ -108,6 +108,17 @@ class TrialInput:
     containers: Containers
     scratch: Path | None = field(default=None, repr=False)  # where checkouts go
 
+    @classmethod
+    def outside_experiment(cls, record: Any, out: Path, *, deps: Mapping[str, Json] = {},
+                           task_pack: Path = Path(), containers: Containers | None = None
+                           ) -> TrialInput:
+        """The input of a trial of a job folder, for a thin entry point such
+        as `assay replay`: no cell, no options, and the job from the folder
+        that holds the trial."""
+        return cls(job=Path(record.path).resolve().parent.name, trial=record.name, cell=None,
+                   task_pack=task_pack, record=record, deps=deps, options={}, out=out,
+                   containers=containers)
+
     def checkout(self, commit: str) -> Path:
         """A clone of the trial's repository history, with the commit checked out."""
         root = self.scratch or Path(tempfile.mkdtemp(prefix="assay-checkout-"))

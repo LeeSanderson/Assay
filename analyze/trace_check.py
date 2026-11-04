@@ -135,7 +135,7 @@ def _calls(trial: Trial) -> bool:
     if trial.granularity == "per-turn":
         calls = [line for line in trial.trace if line.event == "call"]
         return len(calls) == trial.turns
-    return all(len(trial.history_for(call)) == 1 for call in trial.tool_calls)
+    return all(len(trial.trace_lines_for(call.tool_use_id)) == 1 for call in trial.tool_calls)
 
 
 def _errors(trial: Trial) -> bool:
@@ -180,7 +180,7 @@ def _claimed_paths(trial: Trial) -> bool:
         path = seed_path(call.arguments.get("file_path"))
         if path is None:
             continue
-        lines = trial.history_for(call)
+        lines = trial.trace_lines_for(call.tool_use_id)
         if not lines:
             return False  # no line to hold the path (check 3 also fails)
         line = lines[0]
@@ -250,7 +250,7 @@ def job_claude_code_version(trials: Iterable[Trial]) -> str | None:
     Raises MixedClaudeCodeVersions if they ran more than one. A trial with no
     version is left out here; check 6 fails it.
     """
-    versions = sorted({t.agent_version for t in trials if t.agent_version is not None})
+    versions = sorted({t.identity.version for t in trials if t.identity.version is not None})
     if len(versions) > 1:
         raise MixedClaudeCodeVersions(
             f"the trials of one job ran more than one Claude Code version: {', '.join(versions)}"

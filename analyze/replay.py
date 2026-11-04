@@ -253,10 +253,9 @@ def replay_job(
         out = Path(analysis_root) / job_dir.name / trial.name
         shutil.rmtree(out / LOGS_FOLDER, ignore_errors=True)
         (out / LOGS_FOLDER).mkdir(parents=True)
-        value = evaluate(TrialInput(
-            job=job_dir.name, trial=trial.name, cell=None,
-            task_pack=Path(tasks_root).joinpath(*trial.task_path), record=trial, deps={},
-            options={}, out=out / LOGS_FOLDER, containers=containers))
+        value = evaluate(TrialInput.outside_experiment(
+            trial, out / LOGS_FOLDER, task_pack=Path(tasks_root).joinpath(*trial.task_path),
+            containers=containers))
         # The timings go into replay.jsonl, as before replay was an evaluation.
         timings_file = out / LOGS_FOLDER / TIMINGS_FILE
         timings = {t["seq"]: t["duration_sec"] for t in read_jsonl(timings_file)}

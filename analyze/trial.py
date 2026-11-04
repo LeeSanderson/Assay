@@ -87,10 +87,6 @@ class ToolCall:
     duration_sec: float | Absent = ABSENT  # Claude Code's ATIF never gives it
 
     @property
-    def name(self) -> str:
-        return self.function_name
-
-    @property
     def kind(self) -> str:
         """shell, web, skill or other."""
         if self.function_name in SHELL_TOOLS:
@@ -186,9 +182,6 @@ class Trial:
     turns: int  # ATIF steps whose source is the agent
     system_step_ids: tuple[int, ...]  # ATIF steps whose source is "system"
     cached_tokens: tuple[int | None, ...]  # metrics.cached_tokens of each agent step
-    agent_version: str | None  # ATIF agent.version: the Claude Code that ran
-    requested_version: str | None  # lock.json agent.kwargs.version: the pin
-    model_tier: str | None  # lock.json agent.model_name
     local: bool  # the agent points at a local model server (L10)
     usage: Usage
     duration_sec: float | None  # result.json started_at to finished_at
@@ -218,11 +211,8 @@ class Trial:
         return Totals(u.input_tokens, u.cache_tokens, u.output_tokens, u.cost_usd,
                       self.duration_sec)
 
-    def history_for(self, call: ToolCall) -> list[TraceLine]:
-        """The trace lines of a tool call: exactly one for a sound per-tool-call trace."""
-        return self.trace_lines_for(call.tool_use_id)
-
     def trace_lines_for(self, tool_use_id: str) -> list[TraceLine]:
+        """The trace lines of a tool call: exactly one for a sound per-tool-call trace."""
         return [line for line in self.trace if line.tool_use_id == tool_use_id]
 
     def missing_core(self) -> list[str]:
@@ -253,30 +243,24 @@ class Trial:
 
     def snapshot_file(self, commit: str, path: str) -> bytes | None:
         """A file's content in a snapshot of trace.git; None when it has no such file."""
-        done = subprocess.run(
-            ["git", "-c", "safe.directory=*", "--git-dir", str(self.trace_git),
-             "cat-file", "blob", f"{commit}:{path}"],
-            capture_output=True,
-        )
+        done = self._git("cat-file", "blob", f"{commit}:{path}")
         return done.stdout if done.returncode == 0 else None
 
     def root_commits(self) -> list[str]:
         """The commits of trace.git with no parent: one, the seed, when sound."""
-        done = subprocess.run(
-            ["git", "-c", "safe.directory=*", "--git-dir", str(self.trace_git),
-             "rev-list", "--max-parents=0", "HEAD"],
-            capture_output=True, text=True,
-        )
-        return done.stdout.split() if done.returncode == 0 else []
+        done = self._git("rev-list", "--max-parents=0", "HEAD")
+        return done.stdout.decode().split() if done.returncode == 0 else []
 
     def head_commit(self) -> str | None:
         """The last commit of trace.git."""
-        done = subprocess.run(
-            ["git", "-c", "safe.directory=*", "--git-dir", str(self.trace_git),
-             "rev-parse", "-q", "--verify", "HEAD"],
-            capture_output=True, text=True,
+        done = self._git("rev-parse", "-q", "--verify", "HEAD")
+        return done.stdout.decode().strip() if done.returncode == 0 else None
+
+    def _git(self, *args: str) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            ["git", "-c", "safe.directory=*", "--git-dir", str(self.trace_git), *args],
+            capture_output=True,
         )
-        return done.stdout.strip() if done.returncode == 0 else None
 
 
 def read_job(job_dir: Path | str) -> list[Trial]:
@@ -300,7 +284,6 @@ def read_trial(path: Path | str) -> Trial:
     trace_dir = path / TRACE_FOLDER
     instruments = read_json(trace_dir / "instruments.json")
     ran = trajectory.get("agent") or {}
-    pinned = (agent.get("kwargs") or {}).get("version")
     return Trial(
         path=path,
         name=path.name,
@@ -310,16 +293,13 @@ def read_trial(path: Path | str) -> Trial:
         turns=len(agent_steps),
         system_step_ids=tuple(s["step_id"] for s in raw_steps if s.get("source") == "system"),
         cached_tokens=tuple((s.get("metrics") or {}).get("cached_tokens") for s in agent_steps),
-        agent_version=ran.get("version"),
-        requested_version=pinned,
-        model_tier=agent.get("model_name"),
         local="ANTHROPIC_BASE_URL" in (agent.get("env") or {}),
         usage=Usage(usage.get("cost_usd"), usage.get("n_input_tokens"),
                     usage.get("n_cache_tokens"), usage.get("n_output_tokens")),
         duration_sec=_seconds(result.get("started_at"), result.get("finished_at")),
         identity=Identity(
             harness=ran.get("name"),
-            pinned_version=pinned,
+            pinned_version=(agent.get("kwargs") or {}).get("version"),
             version=ran.get("version"),
             model_tier=agent.get("model_name"),
             task_pack="/".join(task_path) if task_path else None,

@@ -377,9 +377,7 @@ def analyze_folder(folder: Path | str, analysis_root: Path | str) -> dict:
     if (out / REPLAY_FILE).is_file() and (out / AGENT_RUNS_FILE).is_file():
         deps = {"replay": {"snapshots": read_replay(out)},
                 "agent-runs": {"runs": read_agent_runs(out)}}
-    return evaluate(TrialInput(
-        job=Path(folder).resolve().parent.name, trial=trial.name, cell=None, task_pack=Path(),
-        record=trial, deps=deps, options={}, out=out, containers=None))
+    return evaluate(TrialInput.outside_experiment(trial, out, deps=deps))
 
 
 def write_trajectory(job_dirs: list[Path | str], analysis_root: Path | str) -> Path:

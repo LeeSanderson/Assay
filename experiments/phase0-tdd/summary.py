@@ -68,8 +68,8 @@ def phase0_summary(view: ExperimentView, options: dict) -> dict:
     versions: dict[str, set[str]] = {}
     for t in view.trials:
         versions.setdefault(t.job, set())
-        if t.record.agent_version:
-            versions[t.job].add(t.record.agent_version)
+        if t.record.identity.version:
+            versions[t.job].add(t.record.identity.version)
     local_tiers = {t["model_tier"] for t in trials if t["local"]}
     discards = [e for e in view.log if e["event"] == "trial-discarded"]
     # A halted trial is logged at the halt, and again as trial-discarded
@@ -124,7 +124,7 @@ def _trial(t: TrialView) -> dict:
         "web_access": trajectory.get("web_access"),
         "agent_test_runs": None if runs is None else runs["cross_check"],
         "errors": {name: error for name, error in t.errors.items() if error is not None},
-        "model_tier": record.model_tier,
+        "model_tier": record.identity.model_tier,
         "local": record.local,
         "cost": {
             # L5: Claude Code's total_cost_usd is not a money cost for a local model.
