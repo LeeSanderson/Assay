@@ -570,6 +570,8 @@ The validity check of the trial record runs on each trial after its job, and bef
 
 Check 9 tests the recorder, and not the detection of file writes. The Claude Code reader gives the paths of `Write`, `Edit`, and `MultiEdit` calls. To find a change for a `Write` call, the reader compares its content with the file in the previous snapshot. A file write through `Bash` relies on the history only.
 
+Check 8 reads the digest that ran from the experiment log. Assay calculates the condition digest of each agent from its part files when a job starts and when it finishes, and writes both to the log (section 11). The check fails when either digest of the trial's job does not agree with the plan-time digest of the current invocation. Thus it finds a part file that changed during a job, and a kept trial that ran with other files before a resume.
+
 A trial in which the agent changes no file is a result, and not a failure.
 
 The check writes `trial-check.json` in `analysis/<experiment>/<job>/<trial>/`. Only a trial that passes all ten checks goes to the evaluations.
@@ -761,8 +763,8 @@ The **experiment log** is `analysis/<experiment>/experiment-log.jsonl`. Assay ap
 | Event | Fields |
 |---|---|
 | `invocation-started` | The command line, the Assay commit, and the Harbor version |
-| `job-started` | Job, file, and condition |
-| `job-finished` | The exit code, the trials, and the duration |
+| `job-started` | Job, file, and the condition and condition digest of each agent |
+| `job-finished` | The exit code, the trials, the duration, and the condition digest of each agent again |
 | `trial-discarded` | Job, trial, cell, task pack, the cause (`{exception}` or `{failed_checks}`), tokens, `cost_usd`, and duration |
 | `halt` | The fields of `trial-discarded`, and a message |
 | `evaluation-finished` | The counts of results that ran, were reused, and are errors, and the duration |
