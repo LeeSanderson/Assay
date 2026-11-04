@@ -779,6 +779,14 @@ assay/
   uv.lock                        committed
   assay/
     cli.py                       assay run, assay experiment, and the thin entry points
+    experiment.py                the plan and the run of an experiment
+    experiment_files.py          the paths of an experiment, its local modules, the experiment log
+    trial_outcomes.py            the class of each trial after its job: kept, infrastructure failure, halt
+    evaluation.py                the evaluation contract: Evaluation, TrialInput, Containers
+    evaluations.py               the plan, the reuse and the run of the evaluations
+    containers.py                Containers on Docker
+    summary.py                   the summary contract, its plan and its run
+    digests.py                   the content digests
   tasks/<language>/<slug>/
     instruction.md               prompt for the agent
     task.toml                    [verifier] [agent] [environment] [metadata]
