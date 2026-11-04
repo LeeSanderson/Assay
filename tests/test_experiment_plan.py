@@ -200,9 +200,3 @@ def test_the_condition_digest_follows_the_content_of_the_parts(repo, capsys):
 
     assert len(digests) == 1
     assert digests[0] not in capsys.readouterr().out
-
-
-def test_without_dry_run_no_job_runs_yet(repo, capsys):
-    write_experiment(repo, write_job(repo, "a"))
-
-    assert main(["experiment", "exp"], run_harbor=never_harbor) == 2

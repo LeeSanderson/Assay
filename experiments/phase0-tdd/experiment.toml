@@ -2,8 +2,10 @@
 # Its task packs, repetitions and factor levels come from the job files only.
 #
 #   uv run assay experiment phase0-tdd --dry-run    the plan, at no cost
+#   uv run assay experiment phase0-tdd              run the jobs; again to resume
 #
-# The trials of each job go to results/phase0-tdd/<job_name>/.
+# The trials of each job go to results/phase0-tdd/<job_name>/, and the
+# experiment log to analysis/phase0-tdd/experiment-log.jsonl.
 
 jobs = [                              # run in this order, one after another
   "jobs/phase0-cross-control.yaml",
