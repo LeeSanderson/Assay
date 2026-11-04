@@ -48,8 +48,16 @@ Something that records what happens in a trial, runs identically in every condit
 _Avoid_: Probe, monitor, tracer
 
 **Variant**:
-A named, complete bundle of agent configuration (skills, settings, MCP servers, extra instructions, instruction file) that is one non-control condition.
+A named, complete bundle of agent configuration (skills, settings, MCP servers, extra instructions, instruction file, environment tools) that is one non-control condition.
 _Avoid_: Treatment, arm
+
+**Environment tools**:
+Command-line programs that only one variant's trials have, given to the agent as a read-only folder mounted from a tools image, so the control's container differs from the variant's only by that folder.
+_Avoid_: Variant image, installed tools
+
+**Tools lock**:
+The committed list of each environment tool's download address and checksum, from which any machine builds the same tool files; the identity of a variant's environment tools is the content of its tools lock, not the digest of an image built from it.
+_Avoid_: Tools image digest, tools manifest
 
 **Extra instructions**:
 Text that a variant adds to the task prompt, so the agent receives it as part of its first message.
