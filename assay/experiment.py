@@ -22,7 +22,9 @@ appends to the experiment log `analysis/<name>/experiment-log.jsonl`. Resume
 is the default: Harbor keeps each finished trial and runs the rest. A job
 that Harbor does not finish (Ctrl-C, or a non-zero exit) stops the
 invocation. After the last job, the evaluations run over every trial of
-the experiment, whichever jobs ran. --from-scratch first deletes `results/<name>` and
+the experiment, whichever jobs ran, and then the summary (assay/summary.py)
+runs again into `analysis/<name>/summary/` and logs `summary-written`. The
+plan loads the summary and checks its options. --from-scratch first deletes `results/<name>` and
 `analysis/<name>`, the log included.
 
 After each run of a job, each finished trial gets the validity check and a
@@ -61,6 +63,7 @@ from assay.evaluations import (
     EvaluationPlanError, plan_evaluations, print_evaluation_plan, print_evaluation_reuse,
     run_evaluations,
 )
+from assay.summary import PlannedSummary, SummaryPlanError, plan_summary, run_summary
 from assay.trial_outcomes import (TrialOutcome, agent_index, classify, logged_digests,
                                   read_log)
 from instruments.agent import IMPORT_PATH
@@ -124,6 +127,7 @@ class Plan:
     evaluations: list[str]
     summary: str | None
     planned_evaluations: list = field(default_factory=list)  # assay.evaluations
+    planned_summary: PlannedSummary | None = None
 
     @property
     def expected(self) -> Counter[Cell]:
@@ -301,6 +305,12 @@ def make_plan(name: str, selected_jobs: Sequence[str] = ()) -> Plan:
             {agent.harness for job in jobs for agent in job.agents})
     except EvaluationPlanError as e:
         raise PlanError(str(e)) from e
+    if plan.summary is not None:
+        try:
+            plan.planned_summary = plan_summary(EXPERIMENTS_DIR / name, plan.summary,
+                                                data["summary"].get("options", {}))
+        except SummaryPlanError as e:
+            raise PlanError(str(e)) from e
     return plan
 
 
@@ -331,7 +341,8 @@ def print_plan(plan: Plan) -> None:
         print(f"  cell {n} {cell.harness} {cell.model_tier} {cell.condition} {cell.language}")
     print(f"  {sum(expected.values())} expected trials")
     print_evaluation_plan(plan.planned_evaluations)
-    print(f"summary: {plan.summary or 'none'}")
+    print(f"summary: {plan.summary} (runs again on every invocation)" if plan.summary
+          else "summary: none")
 
 
 def job_folder(plan: Plan, job: JobPlan) -> Path:
@@ -579,6 +590,13 @@ def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
         if outcome == "complete":
             run_evaluations(plan, plan.planned_evaluations, containers, log, RESULTS_DIR,
                             ANALYSIS_DIR)
+            if plan.planned_summary is not None:
+                try:
+                    run_summary(plan, plan.planned_summary, log, RESULTS_DIR, ANALYSIS_DIR)
+                except Exception as e:  # the summary's own failure
+                    print(f"error: assay experiment: summary {plan.summary}: "
+                          f"{type(e).__name__}: {e}", file=sys.stderr)
+                    outcome, code = "error", 2
     except KeyboardInterrupt:
         outcome, code = "interrupted", INTERRUPTED
     log.write("invocation-finished", outcome=outcome)
