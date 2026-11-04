@@ -7,15 +7,55 @@ Assay measures the value of a context artifact for a coding agent: a skill, a ru
 
 | Command | What it does |
 |---|---|
-| [`uv run assay run -c jobs/<file>.yaml`](#assay-run) | Starts a job: runs `harbor run` with the job file, after it checks the Claude Code version and the job's results folder. `--overwrite` deletes earlier results first. |
+| [`uv run assay experiment <name>`](#assay-experiment) | Runs an experiment end to end: its jobs in order, the validity check, the evaluations and the summary. A second invocation resumes. |
+| [`uv run assay run -c jobs/<file>.yaml`](#assay-run) | Starts one job: runs `harbor run` with the job file, after it checks the Claude Code version and the job's results folder. `--overwrite` deletes earlier results first. Use it for a job outside an experiment, such as the smoke trial. |
 | [`uv run assay trace-check results/<job-id>`](#assay-trace-check) | Runs the ten-check validity check on each trial of the job, and writes `trial-check.json`. |
 | [`uv run assay replay results/<job-id>`](#assay-replay) | Gives the test state (`no-tests`, `red-compile`, `fail` or `pass`) of each trace snapshot of each trial, and says whether replay works. |
 | [`uv run assay agent-runs results/<job-id>`](#assay-agent-runs) | Cross-checks each test run of the agent with the replay of the same snapshot. |
 | [`uv run assay trajectory results/<job-id>...`](#assay-trajectory) | Measures test-first order, red-to-green order and the TDD loop of each trial of one or more jobs, and writes them to `analysis/trajectory.jsonl`. |
 | [`uv run assay compare-labels <sheet.csv> <analysis/experiment or trajectory.jsonl>`](#assay-compare-labels) | Compares the labeling sheet with the values of `trajectory`, and prints each difference. |
-| [`uv run assay summary results/<job-id>...`](#assay-summary) | Writes the Phase 0 summary of one or more jobs. |
 
-The sections below say why each command exists and what result to expect. PRD section 5 gives the full rules.
+`trace-check`, `replay`, `agent-runs` and `trajectory` run inside `assay experiment`. The commands stay as thin entry points for one job folder, for example the smoke trial. The sections below say why each command exists and what result to expect. PRD v3 gives the full rules.
+
+### `assay experiment`
+
+Runs an experiment: `experiments/<name>/experiment.toml` lists its jobs in run order, its evaluations in run order, and its summary (PRD v3 sections 5 and 11). Phase 0 is the experiment `phase0-tdd`.
+
+```powershell
+uv run assay experiment phase0-tdd --dry-run   # the plan, at no cost
+uv run assay experiment phase0-tdd             # run; run again to resume
+```
+
+| Option | Effect |
+|---|---|
+| `--job J` | Run only this job. It can repeat. The evaluations and the summary still cover every trial of the experiment. |
+| `--dry-run` | Check the plan and print it: the jobs, the expected trials of each cell, the evaluations, the summary, and what resume would keep, delete and rerun. It never calls Harbor or Docker and deletes nothing. |
+| `--from-scratch` | Delete `results/<name>` and `analysis/<name>`, the experiment log included, then run. |
+| `--retries N` | After each job, run its infrastructure failures again, up to N times. The default is 0. |
+| `--debug` | Give `--debug` to Harbor. No other option reaches Harbor. |
+
+Before any job runs, the plan checks `experiment.toml` and each job file, the pinned Claude Code version, the variant folder of each agent's parts, the order and the dependencies of the evaluations, that the summary loads and that its options are valid, and that every `${VAR}` of a selected job file is set. A failure exits 2 at no cost.
+
+Each job runs through `assay run` with `--jobs-dir results/<name>`, so its trials go to `results/<name>/<job>/<trial>/`. After each job, each trial gets the ten-check validity check (see [`assay trace-check`](#assay-trace-check)). An infrastructure failure, such as an API outage, is discarded with its cost in the log and runs again on the next invocation (or at once with `--retries`). A halt, such as a used-up quota, stops the experiment after the current job: fix the cause and run again. A timeout or a trial that changes no file is a result, and stays.
+
+After the jobs, the evaluations (`replay`, `agent-runs`, `trajectory` for Phase 0) run over every kept trial. Each writes `analysis/<name>/<job>/<trial>/<evaluation>/result.json`, and a result is reused while its code and inputs are the same. Last, the summary runs again into `analysis/<name>/summary/`. Every invocation, job, discarded trial, halt, evaluation pass and summary goes to `analysis/<name>/experiment-log.jsonl`.
+
+**The Phase 0 summary** is `experiments/phase0-tdd/summary.py`. It writes `analysis/phase0-tdd/summary/phase0-summary.md` (for a person) and `phase0-summary.json`:
+
+- For each cell (harness, model tier, condition, language): the expected trials and the kept, discarded and halted trials. A cell with fewer kept trials than expected is marked `short`, for example the local cell before `phase0-local` runs. A short cell is not a failure.
+- For each trial: the replay verdict, the process metrics, the coverage and agreement, the evaluation errors, and the cost.
+- The shares of trials with a file-writing `Bash` call (risk 2), and the pooled coverage and agreement, with and without the web-access trials.
+- The cost for each model tier, and the hosted cost against the £15 cap: the kept trials' cost plus the cost of each discarded trial from the experiment log. The rate `USD_PER_GBP` in the summary converts USD; set it to the rate on the day, or give `[summary] options = { usd_per_gbp = ... }` in `experiment.toml`.
+- The values of the local trial from its trial record (risks 9 and 10).
+
+**Expected result:** `experiment phase0-tdd: complete` and exit code 0. Exit code 3 means a halt, 130 an interruption (run again to resume), and 2 an error. Phase 0 passes when the summary shows all of these:
+
+- No cell is short, and every trial is kept (each kept trial passed the validity check).
+- Replay works on every trial.
+- The hosted trials are `within` the £15 cap.
+- The local trial's trajectory holds its tool arguments.
+
+The person check (`assay compare-labels`) is the other acceptance value, and it is not in the summary. Where the summary says "record by hand from the server log", record the local trial's prefix cache hits and background requests by hand.
 
 ### `assay run`
 
@@ -87,7 +127,7 @@ Each line of `agent-runs.jsonl` records `result` (`red`, `green` or `unknown`), 
 
 Measures how each trial worked: test-first order, red-to-green order and the TDD loop.
 
-Give one or more job folders, `results/<job-id>`, as for `assay summary`. The command analyses each trial folder of each job (a folder that holds a `lock.json`), in name order. It reads each trial's replay and agent runs from `analysis/<job-id>/<trial>/`. `--analysis` changes the `analysis` root.
+Give one or more job folders, `results/<job-id>`. The command analyses each trial folder of each job (a folder that holds a `lock.json`), in name order. It reads each trial's replay and agent runs from `analysis/<job-id>/<trial>/`. `--analysis` changes the `analysis` root.
 
 It writes `analysis/trajectory.jsonl`, with one JSON line for each trial, and replaces an earlier file, so the file holds only the jobs given. Each line has these values:
 
@@ -96,7 +136,7 @@ It writes `analysis/trajectory.jsonl`, with one JSON line for each trial, and re
 - **The TDD loop**: the counts of red-to-green cycles, of tests never seen red, and of refactor steps.
 - Whether a `Bash` call wrote to the repository, and whether the instrument skill loaded before the first file write.
 - **Ad-hoc runs**: the count of `Bash` calls that run a script the agent wrote (for example `npx tsx /tmp/verify.ts`), and the step of the first. They are not test runs, so the cross-check does not see them.
-- **Web access**: whether the agent may have reached the web, and the steps where it did: a `WebFetch` or `WebSearch` call that did not fail, or a `Bash` command with a URL, `curl`, `wget` or `git clone`. A flagged trial may have read the exercise's solution. It stays in the data; `assay summary` also gives its figures without the flagged trials.
+- **Web access**: whether the agent may have reached the web, and the steps where it did: a `WebFetch` or `WebSearch` call that did not fail, or a `Bash` command with a URL, `curl`, `wget` or `git clone`. A flagged trial may have read the exercise's solution. It stays in the data; the Phase 0 summary also gives its figures without the flagged trials.
 
 **Expected result:** `wrote analysis/trajectory.jsonl`, one line in it for each trial, and exit code 0. No verdict is the expected one: a verdict measures the agent, and is not a pass or a fail. Red-to-green order and the TDD loop are `null` when the trial has no `replay.jsonl` and `agent-runs.jsonl`; run `assay replay` and `assay agent-runs` first. Phase 0 finds out whether the values are correct by comparing them with a person (`assay compare-labels`).
 
@@ -108,32 +148,9 @@ Compares a person's labels of the trials with the values of `trajectory`. The se
 
 **Expected result:** each trial prints `test_first: agrees  red_to_green: agrees`, the last line is `agrees every time: test_first=True  red_to_green=True`, and the exit code is 0. Phase 0 needs one full pass over the ten trials with no difference, for each metric. Each difference prints the field and the two values, and the command exits 1. A trial that is in one file only is also a difference. For each difference, fix the script, the label or the rule in the PRD, record the correction, and compare again.
 
-### `assay summary`
-
-Writes the Phase 0 summary: every Phase 0 acceptance value, for one or more jobs.
-
-Phase 0 blocks all other phases, and its acceptance values come from every stage. `assay summary` puts them in one place:
-
-- For each trial: the trace check, the replay verdict, the process metrics, the coverage and agreement, and the cost.
-- The shares of trials with a file-writing `Bash` call (risk 2).
-- The pooled coverage and agreement.
-- The cost for each model tier, and the total hosted cost against the £15 cap.
-- The values of the local trial (risks 9 and 10).
-
-It writes `analysis/phase0-summary.md` and `analysis/phase0-summary.json`, and nothing else.
-
-**Expected result:** `wrote ...phase0-summary.md and ...phase0-summary.json`, and exit code 0. Phase 0 passes when the summary shows all of these:
-
-- The trace check passes on every trial.
-- Replay works on every trial.
-- The hosted trials are `within the cap` of £15. The summary converts USD with the rate `USD_PER_GBP` in `analyze/summary.py`; set it to the rate on the day.
-- The local trial's trajectory holds its tool arguments.
-
-The person check (`assay compare-labels`) is the other acceptance value, and it is not in the summary. Where the summary says "record by hand from the server log", record the local trial's prefix cache hits and background requests by hand. Exit code 2 means that the trials of a job ran more than one Claude Code version.
-
 ### Help
 
-`uv run assay` lists the commands, and `uv run assay <command> --help` shows the arguments of one. Do not run `harbor` directly: start every job with `assay run` (ADR 0002). [The analysis process](#the-analysis-process) gives the order of the commands and what each one reads and writes.
+`uv run assay` lists the commands, and `uv run assay <command> --help` shows the arguments of one. Do not run `harbor` directly: start every job with `assay experiment` or `assay run` (ADRs 0002 and 0004). [The analysis process](#the-analysis-process) gives the order of the commands and what each one reads and writes.
 
 ## Setup
 
@@ -158,30 +175,20 @@ The commands in this README are for PowerShell 7 (`pwsh`), run from the reposito
 
 ## The analysis process
 
-Phase 0 has six stages. Do them in this order, one job at a time for stages 2 to 4. Each stage reads the output of the stages before it.
+Phase 0 runs as one experiment, `phase0-tdd`, after the smoke gate. It has four stages. Each stage reads the output of the stages before it.
 
 | Stage | Command | Reads | Writes |
 |---|---|---|---|
-| 1. Run the jobs | `uv run assay run` | `jobs/*.yaml` | `results/<job-id>/<trial>/` |
-| 2. Check the trace | `uv run assay trace-check` | `results/<job-id>/` | the console only |
-| 3. Replay the trace snapshots | `uv run assay replay` | `results/<job-id>/`, the task packs | `analysis/<job-id>/<trial>/replay.jsonl`, `replay-works.json` |
-| 4. Cross-check the agent's test runs | `uv run assay agent-runs` | `results/`, `replay.jsonl` | `analysis/<job-id>/<trial>/agent-runs.jsonl`, `cross-check.json` |
-| 5. Check `trajectory.py` by hand | `jq`, `uv run assay trajectory`, `uv run assay compare-labels` | `results/`, `analysis/`, the labeling sheet | `analysis/<job-id>/<trial>/listing.txt`, `analysis/trajectory.jsonl` |
-| 6. Write the Phase 0 summary | `uv run assay summary` | `results/`, `analysis/` | `analysis/phase0-summary.md`, `phase0-summary.json` |
+| 1. Pass the smoke gate | `uv run assay run`, then `trace-check`, `replay`, `agent-runs` and `trajectory` on `results/phase0-smoke` | `jobs/phase0-smoke.yaml` | `results/phase0-smoke/`, `analysis/phase0-smoke/`, `analysis/trajectory.jsonl` |
+| 2. Run the experiment | `uv run assay experiment phase0-tdd` | `experiments/phase0-tdd/experiment.toml`, `jobs/*.yaml`, the task packs | `results/phase0-tdd/<job>/<trial>/`, `analysis/phase0-tdd/` |
+| 3. Check `trajectory.py` by hand | `jq`, `uv run assay compare-labels` | `results/phase0-tdd/`, `analysis/phase0-tdd/`, the labeling sheet | `analysis/phase0-tdd/<job>/<trial>/listing.txt` |
+| 4. Read the Phase 0 summary | none: stage 2 writes it | `analysis/phase0-tdd/summary/phase0-summary.md` | |
 
-Every stage uses an `assay` command, except the `jq` listing of stage 5.
+Every stage uses an `assay` command, except the `jq` listing of stage 3. Git ignores `results/` and `analysis/`, so the commands below also keep the filled labeling sheet and the corrections in `analysis/`.
 
-`<job-id>` is the folder name of the job in `results/`, for example `phase0-cross-tdd`. A trial folder is a folder in `results/<job-id>/` that holds a `lock.json`. Git ignores `results/` and `analysis/`, so the commands below also keep the filled labeling sheet and the corrections in `analysis/`.
+### The jobs
 
-Most commands below use the variable `$job`. Set it to the job you analyze:
-
-```powershell
-$job = 'phase0-cross-tdd'   # or phase0-cross-control, phase0-extra, or phase0-local
-```
-
-### Stage 1: Run the jobs
-
-The Phase 0 job files are in `jobs/`. Each runs at `-k 1` with `instruments.agent:InstrumentedClaudeCode`, so every trial, the control included, carries the trace hook. Trials go to `results/<job_name>/`.
+The Phase 0 job files are in `jobs/`. Each runs at `-k 1` with `instruments.agent:InstrumentedClaudeCode`, so every trial, the control included, carries the trace hook.
 
 | Job file | Trials |
 |---|---|
@@ -189,125 +196,104 @@ The Phase 0 job files are in `jobs/`. Each runs at `-k 1` with `instruments.agen
 | `jobs/phase0-cross-tdd.yaml` | Haiku and Sonnet × `instrument-tdd` × TypeScript and Go: 4 |
 | `jobs/phase0-extra.yaml` | Haiku × `instrument-tdd` × TypeScript and Go: 2 |
 | `jobs/phase0-local.yaml` | the local model × `instrument-tdd` × one task pack: 1 |
-| `jobs/phase0-smoke.yaml` | Haiku × `instrument-tdd` × TypeScript: 1. Use it to check the setup before the jobs above. |
+| `jobs/phase0-smoke.yaml` | Haiku × `instrument-tdd` × TypeScript: 1. The smoke gate, outside the experiment. |
 
-The cross trials are two jobs because Harbor sets extra instructions per job, not per agent. Each `instrument-tdd` job passes `variants/instrument-tdd/extra-instruction.md`, which names the skill; the control job passes nothing. The web tools are off in every trial unless a job sets `kwargs.allow_web: true` (ADR 0003).
+The cross trials are two jobs because Harbor sets extra instructions per job, not per agent. Each `instrument-tdd` job passes `variants/instrument-tdd/extra-instruction.md`, which names the skill; the control job passes nothing. The experiment reads each agent's condition from the variant folder its parts come from: `phase0-cross-control` is the control, and the other three jobs are `instrument-tdd`. The web tools are off in every trial unless a job sets `kwargs.allow_web: true` (ADR 0003).
 
-**Set the Claude Code version first.** On the day of the smoke trial, read the version of the `stable` channel of Claude Code. Replace the placeholder `SET-ON-SMOKE-TRIAL-DAY` with it in all the job files, in one commit, before the smoke trial runs. In each cross job the value is written once and shared through a YAML anchor. A fast test (`tests/test_job_files.py`) fails if the files do not hold one version. `uv run assay run` stops before Harbor starts if a job's version is not `stable`, `latest` or `X.Y.Z` (for example the placeholder, or no version), and the agent's `setup()` makes the same check for a direct `harbor run`. Do not change the version for the remaining Phase 0 trials (PRD, "Version pins").
+**Set the Claude Code version first.** On the day of the smoke trial, read the version of the `stable` channel of Claude Code. Write it as `kwargs.version` in all the job files, in one commit, before the smoke trial runs. In each cross job the value is written once and shared through a YAML anchor. A fast test (`tests/test_job_files.py`) fails if the files do not hold one version. `assay run` and `assay experiment` stop before Harbor starts if a job's version is not pinned, and the agent's `setup()` makes the same check for a direct `harbor run`. Do not change the version for the remaining Phase 0 trials (PRD, "Version pins").
 
-Launch each job from the repository root with `assay run`, the only supported way to start a job (ADR 0002). It gives the job file to `harbor run` with `-c`, and every other option goes to Harbor unchanged:
+### Stage 1: Pass the smoke gate
 
-```powershell
-uv run assay run -c jobs/phase0-cross-control.yaml --dry-run   # check: 4 trials, nothing runs
-uv run assay run -c jobs/phase0-cross-control.yaml -y --debug
-uv run assay run -c jobs/phase0-cross-tdd.yaml -y --debug
-uv run assay run -c jobs/phase0-extra.yaml -y --debug
-```
-
-The hosted jobs read `ANTHROPIC_API_KEY` from `.env` (see [Setup](#setup)).
-
-`--debug` shows Harbor's debug log on the console. Harbor writes the same log, at debug level, to `results/<job_name>/job.log` and `<trial>/trial.log` with or without the flag. The console shows only "Running agent" while Claude Code works; to follow the agent, tail `results/<job_name>/<trial>/agent/claude-code.txt`, which Harbor writes while the agent runs (one JSON event per line):
+The smoke trial runs through `assay run`, not through the experiment (PRD v3 section 17, "The smoke gate"). Run it again after a change to a task pack, to the recorder, or to the evaluations, before the paid Phase 0 jobs:
 
 ```powershell
-Get-Content results\phase0-cross-tdd\*\agent\claude-code.txt -Wait -Tail 20
+uv run assay run -c jobs/phase0-smoke.yaml -y --debug
+uv run assay trace-check results\phase0-smoke
+uv run assay replay results\phase0-smoke
+uv run assay agent-runs results\phase0-smoke
+uv run assay trajectory results\phase0-smoke
 ```
 
-**Re-running a job.** A re-run with the same job file resumes the job in `results/<job_name>/`: Harbor keeps the finished trials and runs the rest. Harbor cannot resume a job whose job file has changed. In that case `assay run` stops before Harbor starts and names the folder. To delete the folder and start fresh, add `--overwrite`:
+The gate passes when `analysis/trajectory.jsonl` shows that the skill loaded before the first file write, the trial is not flagged for web access, and red-to-green order is not `not-observed` when the trial has an agent test run with a red or green result. The reward is not a criterion.
+
+`--debug` shows Harbor's debug log on the console. Harbor writes the same log, at debug level, to `results/<job_name>/job.log` and `<trial>/trial.log` with or without the flag. To follow the agent, tail `<trial>/agent/claude-code.txt`, which Harbor writes while the agent runs (one JSON event per line):
 
 ```powershell
-uv run assay run -c jobs/phase0-cross-tdd.yaml -y --debug --overwrite   # deletes results/phase0-cross-tdd/ without asking, then runs
-uv run assay run -c jobs/phase0-cross-tdd.yaml --overwrite --dry-run   # says what it would delete; deletes nothing
+Get-Content results\phase0-smoke\*\agent\claude-code.txt -Wait -Tail 20
 ```
 
-`--overwrite` deletes the folder even when the job file has not changed. A `--dry-run` without `--overwrite` only warns about a changed job file. `--job-name` and `-o`/`--jobs-dir` on the command line change the folder, as they do in Harbor.
+**Re-running a single job.** A re-run of `assay run` with the same job file resumes the job in `results/<job_name>/`: Harbor keeps the finished trials and runs the rest. Harbor cannot resume a job whose job file has changed. In that case `assay run` stops before Harbor starts and names the folder. Add `--overwrite` to delete the folder and start fresh (with `--dry-run`, it only says what it would delete).
 
-**The local job** needs three more steps:
+### Stage 2: Run the experiment
+
+Check the plan first. It costs nothing: it prints the four jobs, the 11 expected trials by cell, the evaluations and the summary, and what resume would do:
+
+```powershell
+uv run assay experiment phase0-tdd --dry-run
+```
+
+Run the hosted jobs. They read `ANTHROPIC_API_KEY` from `.env` (see [Setup](#setup)):
+
+```powershell
+uv run assay experiment phase0-tdd --job phase0-cross-control --job phase0-cross-tdd --job phase0-extra --debug
+```
+
+The evaluations and the summary run after the jobs, over every trial of the experiment. Until `phase0-local` runs, the summary shows the local cell as short. If the run stops (Ctrl-C, a halt or an error), fix the cause and run the same command again: finished trials are kept, discarded and halted trials run again, and unchanged evaluation results are reused. Add `--retries 1` to rerun an infrastructure failure at once. `--from-scratch` deletes `results/phase0-tdd` and `analysis/phase0-tdd` and starts again.
+
+**The local job** runs last, on the host of the local server, and needs three more steps:
 
 1. Set the task pack. After the hosted trials, replace the marked `tasks:` path in `jobs/phase0-local.yaml` (`SET AFTER THE HOSTED TRIALS`) with the chosen pack.
 2. Fill in `jobs/phase0-local.L6.md`, the record of the local setup (L6).
-3. Set `ASSAY_LOCAL_BASE_URL` in `.env` to the server address (see [Setup](#setup)). This is the only place the address appears (L10). Without it, Harbor stops before any trial runs.
+3. Set `ASSAY_LOCAL_BASE_URL` in `.env` to the server address (see [Setup](#setup)). This is the only place the address appears (L10). Without it, the plan stops before any job runs.
 
 ```powershell
-uv run assay run -c jobs/phase0-local.yaml -y --debug
+uv run assay experiment phase0-tdd --job phase0-local --debug
 ```
 
-### Stage 2: Check the trace
+### Stage 3: Check `trajectory.py` by hand
 
-The trace check makes sure that the trace hook worked in each trial (PRD section 5, "The trace check"). It prints one JSON line for each trial, with the names of the checks that the trial fails:
+A person labels the ten hosted trials and compares the labels with `trajectory.py`, for test-first order and for red-to-green order and the TDD loop. The full procedure is in the PRD, "How a person checks `trajectory.py`" and its red-to-green extension. In short:
 
-```powershell
-uv run assay trace-check results\$job
-```
-
-An empty `failed_checks` list means that the trial passes. A trial that fails is a failure of the infrastructure: run it again in the same cell. The command stops with exit code 2 if the trials of the job do not share one Claude Code version.
-
-### Stage 3: Replay the trace snapshots
-
-`assay replay` runs the task pack's `test.sh` on each snapshot in the trial's `trace.git`, in a fresh container with no network. It replays each trial two times. Docker must be running.
-
-```powershell
-uv run assay replay results\$job
-```
-
-For each trial, the command prints `replay works` or `replay does not work` and the causes. It exits with 1 when replay does not work on a trial. It writes `analysis/<job-id>/<trial>/replay.jsonl` (one line for each snapshot), `replay-works.json` (the verdict) and `replay-logs/<seq>/` (the verifier's logs of each snapshot, from the first run).
-
-Harbor deletes each trial's task image, so replay rebuilds it from the pack's Dockerfile, whose base image is pinned by digest. `replay-works.json` records the rebuilt image ID and that base image. For each failure, find the cause, fix it, and replay all the trials again (PRD section 7, Phase 0).
-
-### Stage 4: Cross-check the agent's test runs
-
-`assay agent-runs` finds each test run of the agent and compares its result (from the test summary in its output, or its exit code) with the replay of the same snapshot. Run it after stage 3:
-
-```powershell
-uv run assay agent-runs results\$job
-```
-
-It prints one JSON line for each trial, with the coverage and the agreement. It writes `analysis/<job-id>/<trial>/agent-runs.jsonl` and `cross-check.json`.
-
-### Stage 5: Check `trajectory.py` by hand
-
-A person labels the ten hosted trials and compares the labels with `trajectory.py`, for test-first order and for red-to-green order and the TDD loop. The full procedure is in the PRD, section 5, "How a person checks `trajectory.py`" and its red-to-green extension. Stages 3 and 4 must be complete for each hosted job. In short:
-
-1. Print the neutral listing of each trial with `jq`. The listing gives no class, no seen state, no verdict, and no count. The header of `analyze/listing.jq` explains each field. This loop writes the listing of each trial of the job to `analysis/<job-id>/<trial>/listing.txt`:
+1. Print the neutral listing of each trial with `jq`. The listing gives no class, no seen state, no verdict, and no count. The header of `analyze/listing.jq` explains each field. This loop takes the replay snapshots and the agent's test runs from the evaluation results, and writes the listing of each hosted trial to `analysis/phase0-tdd/<job>/<trial>/listing.txt`:
 
    ```powershell
    [Console]::OutputEncoding = [Text.UTF8Encoding]::new()   # read jq's output as UTF-8
-   $trials = Get-ChildItem results\$job -Directory | Where-Object { Test-Path "$_\lock.json" }
-   foreach ($t in $trials) {
-     $out = "analysis\$job\$($t.Name)"
-     jq -r `
-       --slurpfile trace  "$t\artifacts\logs\artifacts\trace\trace.jsonl" `
-       --slurpfile replay "$out\replay.jsonl" `
-       --slurpfile runs   "$out\agent-runs.jsonl" `
-       -f analyze\listing.jq "$t\agent\trajectory.json" > "$out\listing.txt"
+   foreach ($job in 'phase0-cross-control', 'phase0-cross-tdd', 'phase0-extra') {
+     $trials = Get-ChildItem results\phase0-tdd\$job -Directory | Where-Object { Test-Path "$_\lock.json" }
+     foreach ($t in $trials) {
+       $out = "analysis\phase0-tdd\$job\$($t.Name)"
+       jq -c '.value.snapshots[]' "$out\replay\result.json" > "$out\replay.jsonl"
+       jq -c '.value.runs[]' "$out\agent-runs\result.json" > "$out\agent-runs.jsonl"
+       jq -r `
+         --slurpfile trace  "$t\artifacts\logs\artifacts\trace\trace.jsonl" `
+         --slurpfile replay "$out\replay.jsonl" `
+         --slurpfile runs   "$out\agent-runs.jsonl" `
+         -f analyze\listing.jq "$t\agent\trajectory.json" > "$out\listing.txt"
+     }
    }
    ```
 
-2. Copy `labeling/sheet-template.csv` and fill one row per trial before `trajectory.py` runs. Use the trial folder name for `trial`. For test-first order, give the verdict, the two anchors (`step_id`, position, and path of the first test write and of the first implementation write), and a note. For red-to-green order, give the verdict, the `tool_use_id` of the first seen red and of the first seen green, the three counts of the TDD loop, and a note. Leave a cell blank when there is no such write or seen state. You can read `trajectory.json` when the listing is not sufficient.
+2. Copy `labeling/sheet-template.csv` and fill one row per trial before you read any value of `trajectory`. Use the trial folder name for `trial`. For test-first order, give the verdict, the two anchors (`step_id`, position, and path of the first test write and of the first implementation write), and a note. For red-to-green order, give the verdict, the `tool_use_id` of the first seen red and of the first seen green, the three counts of the TDD loop, and a note. Leave a cell blank when there is no such write or seen state. You can read `trajectory.json` when the listing is not sufficient.
 
    ```powershell
    Copy-Item labeling\sheet-template.csv analysis\sheet.csv
    ```
 
-3. Run `assay trajectory` on both hosted jobs, then compare. `assay trajectory` writes `analysis\trajectory.jsonl`. `assay compare-labels` prints each difference and exits with 1 when any trial differs:
+3. Compare the sheet with the `trajectory` results of the experiment. `assay compare-labels` prints each difference and exits with 1 when any trial differs:
 
    ```powershell
-   uv run assay trajectory results\phase0-cross-control results\phase0-cross-tdd results\phase0-extra
-   uv run assay compare-labels analysis\sheet.csv analysis\trajectory.jsonl
+   uv run assay compare-labels analysis\sheet.csv analysis\phase0-tdd
    ```
 
-4. For each difference, find the cause and fix the script, the label, or the rule in the PRD. Record each correction in a copy of `labeling/corrections-template.csv` (`corrected` is `script`, `label`, or `rule`). Repeat until one full pass over the ten trials gives no difference for each metric.
+4. For each difference, find the cause and fix the script, the label, or the rule in the PRD. Record each correction in a copy of `labeling/corrections-template.csv` (`corrected` is `script`, `label`, or `rule`). After a fix to `trajectory.py`, run `uv run assay experiment phase0-tdd` again: only `trajectory` reruns. Repeat until one full pass over the ten trials gives no difference for each metric.
 
    ```powershell
    Copy-Item labeling\corrections-template.csv analysis\corrections.csv
    ```
 
-### Stage 6: Write the Phase 0 summary
+### Stage 4: Read the Phase 0 summary
 
-After stages 3 and 4 have run on each job, write the summary of every Phase 0 acceptance value. It goes to `analysis/phase0-summary.md` (for a person) and `analysis/phase0-summary.json`, and the command writes nothing else:
-
-```powershell
-uv run assay summary results\phase0-cross-control results\phase0-cross-tdd results\phase0-extra results\phase0-local
-```
+Each complete invocation of stage 2 writes `analysis/phase0-tdd/summary/phase0-summary.md` (for a person) and `phase0-summary.json` again. [`assay experiment`](#assay-experiment) says what they hold and when Phase 0 passes.
 
 ## Run the tests
 

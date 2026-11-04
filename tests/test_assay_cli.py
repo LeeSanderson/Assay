@@ -284,8 +284,16 @@ TOOLS = {
     "agent-runs": "analyze.agent_runs",
     "trajectory": "analyze.trajectory",
     "compare-labels": "analyze.compare_labels",
-    "summary": "analyze.summary",
 }
+
+
+def test_assay_summary_is_gone_the_experiment_writes_the_summary(capsys):
+    # Issue #66: the summary runs inside `assay experiment`.
+    assert main(["summary", "results/phase0-cross"]) == 2
+
+    usage = capsys.readouterr().err
+    assert "assay summary" not in usage
+    assert "assay experiment" in usage
 
 
 @pytest.mark.parametrize("subcommand,module", TOOLS.items())

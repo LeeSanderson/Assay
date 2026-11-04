@@ -57,7 +57,6 @@ TOOLS = {
     "trajectory": Tool("analyze.trajectory", "measure test-first and red-to-green order"),
     "compare-labels": Tool("analyze.compare_labels",
                            "compare the labeling sheet with trajectory's output"),
-    "summary": Tool("analyze.summary", "write the Phase 0 summary"),
 }
 USAGE = "\n".join([
     "usage: assay run -c jobs/<file>.yaml [--overwrite] [harbor run options]",
