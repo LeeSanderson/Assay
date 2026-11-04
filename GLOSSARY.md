@@ -25,11 +25,11 @@ _Avoid_: Installed skill
 ### Experiment design
 
 **Experiment**:
-One question Assay answers, defined by the factors it varies, the baseline it compares against, its task packs, its repetitions and its evaluations.
+One question Assay answers, defined by its committed jobs (which fix its factors, task packs and repetitions), its evaluations and its summary.
 _Avoid_: Study, benchmark, suite
 
 **Factor**:
-One axis an experiment varies (harness, model tier or condition), each with a declared baseline level that every comparison is made against.
+One axis an experiment varies (harness, model tier or condition), with its levels read from the agents in the experiment's job files rather than declared; it varies when the jobs hold more than one level of it.
 _Avoid_: Arm, dimension
 
 **Harness**:
@@ -48,7 +48,7 @@ Something that records what happens in a trial, runs identically in every condit
 _Avoid_: Probe, monitor, tracer
 
 **Variant**:
-A named, complete bundle of agent configuration (skills, settings, MCP servers, extra instructions, instruction file, environment tools) that is one non-control condition.
+One non-control condition: a folder, `variants/<name>/`, that groups the related files (skills, settings, MCP servers, extra instructions, instruction file, environment tools) that jobs give to an agent by their paths; many jobs, in one experiment or many, can use one folder, and the folder's name is the condition's name, so no manifest lists the files.
 _Avoid_: Treatment, arm
 
 **Environment tools**:
@@ -109,12 +109,20 @@ _Avoid_: Required setup, default setup
 The fixed, harness-neutral telemetry of one trial: every tool call in order, tokens, cost, time, and the repository's history through the trial; every supported harness produces its required core in full and states how finely it captured that history, while an optional part, such as each call's result or exit code, is either given or marked absent, never guessed.
 _Avoid_: Logs, trace, results
 
+**Recorder**:
+The measurement instrument of one harness that writes the shared trace folder in each trial: the repository history from seed to final, one line for each tool call, and what the trial had.
+_Avoid_: Tracer, logger
+
+**Reader**:
+The code for one harness that builds the trial record from the recorder's trace folder and Harbor's trial folder, filling each optional part or marking it absent.
+_Avoid_: Parser, adapter
+
 **Evaluation**:
 An experiment-specific step that turns trial records and the final repository into higher-level metrics, such as test-first order or new security findings.
 _Avoid_: Analyzer, grader, scorer
 
 **Summary**:
-The optional last step of an experiment, which combines the evaluation results of all its trials into comparisons against the baseline.
+The optional last step of an experiment, which combines the evaluation results of all its trials; it alone decides what to compare, so any baseline is one of its options and not part of the experiment.
 _Avoid_: Report generator, aggregation
 
 **Infrastructure failure**:
