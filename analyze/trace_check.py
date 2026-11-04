@@ -56,7 +56,7 @@ class ConditionDigests:
 
 
 @dataclass(frozen=True)
-class Outcome:
+class CheckOutcome:
     passed: bool | None  # None: skipped
     detail: dict = field(default_factory=dict)
 
@@ -64,7 +64,7 @@ class Outcome:
 @dataclass(frozen=True)
 class TrialCheck:
     trial: str
-    checks: dict[str, Outcome]  # in CHECKS order
+    checks: dict[str, CheckOutcome]  # in CHECKS order
 
     @property
     def failed(self) -> list[str]:
@@ -110,8 +110,8 @@ def write_trial_check(result: TrialCheck, folder: Path) -> Path:
     return path
 
 
-def _outcome(value: bool | Outcome) -> Outcome:
-    return value if isinstance(value, Outcome) else Outcome(value)
+def _outcome(value: bool | CheckOutcome) -> CheckOutcome:
+    return value if isinstance(value, CheckOutcome) else CheckOutcome(value)
 
 
 def _instruments(trial: Trial) -> bool:
@@ -161,13 +161,13 @@ def _harbor_version(trial: Trial) -> bool:
     return trial.identity.harbor_version == locked_harbor_version()
 
 
-def _condition(condition: ConditionDigests | None) -> Outcome:
+def _condition(condition: ConditionDigests | None) -> CheckOutcome:
     """8. The condition digests the experiment log recorded for the trial's job
     agree with the plan-time digest."""
     if condition is None:
-        return Outcome(None, {"skipped": NOT_IN_AN_EXPERIMENT})
+        return CheckOutcome(None, {"skipped": NOT_IN_AN_EXPERIMENT})
     agrees = bool(condition.logged) and all(d == condition.planned for d in condition.logged)
-    return Outcome(agrees, {"planned": condition.planned, "logged": list(condition.logged)})
+    return CheckOutcome(agrees, {"planned": condition.planned, "logged": list(condition.logged)})
 
 
 def _claimed_paths(trial: Trial) -> bool:
@@ -196,10 +196,10 @@ def _claimed_paths(trial: Trial) -> bool:
     return True
 
 
-def _required_core(trial: Trial) -> Outcome:
+def _required_core(trial: Trial) -> CheckOutcome:
     """10. The reader built every field of the required core."""
     missing = trial.missing_core()
-    return Outcome(not missing, {"missing": missing} if missing else {})
+    return CheckOutcome(not missing, {"missing": missing} if missing else {})
 
 
 def seed_path(file_path: str | None) -> str | None:
