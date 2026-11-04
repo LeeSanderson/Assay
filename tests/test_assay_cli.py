@@ -461,3 +461,21 @@ def test_a_shell_value_wins_over_the_launcher_defaults(monkeypatch):
 
     assert env["PYTHONUTF8"] == "0"
     assert env["HARBOR_TELEMETRY"] == "1"
+
+
+def test_after_a_ctrl_c_harbor_stops_and_the_launcher_returns_130(monkeypatch):
+    # The experiment reads 130 as an interrupted invocation, whatever exit
+    # code Harbor gives after it stopped its trials.
+    class CtrlC(FakePopen):
+        waits = 0
+
+        def wait(self):
+            CtrlC.waits += 1
+            if CtrlC.waits == 1:
+                raise KeyboardInterrupt
+            return 0
+
+    monkeypatch.setattr("assay.cli.subprocess.Popen", CtrlC)
+
+    assert run_harbor(["-c", "jobs/x.yaml"]) == 130
+    assert CtrlC.waits == 2  # it waited for Harbor to stop

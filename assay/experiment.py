@@ -1,7 +1,7 @@
-"""`assay experiment <name>`: the plan of an experiment (PRD v3 sections 5, 7
-and 11; issue #60).
+"""`assay experiment <name>`: the plan and the run of an experiment (PRD v3
+sections 5, 7 and 11; issues #60 and #61).
 
-    uv run assay experiment <name> [--job J]... --dry-run
+    uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--debug]
 
 `<name>` is `experiments/<name>/experiment.toml`, from the current directory
 (the repository root). The plan reads the experiment's job files, and from
@@ -10,7 +10,16 @@ class, the model tier as `model_name` unchanged, and the condition from the
 variant folder that the agent's parts come from. It counts the expected
 trials of each cell (task packs x agents x `n_attempts`), runs the plan-time
 checks, and prints the plan. A dry run calls no Harbor and no container, and
-writes and deletes nothing.
+writes and deletes nothing; it also prints what resume would keep and rerun.
+
+Without --dry-run, the selected jobs run in the listed order, one at a time,
+each through the `assay run` path with `--jobs-dir results/<name> -y`, and
+`--debug` when given (no other option reaches Harbor). Each invocation
+appends to the experiment log `analysis/<name>/experiment-log.jsonl`. Resume
+is the default: Harbor keeps each finished trial and runs the rest. A job
+that Harbor does not finish (Ctrl-C, or a non-zero exit) stops the
+invocation. --from-scratch first deletes `results/<name>` and
+`analysis/<name>`, the log included.
 """
 
 from __future__ import annotations
@@ -20,10 +29,15 @@ import json
 import os
 import re
 import sys
+import subprocess
+import time
 import tomllib
+import uuid
 from collections import Counter
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from importlib import metadata
 from pathlib import Path
 
 import yaml
@@ -34,6 +48,8 @@ from instruments.agent import IMPORT_PATH
 EXPERIMENTS_DIR = Path("experiments")
 VARIANTS_DIR = Path("variants")
 RESULTS_DIR = Path("results")
+ANALYSIS_DIR = Path("analysis")
+INTERRUPTED = 130  # the exit code of a job stopped by Ctrl-C (assay.cli.INTERRUPTED)
 CONTROL = "control"
 # The harness level of an agent class (PRD section 5, "Factors"); any other
 # agent's level is its name or import path.
@@ -285,22 +301,161 @@ def print_plan(plan: Plan) -> None:
     print(f"summary: {plan.summary or 'none'}")
 
 
+def job_folder(plan: Plan, job: JobPlan) -> Path:
+    return RESULTS_DIR / plan.experiment / job.name
+
+
+def finished_trials(folder: Path) -> list[str]:
+    """The trials of a job folder that Harbor finished: those with a result.json."""
+    if not folder.is_dir():
+        return []
+    return sorted(t.name for t in folder.iterdir() if (t / "result.json").is_file())
+
+
+def unfinished_trials(folder: Path) -> list[str]:
+    """The trial folders with no result.json, which Harbor's resume deletes and reruns."""
+    if not folder.is_dir():
+        return []
+    return sorted(t.name for t in folder.iterdir()
+                  if t.is_dir() and not (t / "result.json").is_file())
+
+
+def experiment_folders(plan: Plan) -> list[Path]:
+    """What --from-scratch deletes: the results and the analysis, the log included."""
+    return [RESULTS_DIR / plan.experiment, ANALYSIS_DIR / plan.experiment]
+
+
+def print_resume(plan: Plan, from_scratch: bool) -> None:
+    """What the next invocation deletes, keeps and runs (PRD section 11, "Resume")."""
+    print()
+    if from_scratch:
+        for folder in experiment_folders(plan):
+            print(f"from scratch: would delete {folder.as_posix()}" if folder.exists()
+                  else f"from scratch: nothing to delete, {folder.as_posix()} does not exist")
+    print("resume (finished trials are kept; Harbor runs the rest):")
+    for job in plan.jobs:
+        if not job.selected:
+            continue
+        folder = job_folder(plan, job)
+        finished = [] if from_scratch else finished_trials(folder)
+        to_run = max(sum(job.expected.values()) - len(finished), 0)
+        noun = "trial" if len(finished) == 1 else "trials"
+        print(f"  {job.name:<22} {len(finished)} finished {noun} kept, {to_run} to run")
+        for trial in [] if from_scratch else unfinished_trials(folder):
+            print(f"    {trial} (unfinished, Harbor deletes it)")
+
+
+class ExperimentLog:
+    """`analysis/<experiment>/experiment-log.jsonl`, appended across
+    invocations (PRD section 11, "The experiment log")."""
+
+    def __init__(self, experiment: str):
+        self.path = ANALYSIS_DIR / experiment / "experiment-log.jsonl"
+        self.invocation = uuid.uuid4().hex
+
+    def write(self, event: str, **fields) -> None:
+        line = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "invocation": self.invocation, "event": event, **fields}
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(line) + "\n")
+
+
+def assay_commit() -> str | None:
+    try:
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent,
+                              capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def harbor_version() -> str | None:
+    try:
+        return metadata.version("harbor")
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def agent_fields(agents: Sequence[AgentPlan]) -> list[dict]:
+    return [asdict(agent) for agent in agents]
+
+
+def run_job(plan: Plan, job: JobPlan, log: ExperimentLog, debug: bool,
+            run_harbor: Callable[[Sequence[str]], int]) -> int:
+    """Run one job through the `assay run` path; return its exit code."""
+    from assay.cli import run  # assay.cli imports this module
+
+    log.write("job-started", job=job.name, file=job.file.as_posix(),
+              agents=agent_fields(job.agents))
+    args = ["-c", job.file.as_posix(), "--jobs-dir", (RESULTS_DIR / plan.experiment).as_posix(),
+            "-y", *(["--debug"] if debug else [])]
+    print(f"\njob {job.name}: assay run {' '.join(args)}", flush=True)
+    started = time.monotonic()
+    try:
+        exit_code = run(args, run_harbor)
+    except KeyboardInterrupt:
+        exit_code = INTERRUPTED
+    # The digests again, so that a part edited during the job shows
+    # (validity check 8 compares them with the plan's).
+    try:
+        agents = agent_fields(plan_job(job.file, plan.experiment, None).agents)
+    except PlanError as e:
+        print(f"error: assay experiment: {e}", file=sys.stderr)
+        agents, exit_code = [], exit_code or 2
+    log.write("job-finished", job=job.name, exit_code=exit_code,
+              trials=finished_trials(job_folder(plan, job)),
+              duration_sec=round(time.monotonic() - started, 3), agents=agents)
+    return exit_code
+
+
+def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
+                   run_harbor: Callable[[Sequence[str]], int]) -> int:
+    """Run the selected jobs in order, one at a time, and log the invocation.
+    Stops at the first job that Harbor did not finish."""
+    log = ExperimentLog(plan.experiment)
+    log.write("invocation-started", command=["assay", "experiment", *argv],
+              assay_commit=assay_commit(), harbor_version=harbor_version())
+    outcome, code = "complete", 0
+    try:
+        for job in plan.jobs:
+            if not job.selected:
+                continue
+            exit_code = run_job(plan, job, log, debug, run_harbor)
+            if exit_code == INTERRUPTED:
+                outcome, code = "interrupted", INTERRUPTED
+                break
+            if exit_code != 0:
+                outcome, code = "error", exit_code
+                break
+    except KeyboardInterrupt:
+        outcome, code = "interrupted", INTERRUPTED
+    log.write("invocation-finished", outcome=outcome)
+    print(f"\nexperiment {plan.experiment}: {outcome}")
+    return code
+
+
 def error(message: str) -> int:
     print(f"error: assay experiment: {message}", file=sys.stderr)
     return 2
 
 
-USAGE = "usage: assay experiment <name> [--job J]... --dry-run"
+USAGE = "usage: assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--debug]"
 
 
 def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int]) -> int:
-    """The `experiment` subcommand. `run_harbor` runs `harbor run`; the plan never calls it."""
+    """The `experiment` subcommand. `run_harbor` runs `harbor run`; a dry run never calls it."""
+    argv = list(args)
     args = list(args)
-    names, jobs, dry_run = [], [], False
+    names, jobs = [], []
+    dry_run = from_scratch = debug = False
     while args:
         arg = args.pop(0)
         if arg == "--dry-run":
             dry_run = True
+        elif arg == "--from-scratch":
+            from_scratch = True
+        elif arg == "--debug":
+            debug = True  # the one option that reaches Harbor
         elif arg == "--job":
             if not args:
                 return error("--job needs a job name")
@@ -308,7 +463,7 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int]) 
         elif arg.startswith("--job="):
             jobs.append(arg.split("=", 1)[1])
         elif arg.startswith("-"):
-            return error(f"unknown option {arg}\n{USAGE}")
+            return error(f"unknown option {arg} (no option but --debug reaches Harbor)\n{USAGE}")
         else:
             names.append(arg)
     if len(names) != 1:
@@ -319,6 +474,14 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int]) 
         return error(str(e))
     print_plan(plan)
     if dry_run:
+        print_resume(plan, from_scratch)
         print("\ndry run: no job runs, and nothing is written or deleted.")
         return 0
-    return error("running an experiment is not built yet; use --dry-run")
+    if from_scratch:
+        from assay.cli import delete_folder  # assay.cli imports this module
+
+        for folder in experiment_folders(plan):
+            if folder.exists():
+                delete_folder(folder)
+                print(f"deleted {folder.as_posix()}")
+    return run_experiment(plan, argv, debug, run_harbor)

@@ -2,7 +2,8 @@
 and the one way to run the analysis tools on its results.
 
     uv run assay run -c jobs/<file>.yaml -y [--overwrite] [harbor run options]
-    uv run assay experiment <name> [--job J]... --dry-run   (assay/experiment.py)
+    uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--debug]
+                                                (assay/experiment.py)
     uv run assay <subcommand> [args]   (each analysis tool's `main` in the `analyze` package)
 
 Every subcommand first loads `.env` from the repository root: it sets each key
@@ -64,13 +65,14 @@ USAGE = "\n".join([
     "",
     "subcommands:",
     "  assay run             start a job with harbor run",
-    "  assay experiment      plan an experiment (assay experiment <name> --dry-run)",
+    "  assay experiment      run an experiment's jobs (assay experiment <name> [--dry-run])",
     *(f"  assay {name:<15} {tool.about}" for name, tool in TOOLS.items()),
 ])
 OVERWRITE = "--overwrite"
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"  # at the repository root
 TELEMETRY = "HARBOR_TELEMETRY"  # harbor/telemetry.py; "0" turns it off
 UTF8_MODE = "PYTHONUTF8"  # "1": Python's UTF-8 mode, the default encoding for files
+INTERRUPTED = 130  # the exit code of a run stopped by Ctrl-C
 
 HarborRunner = Callable[[Sequence[str]], int]
 
@@ -84,13 +86,17 @@ def run_harbor(args: Sequence[str]) -> int:
     # fails on other characters; UTF-8 mode fixes that. A shell value wins.
     env = {TELEMETRY: "0", UTF8_MODE: "1", **os.environ}
     process = subprocess.Popen(["harbor", "run", *args], env=env)
+    interrupted = False
     while True:
         try:
-            return process.wait()
+            exit_code = process.wait()
+            # After a Ctrl-C, 130 (128 + SIGINT) whatever Harbor returns, so
+            # `assay experiment` knows the job was interrupted.
+            return INTERRUPTED if interrupted else exit_code
         except KeyboardInterrupt:
             # Ctrl-C reaches Harbor too, which stops its trials and cleans up;
             # wait for it rather than kill it.
-            continue
+            interrupted = True
 
 
 def option_values(args: Sequence[str], *names: str) -> list[str]:
