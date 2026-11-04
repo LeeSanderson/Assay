@@ -181,6 +181,20 @@ def test_a_job_file_trial_through_assay_delivers_the_trace_and_resumes_on_a_re_r
     assert (trace / "trace.git").is_dir()
     record = json.loads((trace / "instruments.json").read_text(encoding="utf-8"))
     assert record["harbor_version"] == "0.24.0"
+    assert record["granularity"] == "per-tool-call"
+    assert record["calls_may_overlap"] is True
+
+    # The harness changed nothing, yet the final fire still commits the last
+    # snapshot after it exits.
+    lines = [json.loads(line) for line in
+             (trace / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [line["event"] for line in lines] == ["seed", "final"]
+    assert lines[-1]["changed"] is False
+    head = subprocess.run(
+        ["git", f"--git-dir={trace / 'trace.git'}", "-c", "safe.directory=*",
+         "rev-list", "HEAD"], capture_output=True, text=True, check=True,
+    ).stdout.split()
+    assert head == [lines[1]["commit"], lines[0]["commit"]]
 
     # A re-run of the same job file resumes: assay's config equals the
     # config.json Harbor saved, so the run reaches Harbor, which has nothing

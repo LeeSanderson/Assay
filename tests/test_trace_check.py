@@ -53,7 +53,7 @@ def test_a_tool_call_with_no_trace_line_fails_the_tool_call_check(make_trial):
 def test_a_tool_call_with_two_trace_lines_fails_the_tool_call_check(make_trial):
     trial = clean_trial(make_trial)
     tool_use_id = trial.step().call("Read", {"file_path": "/app/stopwatch.go"})
-    trial.line(event="PostToolUse", tool_name="Read", tool_use_id=tool_use_id,
+    trial.line(event="call", tool_name="Read", tool_use_id=tool_use_id,
                changed=False, paths=[])
     assert check(trial) == ["tool-calls"]
 

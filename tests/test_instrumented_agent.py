@@ -111,16 +111,45 @@ def test_the_seed_fire_comes_before_the_agent_starts(tmp_path):
     assert seed < launch
 
 
+def test_the_final_fire_comes_once_after_the_harness_exits(tmp_path):
+    env = run_trial(tmp_path, None)
+    finals = [c for c in env.calls if c[0] == "exec" and f"{HOOK_COMMAND} final" in c[1]]
+    assert len(finals) == 1
+    launch = env.index("exec", lambda c: "claude --verbose" in c[1])
+    final = env.index("exec", lambda c: f"{HOOK_COMMAND} final" in c[1])
+    assert final > launch
+    assert env.calls[final][2] == env.calls[launch][2]  # as the agent user
+
+
+class HarnessFails(FakeEnvironment):
+    async def exec(self, command, cwd=None, env=None, timeout_sec=None, user=None):
+        if "claude --verbose" in command:
+            self.calls.append(("exec", command, user))
+            raise RuntimeError("the harness stopped")
+        return await super().exec(command, cwd, env, timeout_sec, user)
+
+
+def test_the_final_fire_comes_even_when_the_harness_fails(tmp_path):
+    agent = make_agent(tmp_path, None)
+    env = HarnessFails()
+    asyncio.run(agent.setup(env))
+    with pytest.raises(RuntimeError, match="the harness stopped"):
+        asyncio.run(agent.run("Solve the task.", env, AgentContext()))
+    env.index("exec", lambda c: f"{HOOK_COMMAND} final" in c[1])
+
+
 INSTRUMENTS_JSON = "/logs/artifacts/trace/instruments.json"
 
 
-def test_instruments_json_records_digest_merged_settings_and_harbor_version(tmp_path):
+def test_instruments_json_records_digest_settings_harbor_version_and_granularity(tmp_path):
     env = setup(tmp_path, copy.deepcopy(VARIANT))
     record = json.loads(env.uploaded(INSTRUMENTS_JSON))
     assert record == {
         "digest": instruments_digest(INSTRUMENTS),
         "settings": merge_instrument_hooks(VARIANT),
         "harbor_version": "0.24.0",
+        "granularity": "per-tool-call",
+        "calls_may_overlap": True,
     }
 
 

@@ -4,7 +4,8 @@ instruments, and a price for a local model.
 PRD section 5, "How the hook gets into the container", and ADR 0001. Every
 Assay job runs this class through `import_path:
 instruments.agent:InstrumentedClaudeCode`. It overrides `__init__()` (the web
-tools and a local model's price) and `setup()` (the instruments).
+tools and a local model's price), `setup()` (the instruments) and `run()` (the
+final snapshot).
 """
 
 import copy
@@ -19,6 +20,7 @@ from typing import Any
 import litellm
 from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.environments.base import BaseEnvironment
+from harbor.models.agent.context import AgentContext
 
 from instruments.digest import EXCLUDED_DIRS, instruments_digest
 
@@ -157,6 +159,23 @@ class InstrumentedClaudeCode(ClaudeCode):
         await self.exec_as_agent(environment, f"{HOOK_COMMAND} seed")
         await self._write_instruments_json(environment, merged)
 
+    async def run(
+        self, instruction: str, environment: BaseEnvironment, context: AgentContext
+    ) -> None:
+        # The final fire: the last snapshot, after the harness exits. It runs
+        # also when the harness fails or times out (Harbor cancels `run()`,
+        # and the cancellation reaches this `finally` once), so a kept trial
+        # still has its final state.
+        try:
+            await self._run_harness(instruction, environment, context)
+        finally:
+            await self.exec_as_agent(environment, f"{HOOK_COMMAND} final")
+
+    async def _run_harness(
+        self, instruction: str, environment: BaseEnvironment, context: AgentContext
+    ) -> None:
+        await super().run(instruction, environment, context)
+
     async def _write_instruments_json(
         self, environment: BaseEnvironment, settings: dict[str, Any]
     ) -> None:
@@ -164,6 +183,11 @@ class InstrumentedClaudeCode(ClaudeCode):
             "digest": instruments_digest(INSTRUMENTS_DIR),
             "settings": settings,
             "harbor_version": importlib.metadata.version("harbor"),
+            # PRD section 8, "Granularity": the hook fires once per tool call,
+            # and Claude Code can run the calls of one message in parallel, so
+            # a snapshot after one call can hold another call's change.
+            "granularity": "per-tool-call",
+            "calls_may_overlap": True,
         }
         await self.exec_as_agent(environment, f"mkdir -p {TRACE_DIR}")
         with tempfile.TemporaryDirectory(prefix="assay-instruments-json-") as temp:

@@ -3,11 +3,15 @@
 #
 # On each fire it compares the seed repository with the last snapshot in a
 # separate git repository (trace.git), commits a new snapshot when something
-# changed, and appends one line to trace.jsonl.
+# changed, and appends one line to trace.jsonl. The line's event is `seed`,
+# `call` or `final` (PRD section 8, "The recorder contract").
 #
-#   bash trace.sh          a PostToolUse or PostToolUseFailure fire; the hook
-#                          input (JSON) comes on stdin
+#   bash trace.sh          a `call` fire: PostToolUse or PostToolUseFailure;
+#                          the hook input (JSON) comes on stdin
 #   bash trace.sh seed     the seed fire, before the agent starts; no stdin
+#   bash trace.sh final    the final fire, after the harness exits; no stdin.
+#                          It always commits, so the final snapshot is the
+#                          last commit even when nothing changed.
 #
 # ASSAY_TRACE_APP_DIR  the seed repository        (default /app)
 # ASSAY_TRACE_DIR      where the trace is written  (default /logs/artifacts/trace)
@@ -49,16 +53,18 @@ fail() {
 }
 
 read_input() {
-    if [[ "${1:-}" == "seed" ]]; then
-        event="seed"
+    if [[ "${1:-}" == "seed" || "${1:-}" == "final" ]]; then
+        event="$1"
         return 0
     fi
+    # A PostToolUse or PostToolUseFailure fire: a `call` line either way.
+    event="call"
     local input fields
     input="$(cat)"
     fields="$(printf '%s' "$input" | "$JQ" -r \
-        '[.hook_event_name // "", .tool_name // "", .tool_use_id // ""] | join("\u0001")' 2>&1)" \
-        || { event="unknown"; fail "bad hook input" "jq: $fields"; return 1; }
-    IFS=$'\x01' read -r event tool_name tool_use_id <<<"$fields"
+        '[.tool_name // "", .tool_use_id // ""] | join("\u0001")' 2>&1)" \
+        || { fail "bad hook input" "jq: $fields"; return 1; }
+    IFS=$'\x01' read -r tool_name tool_use_id <<<"$fields"
 }
 
 snapshot() {
@@ -85,9 +91,12 @@ snapshot() {
         || { fail "git diff failed" "$paths"; return 1; }
 
     # The first fire always makes a snapshot, so the seed state exists.
+    # A fire with no change makes none, except `final`: the final snapshot
+    # is always the last commit, and `changed` says whether it found a change.
+    changed="true"
     if [[ -n "$head" && "$paths" == "[]" ]]; then
         changed="false"
-        return 0
+        [[ "$event" == "final" ]] || return 0
     fi
 
     local tree parent=()
@@ -97,7 +106,6 @@ snapshot() {
         || { fail "git commit failed" "$commit"; commit=""; return 1; }
     out="$(tgit update-ref HEAD "$commit" 2>&1)" \
         || { fail "git update-ref failed" "$out"; return 1; }
-    changed="true"
 }
 
 append_line() {
@@ -112,7 +120,7 @@ append_line() {
           tool_name: (if $tool_name == "" then null else $tool_name end),
           tool_use_id: (if $tool_use_id == "" then null else $tool_use_id end),
           changed: $changed}
-         + (if $changed == true then {commit: $commit} else {} end)
+         + (if $commit != "" then {commit: $commit} else {} end)
          + {paths: $paths}
          + (if $error != "" then {error: $error} else {} end)' 2>>"$ERRORS_LOG")" \
         || line="{\"seq\":$seq,\"ts\":\"$ts\",\"changed\":null,\"paths\":[],\"error\":\"jq failed\"}"

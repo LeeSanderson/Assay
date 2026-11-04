@@ -1,8 +1,9 @@
 """`InstrumentedClaudeCode` with no model: for the slow job-file check.
 
-It keeps `setup()` (instrument upload, seed fire, `instruments.json`) and drops
-the parts that need the network or a model: the Claude Code install and the
-agent run. Harbor loads it through `import_path`, like the real class.
+It keeps `setup()` (instrument upload, seed fire, `instruments.json`) and
+`run()` (the final fire), and drops the parts that need the network or a
+model: the Claude Code install and the harness run. Harbor loads it through
+`import_path`, like the real class.
 """
 
 from harbor.environments.base import BaseEnvironment
@@ -15,7 +16,7 @@ class NoModelInstrumentedClaudeCode(InstrumentedClaudeCode):
     async def install(self, environment: BaseEnvironment) -> None:
         pass
 
-    async def run(
+    async def _run_harness(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
         pass

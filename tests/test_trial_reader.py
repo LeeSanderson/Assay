@@ -36,7 +36,7 @@ def test_reader_gives_trace_lines_joined_by_tool_use_id_and_a_real_trace_git(mak
 
     t = read_trial(trial.build())
 
-    assert [line.event for line in t.trace] == ["seed", "PostToolUse"]
+    assert [line.event for line in t.trace] == ["seed", "call"]
     (line,) = t.trace_lines_for(write_id)
     assert (line.changed, line.paths) == (True, (PathChange("A", "stopwatch_test.go"),))
     files = subprocess.run(

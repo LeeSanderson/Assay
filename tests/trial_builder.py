@@ -91,8 +91,7 @@ class StepBuilder:
 
         trial._change(files or {}, delete or [])
         if traced:
-            event = "PostToolUseFailure" if is_error else "PostToolUse"
-            trial._fire(event, function_name, tool_use_id, trace or {})
+            trial._fire("call", function_name, tool_use_id, trace or {})
         return tool_use_id
 
 
