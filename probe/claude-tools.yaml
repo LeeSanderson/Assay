@@ -1,0 +1,24 @@
+# Probe (wayfinder ticket 57): Claude Code's Bash tool calls a linked tool by bare name.
+# Throwaway; not a job file. One Haiku trial. Launch: uv run assay run -c probe/claude-tools.yaml -y
+job_name: probe-claude-tools
+jobs_dir: probe/results
+n_attempts: 1
+
+environment:
+  mounts:
+    - type: image
+      source: assay-probe-gh:1
+      target: /opt/assay-tools
+      read_only: true
+
+tasks:
+  - path: probe/tasks/go-claude
+
+agents:
+  - import_path: probe.probe_agent:ToolsProbeClaude
+    model_name: anthropic/claude-haiku-5-5
+    kwargs:
+      version: "2.1.308"
+    env:
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"

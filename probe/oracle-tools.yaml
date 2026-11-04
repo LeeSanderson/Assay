@@ -1,0 +1,19 @@
+# Probe (wayfinder ticket 57): mounted tools linked onto PATH, oracle, Go and Node packs.
+# Throwaway; not a job file. Launch: uv run assay run -c probe/oracle-tools.yaml -y
+job_name: probe-oracle-tools
+jobs_dir: probe/results
+n_attempts: 1
+
+environment:
+  mounts:
+    - type: image
+      source: assay-probe-semgrep:3   # by tag, as #56 decided
+      target: /opt/assay-tools
+      read_only: true
+
+tasks:
+  - path: probe/tasks/go-tools
+  - path: probe/tasks/ts-tools
+
+agents:
+  - import_path: probe.probe_agent:ToolsProbeOracle

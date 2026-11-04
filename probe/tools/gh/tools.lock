@@ -1,0 +1,3 @@
+# Probe (wayfinder ticket 57): a tools lock for one static binary.
+# One download per line: <sha256>  <url>. The build fails if a checksum does not match.
+4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d  https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux_amd64.tar.gz
