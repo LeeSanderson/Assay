@@ -45,11 +45,9 @@ import sys
 import subprocess
 import time
 import tomllib
-import uuid
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
 
@@ -57,23 +55,22 @@ import yaml
 from harbor.models.job.config import JobConfig
 
 from analyze.trace_check import HALT, INFRASTRUCTURE_FAILURE
+from analyze.trial import read_jsonl
+from assay.cli import INTERRUPTED, delete_folder, job_config, run
 from assay.digests import files_digest
 from assay.evaluation import Containers
 from assay.evaluations import (
     EvaluationPlanError, plan_evaluations, print_evaluation_plan, print_evaluation_reuse,
     run_evaluations,
 )
+from assay.experiment_files import ExperimentLog, ExperimentPaths, TrialId
 from assay.summary import (PlannedSummary, SummaryPlanError, plan_summary, plan_view,
                            run_summary)
-from assay.trial_outcomes import (TrialOutcome, agent_index, classify, logged_digests,
-                                  read_log)
+from assay.trial_outcomes import TrialOutcome, agent_index, classify, logged_digests
 from instruments.agent import IMPORT_PATH
 
 EXPERIMENTS_DIR = Path("experiments")
 VARIANTS_DIR = Path("variants")
-RESULTS_DIR = Path("results")
-ANALYSIS_DIR = Path("analysis")
-INTERRUPTED = 130  # the exit code of a job stopped by Ctrl-C (assay.cli.INTERRUPTED)
 HALTED = 3  # the exit code of an invocation that a halt stopped
 CONTROL = "control"
 # The harness level of an agent class (PRD section 5, "Factors"); any other
@@ -129,6 +126,10 @@ class Plan:
     summary: str | None
     planned_evaluations: list = field(default_factory=list)  # assay.evaluations
     planned_summary: PlannedSummary | None = None
+
+    @property
+    def paths(self) -> ExperimentPaths:
+        return ExperimentPaths(self.experiment)
 
     @property
     def expected(self) -> Counter[Cell]:
@@ -258,11 +259,9 @@ def plan_agent(config: JobConfig, agent, job: str) -> AgentPlan:
 
 
 def plan_job(file: Path, experiment: str, selected: set[str] | None) -> JobPlan:
-    from assay.cli import job_config  # assay.cli imports this module
-
     try:
         raw = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
-        config = job_config(file, ["--jobs-dir", (RESULTS_DIR / experiment).as_posix()])
+        config = job_config(file, ["--jobs-dir", ExperimentPaths(experiment).results.as_posix()])
     except (OSError, ValueError, yaml.YAMLError) as e:
         raise PlanError(f"cannot read job file {file.as_posix()}: {e}") from e
     name = config.job_name
@@ -316,7 +315,7 @@ def print_plan(plan: Plan) -> None:
     print(f"experiment {plan.experiment} "
           f"({(EXPERIMENTS_DIR / plan.experiment / 'experiment.toml').as_posix()})")
     print(f"\njobs, in run order (results in "
-          f"{(RESULTS_DIR / plan.experiment).as_posix()}/<job>/):")
+          f"{plan.paths.results.as_posix()}/<job>/):")
     for job in plan.jobs:
         mark = "" if job.selected else "   (not selected)"
         print(f"  {job.name:<22} {job.file.as_posix():<34} "
@@ -343,28 +342,9 @@ def print_plan(plan: Plan) -> None:
           else "summary: none")
 
 
-def job_folder(plan: Plan, job: JobPlan) -> Path:
-    return RESULTS_DIR / plan.experiment / job.name
-
-
-def finished_trials(folder: Path) -> list[str]:
-    """The trials of a job folder that Harbor finished: those with a result.json."""
-    if not folder.is_dir():
-        return []
-    return sorted(t.name for t in folder.iterdir() if (t / "result.json").is_file())
-
-
-def unfinished_trials(folder: Path) -> list[str]:
-    """The trial folders with no result.json, which Harbor's resume deletes and reruns."""
-    if not folder.is_dir():
-        return []
-    return sorted(t.name for t in folder.iterdir()
-                  if t.is_dir() and not (t / "result.json").is_file())
-
-
 def experiment_folders(plan: Plan) -> list[Path]:
     """What --from-scratch deletes: the results and the analysis, the log included."""
-    return [RESULTS_DIR / plan.experiment, ANALYSIS_DIR / plan.experiment]
+    return [plan.paths.results, plan.paths.analysis]
 
 
 def print_resume(plan: Plan, from_scratch: bool) -> None:
@@ -375,42 +355,24 @@ def print_resume(plan: Plan, from_scratch: bool) -> None:
             print(f"from scratch: would delete {folder.as_posix()}" if folder.exists()
                   else f"from scratch: nothing to delete, {folder.as_posix()} does not exist")
     print("resume (finished trials are kept; Harbor runs the rest):")
-    halted = {} if from_scratch else {(e["job"], e["trial"]): e for e in halted_trials(plan)}
+    halted = {} if from_scratch else halted_trials(plan)
     for job in plan.jobs:
         if not job.selected:
             continue
-        folder = job_folder(plan, job)
-        finished = [] if from_scratch else [
-            t for t in finished_trials(folder) if (job.name, t) not in halted]
+        finished = [] if from_scratch else [t for t in plan.paths.finished_trials(job.name)
+                                            if TrialId(job.name, t) not in halted]
         to_run = max(sum(job.expected.values()) - len(finished), 0)
         noun = "trial" if len(finished) == 1 else "trials"
         print(f"  {job.name:<22} {len(finished)} finished {noun} kept, {to_run} to run")
-        for trial in [] if from_scratch else unfinished_trials(folder):
+        for trial in [] if from_scratch else plan.paths.unfinished_trials(job.name):
             print(f"    {trial} (unfinished, Harbor deletes it)")
-        for (name, trial), event in halted.items():
-            if name == job.name:
+        for trial, event in halted.items():
+            if trial.job == job.name:
                 cause = event["cause"]
                 what = cause.get("exception") or ", ".join(cause.get("failed_checks", []))
-                print(f"    {trial} (halted: {what}, Assay deletes it)")
+                print(f"    {trial.trial} (halted: {what}, Assay deletes it)")
     if not from_scratch:
-        print_evaluation_reuse(plan, plan.planned_evaluations, RESULTS_DIR, ANALYSIS_DIR,
-                               excluded=set(halted))
-
-
-class ExperimentLog:
-    """`analysis/<experiment>/experiment-log.jsonl`, appended across
-    invocations (PRD section 11, "The experiment log")."""
-
-    def __init__(self, experiment: str):
-        self.path = ANALYSIS_DIR / experiment / "experiment-log.jsonl"
-        self.invocation = uuid.uuid4().hex
-
-    def write(self, event: str, **fields) -> None:
-        line = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "invocation": self.invocation, "event": event, **fields}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(line) + "\n")
+        print_evaluation_reuse(plan, plan.planned_evaluations, excluded=set(halted))
 
 
 def assay_commit() -> str | None:
@@ -435,14 +397,12 @@ def agent_fields(agents: Sequence[AgentPlan]) -> list[dict]:
 def run_job(plan: Plan, job: JobPlan, log: ExperimentLog, debug: bool,
             run_harbor: Callable[[Sequence[str]], int], retry: int = 0) -> int:
     """Run one job through the `assay run` path; return its exit code."""
-    from assay.cli import run  # assay.cli imports this module
-
     # The trials finished before the run, so that check 8 can tell which run
     # finished each trial (trial_outcomes.logged_digests).
     log.write("job-started", job=job.name, file=job.file.as_posix(),
-              agents=agent_fields(job.agents), trials=finished_trials(job_folder(plan, job)),
+              agents=agent_fields(job.agents), trials=plan.paths.finished_trials(job.name),
               **({"retry": retry} if retry else {}))
-    args = ["-c", job.file.as_posix(), "--jobs-dir", (RESULTS_DIR / plan.experiment).as_posix(),
+    args = ["-c", job.file.as_posix(), "--jobs-dir", plan.paths.results.as_posix(),
             "-y", *(["--debug"] if debug else [])]
     print(f"\njob {job.name}: assay run {' '.join(args)}", flush=True)
     started = time.monotonic()
@@ -458,49 +418,52 @@ def run_job(plan: Plan, job: JobPlan, log: ExperimentLog, debug: bool,
         print(f"error: assay experiment: {e}", file=sys.stderr)
         agents, exit_code = [], exit_code or 2
     log.write("job-finished", job=job.name, exit_code=exit_code,
-              trials=finished_trials(job_folder(plan, job)),
+              trials=plan.paths.finished_trials(job.name),
               duration_sec=round(time.monotonic() - started, 3), agents=agents)
     return exit_code
 
 
 def job_agents(plan: Plan, job: JobPlan) -> list[dict]:
     """The agents of the job file as Harbor writes them in each trial's config.json."""
-    from assay.cli import job_config  # assay.cli imports this module
-
-    config = job_config(job.file, ["--jobs-dir", (RESULTS_DIR / plan.experiment).as_posix()])
+    config = job_config(job.file, ["--jobs-dir", plan.paths.results.as_posix()])
     return [agent.model_dump(mode="json") for agent in config.agents]
 
 
-def trial_agent(job: JobPlan, trial_dir: Path, agents: list[dict]) -> AgentPlan | None:
+@dataclass(frozen=True)
+class MatchedAgent:
+    index: int  # the agent's place in the job file
+    plan: AgentPlan
+
+
+def trial_agent(job: JobPlan, trial_dir: Path, agents: list[dict]) -> MatchedAgent | None:
     """The plan's agent that ran the trial (trial_outcomes.agent_index); None
     when no agent of the job file matches."""
     index = agent_index(trial_dir, agents)
-    return job.agents[index] if index is not None else None
+    return MatchedAgent(index, job.agents[index]) if index is not None else None
 
 
 def check_job(plan: Plan, job: JobPlan, log: ExperimentLog) -> list[TrialOutcome]:
     """The validity check and class of each finished trial of the job."""
     agents = job_agents(plan, job)
-    events = read_log(log.path)
-    folder = job_folder(plan, job)
+    events = log.events()
     outcomes = []
-    for trial in finished_trials(folder):
-        index = agent_index(folder / trial, agents)
-        agent = asdict(job.agents[index]) if index is not None else None
-        outcomes.append(classify(folder / trial, job.name, agent,
-                                 logged_digests(events, job.name, trial, index),
-                                 ANALYSIS_DIR / plan.experiment / job.name / trial))
+    for name in plan.paths.finished_trials(job.name):
+        trial = TrialId(job.name, name)
+        trial_dir = plan.paths.trial_results(trial)
+        matched = trial_agent(job, trial_dir, agents)
+        index = matched.index if matched else None
+        outcomes.append(classify(trial_dir, job.name, asdict(matched.plan) if matched else None,
+                                 logged_digests(events, job.name, name, index),
+                                 plan.paths.trial_analysis(trial)))
     return outcomes
 
 
 def discard_trial(plan: Plan, fields: dict, cause: dict, log: ExperimentLog,
                   **extra) -> None:
     """Log the trial as discarded, then delete its results and analysis folders."""
-    from assay.cli import delete_folder  # assay.cli imports this module
-
     log.write("trial-discarded", **fields, cause=cause, **extra)
-    for root in (RESULTS_DIR, ANALYSIS_DIR):
-        folder = root / plan.experiment / fields["job"] / fields["trial"]
+    trial = TrialId(fields["job"], fields["trial"])
+    for folder in (plan.paths.trial_results(trial), plan.paths.trial_analysis(trial)):
         if folder.exists():
             delete_folder(folder)
     print(f"  discarded {fields['job']}/{fields['trial']}: {json.dumps(cause)}")
@@ -528,22 +491,22 @@ def halt_message(cause: dict) -> str:
             f"deletes the trial and runs it again.")
 
 
-def halted_trials(plan: Plan) -> list[dict]:
-    """The halt events of earlier invocations whose trial is still there."""
-    halts: dict[tuple[str, str], dict] = {}
-    for event in read_log(ExperimentLog(plan.experiment).path):
-        key = (event.get("job"), event.get("trial"))
+def halted_trials(plan: Plan) -> dict[TrialId, dict]:
+    """The halt event of each trial that an earlier invocation halted and that
+    is still there."""
+    halts: dict[TrialId, dict] = {}
+    for event in read_jsonl(plan.paths.log):
+        trial = TrialId(event.get("job"), event.get("trial"))
         if event["event"] == "halt":
-            halts[key] = event
+            halts[trial] = event
         elif event["event"] == "trial-discarded":
-            halts.pop(key, None)
-    return [e for (job, trial), e in halts.items()
-            if (RESULTS_DIR / plan.experiment / job / trial).exists()]
+            halts.pop(trial, None)
+    return {trial: e for trial, e in halts.items() if plan.paths.trial_results(trial).exists()}
 
 
 def discard_halted_trials(plan: Plan, log: ExperimentLog) -> None:
     """Resume: delete each trial of an earlier halt, after logging it."""
-    for event in halted_trials(plan):
+    for event in halted_trials(plan).values():
         fields = {k: v for k, v in event.items()
                   if k not in ("at", "invocation", "event", "cause", "message")}
         discard_trial(plan, fields, event["cause"], log, after_halt=True)
@@ -558,7 +521,7 @@ def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
     the first job that Harbor did not finish, and after a job with a halt.
     When every job completes, run the evaluations over every trial of the
     experiment."""
-    log = ExperimentLog(plan.experiment)
+    log = ExperimentLog(plan.paths)
     log.write("invocation-started", command=["assay", "experiment", *argv],
               assay_commit=assay_commit(), harbor_version=harbor_version())
     outcome, code = "complete", 0
@@ -586,11 +549,10 @@ def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
                 outcome, code = "halted", HALTED
                 break
         if outcome == "complete":
-            run_evaluations(plan, plan.planned_evaluations, containers, log, RESULTS_DIR,
-                            ANALYSIS_DIR)
+            run_evaluations(plan, plan.planned_evaluations, containers, log)
             if plan.planned_summary is not None:
                 try:
-                    run_summary(plan, plan.planned_summary, log, RESULTS_DIR, ANALYSIS_DIR)
+                    run_summary(plan, plan.planned_summary, log)
                 except Exception as e:  # the summary's own failure
                     print(f"error: assay experiment: summary {plan.summary}: "
                           f"{type(e).__name__}: {e}", file=sys.stderr)
@@ -655,8 +617,6 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
         print("\ndry run: no job runs, and nothing is written or deleted.")
         return 0
     if from_scratch:
-        from assay.cli import delete_folder  # assay.cli imports this module
-
         for folder in experiment_folders(plan):
             if folder.exists():
                 delete_folder(folder)

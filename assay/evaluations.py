@@ -25,26 +25,27 @@ from __future__ import annotations
 
 import ast
 import importlib
-import importlib.util
 import json
 import shutil
-import sys
 import tempfile
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from analyze.trace_check import TRIAL_CHECK
 from analyze.trial import GIVES, Trial, read_json, read_trial, record_digest
 from assay.digests import files_digest, folder_digest, json_digest
 from assay.evaluation import (
     OPTIONAL_PARTS, Containers, Evaluation, GuardedContainers, TrialInput,
 )
+from assay.experiment_files import (
+    ExperimentLog, LocalModuleError, TrialId, load_local_module, timestamp,
+)
 
 if TYPE_CHECKING:
-    from assay.experiment import ExperimentLog, JobPlan, Plan
+    from assay.experiment import JobPlan, Plan
 
 CODE_ROOT = Path(__file__).resolve().parents[1]  # the repository's code
 BUILT_INS = {"replay": "analyze.replay", "agent-runs": "analyze.agent_runs",
@@ -53,7 +54,6 @@ BUILT_INS = {"replay": "analyze.replay", "agent-runs": "analyze.agent_runs",
 READER_GIVES = {"claude-code": GIVES}
 RESULT_FILE = "result.json"
 OUT_FOLDER = "out"
-TRIAL_CHECK = "trial-check.json"
 
 
 class EvaluationPlanError(Exception):
@@ -74,13 +74,8 @@ class PlannedEvaluation:
 
 @dataclass(frozen=True)
 class KeptTrial:
-    job: str
-    name: str
-    path: Path
-
-    @property
-    def key(self) -> tuple[str, str]:
-        return self.job, self.name
+    id: TrialId
+    path: Path  # Harbor's trial folder
 
 
 # --- The plan ---------------------------------------------------------------------
@@ -126,17 +121,10 @@ def plan_evaluations(experiment_dir: Path, listed: list[str], options: Mapping[s
 def load_evaluation(experiment_dir: Path, listed: str) -> tuple[Evaluation, Path]:
     """The EVALUATION of a built-in name or of a ./path in the experiment's folder."""
     if listed.startswith("./"):
-        path = experiment_dir / listed
-        if not path.is_file():
-            raise EvaluationPlanError(f"evaluation {listed}: no file {path.as_posix()}")
-        module_name = f"assay_local_{experiment_dir.name}_{path.stem}".replace("-", "_")
-        spec = importlib.util.spec_from_file_location(module_name, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
         try:
-            spec.loader.exec_module(module)
-        except Exception as e:
-            raise EvaluationPlanError(f"evaluation {listed} does not load: {e}") from e
+            module = load_local_module(experiment_dir, listed, "evaluation")
+        except LocalModuleError as e:
+            raise EvaluationPlanError(str(e)) from e
     elif listed in BUILT_INS:
         module = importlib.import_module(BUILT_INS[listed])
     else:
@@ -231,25 +219,23 @@ def _display(file: Path, roots: list[Path]) -> str:
 # --- The trials -------------------------------------------------------------------
 
 
-def kept_trials(plan: Plan, results_root: Path, analysis_root: Path,
-                excluded: set[tuple[str, str]] = frozenset()) -> list[KeptTrial]:
+def kept_trials(plan: Plan, excluded: set[TrialId] = frozenset()) -> list[KeptTrial]:
     """Every finished trial of every job of the experiment, but those whose
-    validity check failed and the `excluded` (job, trial) pairs. After a run
-    an infrastructure failure is already deleted; a halted trial stays until
-    the next invocation, but then the invocation is halted and no evaluation
+    validity check failed and the `excluded` trials. After a run an
+    infrastructure failure is already deleted; a halted trial stays until the
+    next invocation, but then the invocation is halted and no evaluation
     runs."""
+    paths = plan.paths
     trials = []
     for job in plan.jobs:
-        folder = results_root / plan.experiment / job.name
-        if not folder.is_dir():
-            continue
-        for path in sorted(p for p in folder.iterdir() if (p / "result.json").is_file()):
-            check = read_json(analysis_root / plan.experiment / job.name / path.name / TRIAL_CHECK)
+        for name in paths.finished_trials(job.name):
+            trial = TrialId(job.name, name)
+            check = read_json(paths.trial_analysis(trial) / TRIAL_CHECK)
             if check is not None and check.get("passed") is False:
                 continue
-            if (job.name, path.name) in excluded:
+            if trial in excluded:
                 continue
-            trials.append(KeptTrial(job.name, path.name, path))
+            trials.append(KeptTrial(trial, paths.trial_results(trial)))
     return trials
 
 
@@ -265,9 +251,10 @@ def trial_cell(plan: Plan, job: JobPlan, trial_dir: Path, record: Trial):
     language. None when no agent of the job file matches."""
     from assay.experiment import Cell, job_agents, trial_agent
 
-    agent = trial_agent(job, trial_dir, job_agents(plan, job))
-    if agent is None:
+    matched = trial_agent(job, trial_dir, job_agents(plan, job))
+    if matched is None:
         return None
+    agent = matched.plan
     return Cell(agent.harness, agent.model_tier, agent.condition, record.language or "unknown")
 
 
@@ -275,7 +262,9 @@ def trial_cell(plan: Plan, job: JobPlan, trial_dir: Path, record: Trial):
 
 
 @dataclass
-class Outcome:
+class EvaluationOutcome:
+    """The value and the error of one evaluation for one trial."""
+
     value: Any
     error: str | None
 
@@ -305,72 +294,66 @@ def _write(folder: Path, envelope: dict) -> None:
     (folder / RESULT_FILE).write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 def run_evaluations(plan: Plan, planned: list[PlannedEvaluation], containers: Containers,
-                    log: ExperimentLog | None, results_root: Path, analysis_root: Path,
-                    dry_run: bool = False, excluded: set[tuple[str, str]] = frozenset()
-                    ) -> dict[str, tuple[int, int]]:
+                    log: ExperimentLog | None, dry_run: bool = False,
+                    excluded: set[TrialId] = frozenset()) -> dict[str, tuple[int, int]]:
     """Runs each evaluation over every kept trial, reusing what it can. With
     dry_run, calls nothing and writes nothing: it returns, for each
     evaluation, how many results it would reuse and how many it would run."""
     jobs = {job.name: job for job in plan.jobs}
-    trials = kept_trials(plan, results_root, analysis_root, excluded)
-    records: dict[tuple[str, str], Trial] = {}
-    cells: dict[tuple[str, str], Any] = {}
-    digests: dict[tuple[str, str], tuple[str, str]] = {}
-    outcomes: dict[tuple[str, str], dict[str, Outcome | _Unknown]] = {t.key: {} for t in trials}
+    trials = kept_trials(plan, excluded)
+    records: dict[TrialId, Trial] = {}
+    cells: dict[TrialId, Any] = {}
+    digests: dict[TrialId, tuple[str, str]] = {}
+    outcomes: dict[TrialId, dict[str, EvaluationOutcome | _Unknown]] = {t.id: {} for t in trials}
     counts = {}
     for p in planned:
         started = time.monotonic()
         ran = reused = errors = 0
         guarded = GuardedContainers(containers, p.name, p.evaluation.online)
         for t in trials:
-            if t.key not in records:
-                records[t.key] = read_trial(t.path)
-                record = records[t.key]
-                cells[t.key] = trial_cell(plan, jobs[t.job], t.path, record)
-                digests[t.key] = (record_digest(t.path),
-                                  folder_digest(task_pack(record)))
-            record = records[t.key]
-            folder = analysis_root / plan.experiment / t.job / t.name / p.name
-            deps = {d: outcomes[t.key][d] for d in p.evaluation.depends_on}
+            if t.id not in records:
+                records[t.id] = record = read_trial(t.path)
+                cells[t.id] = trial_cell(plan, jobs[t.id.job], t.path, record)
+                digests[t.id] = (record_digest(t.path), folder_digest(task_pack(record)))
+            record = records[t.id]
+            folder = plan.paths.trial_analysis(t.id) / p.name
+            deps = {d: outcomes[t.id][d] for d in p.evaluation.depends_on}
             inp = TrialInput(
-                job=t.job, trial=t.name, cell=cells[t.key],
+                job=t.id.job, trial=t.id.trial, cell=cells[t.id],
                 task_pack=task_pack(record), record=record,
-                deps={d: o.value for d, o in deps.items() if isinstance(o, Outcome)},
+                deps={d: o.value for d, o in deps.items() if isinstance(o, EvaluationOutcome)},
                 options=dict(p.options), out=folder / OUT_FOLDER, containers=guarded)
             if any(isinstance(o, _Unknown) for o in deps.values()):
-                outcomes[t.key][p.name] = _Unknown()
+                outcomes[t.id][p.name] = _Unknown()
                 ran += 1
                 continue
             failed = [d for d, o in deps.items() if o.error is not None]
             if failed:
-                outcomes[t.key][p.name] = Outcome(None, f"dependency {failed[0]} has an error")
+                error = f"dependency {failed[0]} has an error"
+                outcomes[t.id][p.name] = EvaluationOutcome(None, error)
                 errors += 1
                 if not dry_run:
                     _write(folder, {"evaluation": p.name, "digest": None, "code": p.code,
-                                    "inputs": {}, "started_at": _now(), "duration_sec": 0.0,
-                                    "value": None, "error": outcomes[t.key][p.name].error})
+                                    "inputs": {}, "started_at": timestamp(), "duration_sec": 0.0,
+                                    "value": None, "error": error})
                 continue
             try:
-                digest, inputs, reusable = _assess(p, inp, folder, *digests[t.key])
+                digest, inputs, reusable = _assess(p, inp, folder, *digests[t.id])
             except Exception as e:  # a pin that cannot be read
                 digest, inputs, reusable = None, {}, None
                 pin_error = f"pins: {type(e).__name__}: {e}"
             else:
                 pin_error = None
             if reusable is not None:
-                outcomes[t.key][p.name] = Outcome(reusable.get("value"), None)
+                outcomes[t.id][p.name] = EvaluationOutcome(reusable.get("value"), None)
                 reused += 1
                 continue
             ran += 1
             if dry_run:
-                outcomes[t.key][p.name] = _Unknown()
+                outcomes[t.id][p.name] = _Unknown()
                 continue
-            outcomes[t.key][p.name] = outcome = _evaluate(p, inp, folder, digest, inputs,
+            outcomes[t.id][p.name] = outcome = _evaluate(p, inp, folder, digest, inputs,
                                                          pin_error)
             errors += outcome.error is not None
         counts[p.name] = (reused, ran + errors if dry_run else ran)
@@ -385,11 +368,11 @@ def run_evaluations(plan: Plan, planned: list[PlannedEvaluation], containers: Co
 
 
 def _evaluate(p: PlannedEvaluation, inp: TrialInput, folder: Path, digest: str | None,
-              inputs: dict, error: str | None) -> Outcome:
+              inputs: dict, error: str | None) -> EvaluationOutcome:
     """Empties the result folder, calls evaluate() and writes the result."""
     shutil.rmtree(folder, ignore_errors=True)
     inp.out.mkdir(parents=True)
-    started_at, start = _now(), time.monotonic()
+    started_at, start = timestamp(), time.monotonic()
     value = None
     if error is None:
         with tempfile.TemporaryDirectory(prefix="assay-eval-") as scratch:
@@ -402,7 +385,7 @@ def _evaluate(p: PlannedEvaluation, inp: TrialInput, folder: Path, digest: str |
     _write(folder, {"evaluation": p.name, "digest": digest, "code": p.code, "inputs": inputs,
                     "started_at": started_at, "duration_sec": round(time.monotonic() - start, 3),
                     "value": value, "error": error})
-    return Outcome(value, error)
+    return EvaluationOutcome(value, error)
 
 
 def print_evaluation_plan(planned: list[PlannedEvaluation]) -> None:
@@ -414,14 +397,13 @@ def print_evaluation_plan(planned: list[PlannedEvaluation]) -> None:
         print(f"  {p.name} ({source}){depends}")
 
 
-def print_evaluation_reuse(plan: Plan, planned: list[PlannedEvaluation], results_root: Path,
-                           analysis_root: Path, excluded: set[tuple[str, str]] = frozenset()
-                           ) -> None:
+def print_evaluation_reuse(plan: Plan, planned: list[PlannedEvaluation],
+                           excluded: set[TrialId] = frozenset()) -> None:
     """What the evaluations would reuse and run over the trials so far."""
     if not planned:
         return
-    counts = run_evaluations(plan, planned, _NoContainers(), None, results_root,
-                             analysis_root, dry_run=True, excluded=excluded)
+    counts = run_evaluations(plan, planned, _NoContainers(), None, dry_run=True,
+                             excluded=excluded)
     print("evaluation results (over the trials so far; new trials run too):")
     for p in planned:
         reused, ran = counts[p.name]

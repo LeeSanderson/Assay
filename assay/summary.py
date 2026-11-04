@@ -21,16 +21,16 @@ path in the experiment's folder. There is no built-in summary yet
 
 from __future__ import annotations
 
-import importlib.util
 import shutil
-import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from assay.experiment_files import ExperimentLog, LocalModuleError, load_local_module
+
 if TYPE_CHECKING:
-    from assay.experiment import Cell, ExperimentLog, Plan
+    from assay.experiment import Cell, Plan
 
 Json = Any
 SUMMARY_FOLDER = "summary"
@@ -108,17 +108,10 @@ def plan_summary(experiment_dir: Path, listed: str, options: Any, plan: PlanView
     if not listed.startswith("./"):
         raise SummaryPlanError(f"summary {listed} is not a built-in summary (there is none "
                                f"yet) and not a ./path")
-    path = experiment_dir / listed
-    if not path.is_file():
-        raise SummaryPlanError(f"summary {listed}: no file {path.as_posix()}")
-    module_name = f"assay_local_{experiment_dir.name}_{path.stem}".replace("-", "_")
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
     try:
-        spec.loader.exec_module(module)
-    except Exception as e:
-        raise SummaryPlanError(f"summary {listed} does not load: {e}") from e
+        module = load_local_module(experiment_dir, listed, "summary")
+    except LocalModuleError as e:
+        raise SummaryPlanError(str(e)) from e
     summary = getattr(module, "SUMMARY", None)
     if not isinstance(summary, Summary):
         raise SummaryPlanError(f"summary {listed} has no SUMMARY = Summary(...)")
@@ -142,8 +135,7 @@ def varied_factors(expected: Mapping[Cell, int]) -> dict[str, tuple[str, ...]]:
     return factors
 
 
-def experiment_view(plan: Plan, results_root: Path, analysis_root: Path,
-                    log: Sequence[Mapping[str, Json]]) -> ExperimentView:
+def experiment_view(plan: Plan, log: Sequence[Mapping[str, Json]]) -> ExperimentView:
     """The view of the experiment: its kept trials with the result of each
     evaluation from `analysis/<experiment>/<job>/<trial>/<evaluation>/`."""
     from analyze.trial import read_json, read_trial
@@ -151,33 +143,29 @@ def experiment_view(plan: Plan, results_root: Path, analysis_root: Path,
 
     jobs = {job.name: job for job in plan.jobs}
     trials = []
-    for kept in kept_trials(plan, results_root, analysis_root):
+    for kept in kept_trials(plan):
         record = read_trial(kept.path)
         values, errors = {}, {}
         for p in plan.planned_evaluations:
-            result = read_json(analysis_root / plan.experiment / kept.job / kept.name / p.name
-                               / RESULT_FILE) or {}
+            result = read_json(plan.paths.trial_analysis(kept.id) / p.name / RESULT_FILE) or {}
             values[p.name] = result.get("value")
             errors[p.name] = result.get("error")
-        trials.append(TrialView(kept.job, kept.name, trial_cell(plan, jobs[kept.job], kept.path,
-                                                                 record),
-                                task_pack(record), record, values, errors))
+        cell = trial_cell(plan, jobs[kept.id.job], kept.path, record)
+        trials.append(TrialView(kept.id.job, kept.id.trial, cell, task_pack(record), record,
+                                values, errors))
     expected = plan.expected
     return ExperimentView(plan.experiment, varied_factors(expected), trials, dict(expected),
                           list(log))
 
 
-def run_summary(plan: Plan, planned: PlannedSummary, log: ExperimentLog, results_root: Path,
-                analysis_root: Path) -> list[Path]:
+def run_summary(plan: Plan, planned: PlannedSummary, log: ExperimentLog) -> list[Path]:
     """Empties the summary folder, runs the summary, and logs `summary-written`
     with the files it wrote. An exception from the summary goes to the caller."""
-    from assay.trial_outcomes import read_log
-
-    out = analysis_root / plan.experiment / SUMMARY_FOLDER
+    out = plan.paths.analysis / SUMMARY_FOLDER
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    view = experiment_view(plan, results_root, analysis_root, read_log(log.path))
+    view = experiment_view(plan, log.events())
     planned.summary.summarize(view, dict(planned.options), out)
     files = sorted(f for f in out.rglob("*") if f.is_file())
     log.write("summary-written", files=[f.as_posix() for f in files])

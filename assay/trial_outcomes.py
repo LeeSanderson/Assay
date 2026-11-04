@@ -1,8 +1,8 @@
 """After each job of an experiment: the class of each trial (PRD v3 section
 11, "Infrastructure failures"; issue #63).
 
-A trial is a result, an infrastructure failure, or a halt. Harbor's exception
-type decides first; a trial whose exception (if any) is a result then goes
+A trial is kept, an infrastructure failure, or a halt. Harbor's exception
+type decides first; a trial whose exception (if any) is kept then goes
 through the ten-check validity check (PRD v3 section 8). Check 8 compares the
 plan's condition digest of the trial's agent with the digests the experiment
 log recorded for the run of the job in which the trial ran.
@@ -15,7 +15,6 @@ stops with an error and checks no trial.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,11 +22,13 @@ from analyze.trace_check import (HALT, INFRASTRUCTURE_FAILURE, ConditionDigests,
                                  validity_check, write_trial_check)
 from analyze.trial import read_json, read_trial
 
-RESULT = "result"
+KEPT = "kept"  # a kept trial (GLOSSARY.md): neither discarded nor halted
 
-# Harbor exception types, by class (PRD v3 section 11). Any type that is not
-# listed is an infrastructure failure that the summary lists by type.
-RESULT_EXCEPTIONS = frozenset({
+# Harbor exception types, by class (PRD v3 section 11): a trial with a type of
+# KEPT_EXCEPTIONS is kept, as one in which the agent ran out of time or failed
+# the task. Any type that is not listed is an infrastructure failure that the
+# summary lists by type.
+KEPT_EXCEPTIONS = frozenset({
     "AgentTimeoutError", "ContextWindowExceededError", "OutputTokenExceededError",
     "AgentSafetyRefusalError", "VerifierTimeoutError"})
 HALT_EXCEPTIONS = frozenset({"ApiUsageLimitError", "AgentAuthenticationError",
@@ -45,32 +46,25 @@ INFRASTRUCTURE_EXCEPTIONS = frozenset({
 @dataclass(frozen=True)
 class TrialOutcome:
     trial: str
-    kind: str  # RESULT, INFRASTRUCTURE_FAILURE or HALT
-    cause: dict  # {"exception": type} or {"failed_checks": [...]}; {} for a result
+    kind: str  # KEPT, INFRASTRUCTURE_FAILURE or HALT
+    cause: dict  # {"exception": type} or {"failed_checks": [...]}; {} when kept
     fields: dict  # the trial's fields of a trial-discarded or halt event
 
     @property
     def kept(self) -> bool:
-        return self.kind == RESULT
+        return self.kind == KEPT
 
 
 def exception_class(exception_type: str) -> tuple[str, dict]:
     """The class of a Harbor exception type, and the cause to log."""
     cause = {"exception": exception_type}
-    if exception_type in RESULT_EXCEPTIONS:
-        return RESULT, {}
+    if exception_type in KEPT_EXCEPTIONS:
+        return KEPT, {}
     if exception_type in HALT_EXCEPTIONS:
         return HALT, cause
     if exception_type not in INFRASTRUCTURE_EXCEPTIONS:
         cause["unlisted"] = True  # a person classifies each new type
     return INFRASTRUCTURE_FAILURE, cause
-
-
-def read_log(path: Path) -> list[dict]:
-    if not path.is_file():
-        return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()]
 
 
 def logged_digests(events: list[dict], job: str, trial: str,
@@ -143,11 +137,11 @@ def classify(trial_dir: Path, job: str, agent: dict | None, logged: tuple[str | 
     exception = (result.get("exception_info") or {}).get("exception_type")
     if exception:
         kind, cause = exception_class(exception)
-        if kind != RESULT:
+        if kind != KEPT:
             return TrialOutcome(trial_dir.name, kind, cause, fields)
     check = validity_check(read_trial(trial_dir), ConditionDigests(planned, logged))
     write_trial_check(check, analysis_dir)
     if check.passed:
-        return TrialOutcome(trial_dir.name, RESULT, {}, fields)
+        return TrialOutcome(trial_dir.name, KEPT, {}, fields)
     return TrialOutcome(trial_dir.name, check.failure_class, {"failed_checks": check.failed},
                         fields)
