@@ -2,6 +2,7 @@
 and the one way to run the analysis tools on its results.
 
     uv run assay run -c jobs/<file>.yaml -y [--overwrite] [harbor run options]
+    uv run assay experiment <name> [--job J]... --dry-run   (assay/experiment.py)
     uv run assay <subcommand> [args]   (each analysis tool's `main` in the `analyze` package)
 
 Every subcommand first loads `.env` from the repository root: it sets each key
@@ -63,6 +64,7 @@ USAGE = "\n".join([
     "",
     "subcommands:",
     "  assay run             start a job with harbor run",
+    "  assay experiment      plan an experiment (assay experiment <name> --dry-run)",
     *(f"  assay {name:<15} {tool.about}" for name, tool in TOOLS.items()),
 ])
 OVERWRITE = "--overwrite"
@@ -204,6 +206,9 @@ def main(argv: Sequence[str] | None = None, run_harbor: HarborRunner = run_harbo
     command, *args = list(sys.argv[1:] if argv is None else argv) or [""]
     if command == "run":
         return run(args, run_harbor)
+    if command == "experiment":
+        from assay.experiment import experiment
+        return experiment(args, run_harbor)
     if command in TOOLS:
         return importlib.import_module(TOOLS[command].module).main(args)
     print(USAGE, file=sys.stderr)

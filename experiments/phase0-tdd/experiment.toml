@@ -1,0 +1,20 @@
+# The Phase 0 TDD experiment (PRD section 17): does the measurement work?
+# Its task packs, repetitions and factor levels come from the job files only.
+#
+#   uv run assay experiment phase0-tdd --dry-run    the plan, at no cost
+#
+# The trials of each job go to results/phase0-tdd/<job_name>/.
+
+jobs = [                              # run in this order, one after another
+  "jobs/phase0-cross-control.yaml",
+  "jobs/phase0-cross-tdd.yaml",
+  "jobs/phase0-extra.yaml",
+  "jobs/phase0-local.yaml",           # on the host of the local server: --job phase0-local
+]
+
+evaluations = ["replay", "agent-runs", "trajectory"]   # run order; a built-in name or ./path
+
+# [evaluation-options.<name>]         # only for an evaluation that takes options; none here
+
+[summary]
+use = "./summary.py"

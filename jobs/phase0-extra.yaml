@@ -16,7 +16,7 @@ tasks:
   - path: tasks/go/split-second-stopwatch
 
 agents:
-  # instrument-tdd (variants/variants.toml): the skill, and the extra instruction above.
+  # instrument-tdd (parts from variants/instrument-tdd/): the skill, and the extra instruction above.
   - import_path: instruments.agent:InstrumentedClaudeCode
     model_name: anthropic/claude-haiku-5-5
     skills: [variants/instrument-tdd/tdd]

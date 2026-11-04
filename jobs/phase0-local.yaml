@@ -28,7 +28,7 @@ tasks:
   - path: tasks/typescript/split-second-stopwatch
 
 agents:
-  # instrument-tdd (variants/variants.toml): the skill, and the extra instruction above.
+  # instrument-tdd (parts from variants/instrument-tdd/): the skill, and the extra instruction above.
   - import_path: instruments.agent:InstrumentedClaudeCode
     model_name: laguna-s-2.1        # bare name: the server receives this exact name
     concurrency_group: local-llm    # one server slot (L3)
