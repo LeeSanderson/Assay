@@ -201,7 +201,7 @@ def test_invalid_summary_options_refuse_the_plan(repo, capsys):
     write_experiment(repo, [write_job(repo, "a")], extra="options = { rate = -1 }\n")
     write_summary(repo, VIEW_SUMMARY.replace(
         "SUMMARY = Summary(summarize)",
-        "def check(options):\n    if options.get('rate', 1) <= 0:\n"
+        "def check(options, plan):\n    if options.get('rate', 1) <= 0:\n"
         "        raise ValueError('rate must be above 0')\n\n\n"
         "SUMMARY = Summary(summarize, check_options=check)"))
 
@@ -209,6 +209,47 @@ def test_invalid_summary_options_refuse_the_plan(repo, capsys):
 
     assert code == 2
     assert "summary ./summary.py: invalid options: rate must be above 0" in out.err
+
+
+# A summary whose `baseline` option must match exactly one agent of the plan
+# (PRD section 11, plan check 6), and whose `compare` option must name a
+# varied factor.
+BASELINE_SUMMARY = VIEW_SUMMARY.replace("SUMMARY = Summary(summarize)", '''
+def check(options, plan):
+    baseline = options.get("baseline", {})
+    matches = [a for a in plan.agents
+               if all(getattr(a, key) == value for key, value in baseline.items())]
+    if len(matches) != 1:
+        raise ValueError(f"baseline matches {len(matches)} agents")
+    if options.get("compare", "model_tier") not in plan.factors:
+        raise ValueError(f"{options['compare']} is not a varied factor "
+                         f"({', '.join(plan.factors)})")
+
+
+SUMMARY = Summary(summarize, check_options=check)''')
+
+
+@pytest.mark.parametrize("options, refusal", [
+    ('{ baseline = { job = "a" } }', "baseline matches 2 agents"),
+    ('{ baseline = { job = "b" } }', "baseline matches 0 agents"),
+    ('{ baseline = { job = "a", model_tier = "anthropic/claude-sonnet-5-5" } }', None),
+    ('{ baseline = { job = "a", model_tier = "anthropic/claude-sonnet-5-5" }, '
+     'compare = "condition" }', "condition is not a varied factor (model_tier)"),
+])
+def test_the_summary_options_are_checked_against_the_agents_and_factors_of_the_plan(
+        repo, capsys, options, refusal):
+    sonnet = {**AGENT, "model_name": "anthropic/claude-sonnet-5-5"}
+    write_experiment(repo, [write_job(repo, "a", [AGENT, sonnet])],
+                     extra=f"options = {options}\n")
+    write_summary(repo, BASELINE_SUMMARY)
+
+    code, out = plan(capsys)
+
+    if refusal is None:
+        assert code == 0, out.err
+    else:
+        assert code == 2
+        assert f"summary ./summary.py: invalid options: {refusal}" in out.err
 
 
 def test_summary_options_must_be_a_table(repo, capsys):

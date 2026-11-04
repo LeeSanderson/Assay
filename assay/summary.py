@@ -8,8 +8,11 @@ A summary module exposes one value:
 of `[summary]` in experiment.toml, and the empty folder
 `analysis/<experiment>/summary/`, where it writes its files. It is the only
 step that crosses trials, and it runs again on every invocation that
-completes. `check_options(options)` raises ValueError when the options are
-not valid; the plan then refuses the experiment at no cost.
+completes. `check_options(options, plan)` gets the options and a PlanView
+(each agent of each job file, and the varied factors with their levels), so
+it can check, for example, that a `baseline` matches exactly one agent (PRD
+section 11, plan check 6). It raises ValueError when the options are not
+valid; the plan then refuses the experiment at no cost.
 
 `experiment.toml` names the summary with `[summary] use = "./<file>.py"`, a
 path in the experiment's folder. There is no built-in summary yet
@@ -58,9 +61,28 @@ class ExperimentView:
 
 
 @dataclass(frozen=True)
+class PlannedAgent:
+    """One agent of one job file, by its factor levels."""
+
+    job: str
+    harness: str
+    model_tier: str
+    condition: str
+
+
+@dataclass(frozen=True)
+class PlanView:
+    """What `check_options` gets of the plan: each agent of each job file, and
+    the varied factors with their levels."""
+
+    agents: Sequence[PlannedAgent]
+    factors: Mapping[str, tuple[str, ...]]
+
+
+@dataclass(frozen=True)
 class Summary:
     summarize: Callable[[ExperimentView, Mapping[str, Json], Path], None]
-    check_options: Callable[[Mapping[str, Json]], None] | None = None
+    check_options: Callable[[Mapping[str, Json], PlanView], None] | None = None
 
 
 class SummaryPlanError(Exception):
@@ -74,8 +96,15 @@ class PlannedSummary:
     options: Mapping[str, Json]
 
 
-def plan_summary(experiment_dir: Path, listed: str, options: Any) -> PlannedSummary:
-    """Loads the summary and checks its options."""
+def plan_view(plan: Plan) -> PlanView:
+    agents = [PlannedAgent(job.name, a.harness, a.model_tier, a.condition)
+              for job in plan.jobs for a in job.agents]
+    return PlanView(agents, varied_factors(plan.expected))
+
+
+def plan_summary(experiment_dir: Path, listed: str, options: Any, plan: PlanView
+                 ) -> PlannedSummary:
+    """Loads the summary and checks its options against the plan."""
     if not listed.startswith("./"):
         raise SummaryPlanError(f"summary {listed} is not a built-in summary (there is none "
                                f"yet) and not a ./path")
@@ -97,7 +126,7 @@ def plan_summary(experiment_dir: Path, listed: str, options: Any) -> PlannedSumm
         raise SummaryPlanError("summary.options must be a table")
     if summary.check_options is not None:
         try:
-            summary.check_options(dict(options))
+            summary.check_options(dict(options), plan)
         except ValueError as e:
             raise SummaryPlanError(f"summary {listed}: invalid options: {e}") from e
     return PlannedSummary(listed, summary, dict(options))

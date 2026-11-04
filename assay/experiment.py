@@ -63,7 +63,8 @@ from assay.evaluations import (
     EvaluationPlanError, plan_evaluations, print_evaluation_plan, print_evaluation_reuse,
     run_evaluations,
 )
-from assay.summary import PlannedSummary, SummaryPlanError, plan_summary, run_summary
+from assay.summary import (PlannedSummary, SummaryPlanError, plan_summary, plan_view,
+                           run_summary)
 from assay.trial_outcomes import (TrialOutcome, agent_index, classify, logged_digests,
                                   read_log)
 from instruments.agent import IMPORT_PATH
@@ -308,7 +309,8 @@ def make_plan(name: str, selected_jobs: Sequence[str] = ()) -> Plan:
     if plan.summary is not None:
         try:
             plan.planned_summary = plan_summary(EXPERIMENTS_DIR / name, plan.summary,
-                                                data["summary"].get("options", {}))
+                                                data["summary"].get("options", {}),
+                                                plan_view(plan))
         except SummaryPlanError as e:
             raise PlanError(str(e)) from e
     return plan
