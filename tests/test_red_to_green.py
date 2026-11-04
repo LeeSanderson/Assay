@@ -236,6 +236,43 @@ def test_main_reads_replay_and_agent_runs_from_the_analysis_folder(make_trial, t
     assert out["tdd_loop"] == {"cycles": 1, "tests_never_seen_red": 0, "refactor_steps": 0}
 
 
+def test_trajectory_evaluates_one_trial_from_the_values_of_replay_and_agent_runs(
+        make_trial, tmp_path):
+    import json
+
+    from analyze.agent_runs import EVALUATION as AGENT_RUNS, cross_check_job
+    from analyze.trajectory import EVALUATION, main
+    from assay.evaluation import TrialInput
+
+    trial = go_trial(make_trial)
+    test = write(trial, "stopwatch_test.go", GO_TEST)
+    go_test(trial, 1)
+    impl = write(trial, "stopwatch.go", GO_STUB + "func New() {}\n")
+    go_test(trial, 0)
+    trial_dir = trial.build()
+    analysis = tmp_path / "analysis"
+    out = trial.write_replay({test: "fail", impl: "pass"},
+                             analysis_dir=analysis / trial_dir.parent.name / trial_dir.name)
+
+    def inp(deps):
+        return TrialInput(job="job", trial=trial_dir.name, cell=None, task_pack=tmp_path,
+                          record=read_trial(trial_dir), deps=deps, options={},
+                          out=tmp_path / "out", containers=None)
+
+    replay = {"works": True, "causes": [], "snapshots": read_replay(out)}
+    runs = AGENT_RUNS.evaluate(inp({"replay": replay}))
+    value = EVALUATION.evaluate(inp({"replay": replay, "agent-runs": runs}))
+    cross_check_job(trial_dir.parent, analysis)
+    assert main(["--analysis", str(analysis), str(trial_dir.parent)]) == 0
+
+    assert (EVALUATION.name, EVALUATION.depends_on) == ("trajectory", ("replay", "agent-runs"))
+    # The value is the line that `assay trajectory` writes for the trial.
+    assert value == json.loads((analysis / "trajectory.jsonl").read_text(encoding="utf-8"))
+    assert value["red_to_green_order"]["verdict"] == "red-to-green"
+    # Outside an experiment it runs without its dependencies.
+    assert EVALUATION.evaluate(inp({}))["red_to_green_order"] is None
+
+
 # --- seen states from the run's result (#37) -----------------------------------
 
 TS_TEST = "import { Stopwatch } from './split-second-stopwatch'\n\ntest('new', () => {})\n"

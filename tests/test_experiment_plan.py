@@ -50,7 +50,11 @@ def test_the_phase0_dry_run_prints_the_jobs_conditions_and_expected_trials_by_ce
     ])
     assert {c[2] for c in cells} == {"claude-code"}
     assert "11 expected trials" in out
-    assert "  replay (built-in)" in out[out.index("evaluations, in run order:"):]
+    assert out[out.index("evaluations, in run order:"):].splitlines()[1:4] == [
+        "  replay (built-in)",
+        "  agent-runs (built-in) depends on replay",
+        "  trajectory (built-in) depends on replay, agent-runs",
+    ]
     after = {p for p in (REPO_ROOT / "results").rglob("*")} \
         if (REPO_ROOT / "results").exists() else set()
     assert after == before

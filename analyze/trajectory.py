@@ -1,11 +1,18 @@
-"""Process metrics from one trial: pure functions over the trial reader's data.
+"""Process metrics from one trial, as the built-in evaluation `trajectory`
+(PRD v3 sections 9 and 16): pure functions over the trial record.
+
+It depends on `replay` and `agent-runs`, and reads the snapshots and the runs
+of their values for red-to-green order and the TDD loop. Its value is one
+trajectory line (analyze_trial); `assay compare-labels` reads it from
+analysis/<experiment>/<job>/<trial>/trajectory/result.json.
 
     uv run assay trajectory results/<job-id>... [--analysis analysis]
 
-writes analysis/trajectory.jsonl, one JSON line for each trial of each job, to
-compare with the labeling sheet. Red-to-green order and the TDD loop need
-analysis/<job-id>/<trial>/replay.jsonl and agent-runs.jsonl (from assay replay
-and assay agent-runs); without them both are null.
+is the thin entry point: it writes analysis/trajectory.jsonl, one JSON line
+for each trial of each job, to compare with the labeling sheet. Outside an
+experiment it runs without its dependencies: red-to-green order and the TDD
+loop need analysis/<job-id>/<trial>/replay.jsonl and agent-runs.jsonl (from
+assay replay and assay agent-runs); without them both are null.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ from analyze.languages import IMPLEMENTATION, LANGUAGES, TEST, classify, is_test
 from analyze.replay import NO_TESTS, REPLAY_FILE, read_replay
 from analyze.shell import simple_commands, without_heredoc_bodies, without_prefixes, written_paths
 from analyze.trial import REPO_ROOT, ToolCall, Trial, read_job, read_trial, write_jsonl
+from assay.evaluation import Evaluation, TrialInput
 
 TRAJECTORY_FILE = "trajectory.jsonl"
 WRITE_STATUSES = ("A", "M")
@@ -345,14 +353,33 @@ def analyze_trial(trial: Trial, replay: list[dict] | None = None,
     return out
 
 
+def evaluate(inp: TrialInput) -> dict:
+    """The metrics of the trial, from the values of replay and agent-runs; with
+    no dependencies (outside an experiment) red-to-green order and the TDD loop
+    are None."""
+    if "replay" in inp.deps and "agent-runs" in inp.deps:
+        return analyze_trial(inp.record, inp.deps["replay"]["snapshots"],
+                             inp.deps["agent-runs"]["runs"])
+    return analyze_trial(inp.record)
+
+
+EVALUATION = Evaluation(name="trajectory", evaluate=evaluate,
+                        depends_on=("replay", "agent-runs"))
+
+
 def analyze_folder(folder: Path | str, analysis_root: Path | str) -> dict:
-    """analyze_trial for results/<job-id>/<trial>, with the replay.jsonl and
-    agent-runs.jsonl in analysis_root/<job-id>/<trial>/ when both exist."""
+    """The value of trajectory for results/<job-id>/<trial>, with the
+    replay.jsonl and agent-runs.jsonl in analysis_root/<job-id>/<trial>/ as
+    its dependencies when both exist."""
     trial = read_trial(folder)
     out = Path(analysis_root) / Path(folder).resolve().parent.name / trial.name
+    deps = {}
     if (out / REPLAY_FILE).is_file() and (out / AGENT_RUNS_FILE).is_file():
-        return analyze_trial(trial, read_replay(out), read_agent_runs(out))
-    return analyze_trial(trial)
+        deps = {"replay": {"snapshots": read_replay(out)},
+                "agent-runs": {"runs": read_agent_runs(out)}}
+    return evaluate(TrialInput(
+        job=Path(folder).resolve().parent.name, trial=trial.name, cell=None, task_pack=Path(),
+        record=trial, deps=deps, options={}, out=out, containers=None))
 
 
 def write_trajectory(job_dirs: list[Path | str], analysis_root: Path | str) -> Path:

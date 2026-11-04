@@ -1,12 +1,18 @@
-"""The cross-check with the agent's test runs (PRD section 5).
+"""The cross-check with the agent's test runs, as the built-in evaluation
+`agent-runs` (PRD v3 sections 9 and 16).
 
 A Bash call is a test run when its command matches a test-run pattern of the
 task pack's language (analyze.languages) and runs in the seed repository.
-It runs after replay.py, from the replay.jsonl of each trial:
+It depends on `replay` and reads the snapshots of its value. Its value merges
+agent-runs.jsonl and cross-check.json:
+
+    {"runs": [one line per test run], "cross_check": {coverage, agreement, ...}}
 
     uv run assay agent-runs results/<job-id>
 
-writes analysis/<job-id>/<trial>/agent-runs.jsonl and cross-check.json.
+is the thin entry point for one job folder: it reads each trial's
+analysis/<job-id>/<trial>/replay.jsonl and writes agent-runs.jsonl and
+cross-check.json beside it.
 """
 
 from __future__ import annotations
@@ -20,7 +26,8 @@ from pathlib import Path
 from analyze.languages import LANGUAGES, LanguageRules
 from analyze.replay import PASS, read_replay
 from analyze.shell import piped_simple_commands, without_prefixes
-from analyze.trial import REPO_ROOT, ToolCall, Trial, read_job, read_jsonl, share, write_jsonl
+from analyze.trial import REPO_ROOT, ToolCall, Trial, read_job, read_jsonl, share
+from assay.evaluation import Evaluation, TrialInput
 
 AGENT_RUNS_FILE = "agent-runs.jsonl"
 CROSS_CHECK_FILE = "cross-check.json"
@@ -183,24 +190,38 @@ def cross_check(replay: list[dict], runs: list[dict]) -> dict:
     }
 
 
+def evaluate(inp: TrialInput) -> dict:
+    """The test runs of the trial and their cross-check, from replay's snapshots."""
+    replay = inp.deps["replay"]["snapshots"]
+    runs = agent_runs(inp.record, replay)
+    return {"runs": runs, "cross_check": cross_check(replay, runs)}
+
+
+EVALUATION = Evaluation(name="agent-runs", evaluate=evaluate, depends_on=("replay",))
+
+
 def cross_check_job(job_dir: Path | str, analysis_root: Path | str) -> dict[str, dict]:
-    """Cross-checks each trial of a job against its replay.jsonl.
+    """`assay agent-runs`: evaluates each trial of a job against its
+    replay.jsonl and writes the value as today's files.
 
     For each trial it reads analysis/<job-id>/<trial>/replay.jsonl and writes
-    agent-runs.jsonl and cross-check.json (the cross_check summary) beside
-    it. It never writes in job_dir. Returns the summary of each trial.
+    agent-runs.jsonl (the runs) and cross-check.json (the cross_check
+    summary) beside it. It never writes in job_dir. Returns the summary of
+    each trial.
     """
     job_dir = Path(job_dir)
     summaries = {}
     for trial in read_job(job_dir):
         out = Path(analysis_root) / job_dir.name / trial.name
-        replay = read_replay(out)
-        runs = agent_runs(trial, replay)
-        summary = cross_check(replay, runs)
+        value = evaluate(TrialInput(
+            job=job_dir.name, trial=trial.name, cell=None, task_pack=Path(), record=trial,
+            deps={"replay": {"snapshots": read_replay(out)}}, options={}, out=out,
+            containers=None))
         (out / AGENT_RUNS_FILE).write_text(
-            "".join(json.dumps(run) + "\n" for run in runs), encoding="utf-8")
-        (out / CROSS_CHECK_FILE).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-        summaries[trial.name] = summary
+            "".join(json.dumps(run) + "\n" for run in value["runs"]), encoding="utf-8")
+        (out / CROSS_CHECK_FILE).write_text(json.dumps(value["cross_check"], indent=2) + "\n",
+                                            encoding="utf-8")
+        summaries[trial.name] = value["cross_check"]
     return summaries
 
 

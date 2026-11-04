@@ -14,9 +14,7 @@ jobs = [                              # run in this order, one after another
   "jobs/phase0-local.yaml",           # on the host of the local server: --job phase0-local
 ]
 
-# Run order; a built-in name or ./path. agent-runs and trajectory follow
-# replay once they are built-in evaluations (issue #65).
-evaluations = ["replay"]
+evaluations = ["replay", "agent-runs", "trajectory"]   # run order; a built-in name or ./path
 
 # [evaluation-options.<name>]         # only for an evaluation that takes options; none here
 

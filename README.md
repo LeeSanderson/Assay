@@ -12,7 +12,7 @@ Assay measures the value of a context artifact for a coding agent: a skill, a ru
 | [`uv run assay replay results/<job-id>`](#assay-replay) | Gives the test state (`no-tests`, `red-compile`, `fail` or `pass`) of each trace snapshot of each trial, and says whether replay works. |
 | [`uv run assay agent-runs results/<job-id>`](#assay-agent-runs) | Cross-checks each test run of the agent with the replay of the same snapshot. |
 | [`uv run assay trajectory results/<job-id>...`](#assay-trajectory) | Measures test-first order, red-to-green order and the TDD loop of each trial of one or more jobs, and writes them to `analysis/trajectory.jsonl`. |
-| [`uv run assay compare-labels <sheet.csv> <trajectory.jsonl>`](#assay-compare-labels) | Compares the labeling sheet with the output of `assay trajectory`, and prints each difference. |
+| [`uv run assay compare-labels <sheet.csv> <analysis/experiment or trajectory.jsonl>`](#assay-compare-labels) | Compares the labeling sheet with the values of `trajectory`, and prints each difference. |
 | [`uv run assay summary results/<job-id>...`](#assay-summary) | Writes the Phase 0 summary of one or more jobs. |
 
 The sections below say why each command exists and what result to expect. PRD section 5 gives the full rules.
@@ -102,7 +102,7 @@ It writes `analysis/trajectory.jsonl`, with one JSON line for each trial, and re
 
 ### `assay compare-labels`
 
-Compares a person's labels of the trials with the output of `assay trajectory`.
+Compares a person's labels of the trials with the values of `trajectory`. The second argument is an experiment's analysis folder, such as `analysis\phase0-tdd`, whose `<job>/<trial>/trajectory/result.json` files `assay experiment` writes, or the `analysis/trajectory.jsonl` that `assay trajectory` writes.
 
 `assay trajectory` is useful only if its rules give the same answer as a careful person. In Phase 0, a person labels the ten hosted trials from the neutral `jq` listing before `assay trajectory` runs. `assay compare-labels` then compares the labels with the script. The two agree on a trial, for one metric, when every field of that metric is the same: for test-first order, the verdict and the two anchors; for red-to-green order, the verdict, the two anchors and the three counts of the TDD loop. Notes are not compared.
 

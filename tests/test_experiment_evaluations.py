@@ -253,6 +253,85 @@ def test_an_interrupted_job_runs_no_evaluation(repo):
     assert finished(repo, "replay") == []
 
 
+# --- agent-runs and trajectory, built-ins that depend on replay (issue #65) -------
+
+BUILT_INS = ["replay", "agent-runs", "trajectory"]
+
+
+def ran(repo, evaluation):
+    return finished(repo, evaluation)[-1]["ran"]
+
+
+def test_agent_runs_and_trajectory_run_on_the_values_of_their_dependencies(repo):
+    write_experiment(repo, [write_job(repo, "a")], BUILT_INS)
+
+    assert experiment(FakeHarbor(), FakeContainers()) == 0
+
+    runs = result(repo, "a", "slug__00", "agent-runs")
+    assert runs["error"] is None
+    assert set(runs["inputs"]) == {"record", "task_pack", "options", "deps.replay"}
+    assert runs["value"]["cross_check"]["snapshots"] == 2
+    trajectory = result(repo, "a", "slug__00", "trajectory")
+    assert trajectory["error"] is None
+    assert set(trajectory["inputs"]) == {"record", "task_pack", "options", "deps.replay",
+                                         "deps.agent-runs"}
+    assert trajectory["value"]["trial"] == "slug__00"
+    # Its dependencies were given: the fixture trial runs no tests.
+    assert trajectory["value"]["red_to_green_order"]["verdict"] == "not-observed"
+
+
+def edited_copy(module, tmp_path, monkeypatch):
+    """Points a built-in evaluation's module at an edited copy of its code."""
+    copy = tmp_path / "edited" / Path(module.__file__).name
+    copy.parent.mkdir(exist_ok=True)
+    copy.write_text(Path(module.__file__).read_text(encoding="utf-8") + "\n# edited\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(module, "__file__", str(copy))
+
+
+def test_editing_the_trajectory_code_reruns_only_trajectory(repo, tmp_path, monkeypatch):
+    import analyze.trajectory
+
+    write_experiment(repo, [write_job(repo, "a")], BUILT_INS)
+    assert experiment(FakeHarbor(), FakeContainers()) == 0
+    edited_copy(analyze.trajectory, tmp_path, monkeypatch)
+
+    containers = FakeContainers()
+    assert experiment(FakeHarbor(), containers) == 0
+
+    assert containers.runs == []
+    assert [ran(repo, e) for e in BUILT_INS] == [0, 0, 1]
+
+
+def test_agent_runs_rerun_with_the_same_value_reruns_no_trajectory(repo, tmp_path, monkeypatch):
+    import analyze.agent_runs
+
+    write_experiment(repo, [write_job(repo, "a")], BUILT_INS)
+    assert experiment(FakeHarbor(), FakeContainers()) == 0
+    edited_copy(analyze.agent_runs, tmp_path, monkeypatch)
+
+    assert experiment(FakeHarbor(), FakeContainers()) == 0
+
+    assert [ran(repo, e) for e in BUILT_INS] == [0, 1, 0]
+    assert finished(repo, "trajectory")[-1]["reused"] == 1
+
+
+def test_a_replay_error_gives_agent_runs_and_trajectory_an_error_without_a_call(repo):
+    write_experiment(repo, [write_job(repo, "a")], BUILT_INS)
+
+    class BrokenContainers(FakeContainers):
+        def pack_image(self, task_pack):
+            raise RuntimeError("docker build failed")
+
+    assert experiment(FakeHarbor(), BrokenContainers()) == 0
+
+    for name in ("agent-runs", "trajectory"):
+        envelope = result(repo, "a", "slug__00", name)
+        assert envelope["value"] is None
+        assert "dependency replay has an error" in envelope["error"]
+        assert (ran(repo, name), finished(repo, name)[-1]["errors"]) == (0, 1)
+
+
 # --- reuse through dependencies, with experiment-local evaluations ---------------
 
 

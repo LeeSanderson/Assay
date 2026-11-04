@@ -5,10 +5,11 @@ import json
 import pytest
 
 from analyze.agent_runs import (
-    agent_runs, cross_check, cross_check_job, match_test_run, read_agent_runs,
+    EVALUATION, agent_runs, cross_check, cross_check_job, match_test_run, read_agent_runs,
 )
 from analyze.replay import read_replay
 from analyze.trial import read_trial
+from assay.evaluation import TrialInput
 from tests.trial_builder import TrialBuilder
 
 GO_STUB = "package stopwatch\n"
@@ -285,6 +286,33 @@ def test_cross_check_job_writes_agent_runs_and_the_summary_under_analysis_only(t
     written = json.loads((out / "cross-check.json").read_text(encoding="utf-8"))
     assert written == summaries[trial.dir.name]
     assert (written["coverage"], written["agreement"]) == (0.5, 1.0)
+
+
+def test_agent_runs_evaluates_one_trial_from_the_value_of_replay(tmp_path):
+    # The value merges what `assay agent-runs` writes: agent-runs.jsonl and
+    # cross-check.json.
+    job = tmp_path / "results" / "job-1"
+    trial = TrialBuilder(job, language="go")
+    trial.seed({"stopwatch.go": GO_STUB})
+    write = trial.step().call("Write", {"file_path": "/app/stopwatch_test.go"},
+                              files={"stopwatch_test.go": GO_TEST})
+    trial.step().call("Bash", {"command": "go test ./..."}, **failed(1))
+    trial_dir = trial.build()
+    out = tmp_path / "analysis" / "job-1" / trial.dir.name
+    snapshots = read_replay(trial.write_replay({write: "red-compile"}, analysis_dir=out))
+    replay_value = {"works": True, "causes": [], "image": "i", "base_image": "b",
+                    "snapshots": snapshots}
+
+    value = EVALUATION.evaluate(TrialInput(
+        job="job-1", trial=trial_dir.name, cell=None, task_pack=tmp_path / "pack",
+        record=read_trial(trial_dir), deps={"replay": replay_value}, options={},
+        out=tmp_path / "out", containers=None))
+    summaries = cross_check_job(job, tmp_path / "analysis")
+
+    assert (EVALUATION.name, EVALUATION.depends_on) == ("agent-runs", ("replay",))
+    assert value == {"runs": read_agent_runs(out), "cross_check": summaries[trial.dir.name]}
+    assert value["cross_check"]["agreement"] == 1.0
+    json.dumps(value)
 
 
 def test_a_trial_without_test_runs_has_no_agreement_value(make_trial):

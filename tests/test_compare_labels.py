@@ -125,6 +125,43 @@ def test_a_trial_on_one_side_only_is_reported_and_breaks_agrees_every_time(tmp_p
     assert report["agrees_every_time"] == {"test_first": False, "red_to_green": False}
 
 
+def write_results(tmp_path: Path, lines: list[dict]) -> Path:
+    """trajectory's result.json of each trial, as `assay experiment` writes them."""
+    root = tmp_path / "analysis" / "phase0-tdd"
+    for i, line in enumerate(lines):
+        folder = root / f"job-{i}" / line["trial"] / "trajectory"
+        folder.mkdir(parents=True)
+        (folder / "result.json").write_text(json.dumps(
+            {"evaluation": "trajectory", "value": line, "error": None}), encoding="utf-8")
+    return root
+
+
+def test_the_experiment_folder_gives_trajectorys_result_json_of_each_trial(tmp_path):
+    other = {**SCRIPT_LINE, "trial": "other__def5678"}
+    root = write_results(tmp_path, [SCRIPT_LINE, other])
+    # A replay result beside it is not a trajectory line.
+    (root / "job-0" / "stopwatch__abc1234" / "replay").mkdir()
+    (root / "job-0" / "stopwatch__abc1234" / "replay" / "result.json").write_text(
+        json.dumps({"evaluation": "replay", "value": {}, "error": None}), encoding="utf-8")
+
+    report = compare(write_sheet(tmp_path, [AGREEING_ROW]), root)
+
+    assert report["trials"][0]["test_first"] == {"agrees": True, "differences": []}
+    assert report["trials"][0]["red_to_green"] == {"agrees": True, "differences": []}
+    assert report["only_in_output"] == ["other__def5678"]
+
+
+def test_a_trajectory_result_with_an_error_gives_no_line(tmp_path):
+    root = write_results(tmp_path, [SCRIPT_LINE])
+    result = root / "job-0" / "stopwatch__abc1234" / "trajectory" / "result.json"
+    result.write_text(json.dumps({"evaluation": "trajectory", "value": None,
+                                  "error": "dependency replay has an error"}), encoding="utf-8")
+
+    report = compare(write_sheet(tmp_path, [AGREEING_ROW]), root)
+
+    assert report["only_in_sheet"] == ["stopwatch__abc1234"]
+
+
 def test_the_command_prints_each_difference_and_fails_when_any_exists(tmp_path, capsys):
     row = {**AGREEING_ROW, "test_first_verdict": "same-turn"}
 

@@ -47,7 +47,8 @@ if TYPE_CHECKING:
     from assay.experiment import ExperimentLog, JobPlan, Plan
 
 CODE_ROOT = Path(__file__).resolve().parents[1]  # the repository's code
-BUILT_INS = {"replay": "analyze.replay"}
+BUILT_INS = {"replay": "analyze.replay", "agent-runs": "analyze.agent_runs",
+             "trajectory": "analyze.trajectory"}
 # The optional record parts that the reader of each harness gives.
 READER_GIVES = {"claude-code": GIVES}
 RESULT_FILE = "result.json"

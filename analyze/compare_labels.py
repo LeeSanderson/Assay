@@ -1,5 +1,11 @@
-"""Compares the labeling sheet with trajectory.py's output (PRD section 5,
+"""Compares the labeling sheet with the values of trajectory (PRD section 5,
 "How a person checks trajectory.py" and its red-to-green extension).
+
+    uv run assay compare-labels <sheet.csv> analysis/<experiment>
+
+reads trajectory's result.json of each trial of the experiment
+(analysis/<experiment>/<job>/<trial>/trajectory/result.json). The output of
+the thin entry point works too:
 
     uv run assay trajectory results/<job-id>...
     uv run assay compare-labels <sheet.csv> analysis/trajectory.jsonl
@@ -17,6 +23,8 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+
+TRAJECTORY = "trajectory"  # the evaluation whose results are compared
 
 # Each sheet column and the path of its value in a trajectory.py output line.
 METRICS: dict[str, list[tuple[str, tuple[str, ...]]]] = {
@@ -47,11 +55,7 @@ def compare(sheet: Path | str, output: Path | str) -> dict:
     """The agreement of each trial on each metric, with each difference."""
     with Path(sheet).open(newline="", encoding="utf-8-sig") as f:
         rows = {row["trial"].strip(): row for row in csv.DictReader(f) if row.get("trial", "").strip()}
-    lines = {}
-    for text in Path(output).read_text(encoding="utf-8").splitlines():
-        if text.strip():
-            line = json.loads(text)
-            lines[line["trial"]] = line
+    lines = {line["trial"]: line for line in read_output(output)}
 
     trials = []
     for name in sorted(rows.keys() & lines.keys()):
@@ -79,6 +83,20 @@ def compare(sheet: Path | str, output: Path | str) -> dict:
     }
 
 
+def read_output(output: Path | str) -> list[dict]:
+    """The trajectory lines: from an experiment's analysis folder, the value of
+    each trajectory/result.json under it that holds no error; from a file, its
+    JSON lines (what `assay trajectory` writes)."""
+    output = Path(output)
+    if output.is_dir():
+        results = (json.loads(f.read_text(encoding="utf-8"))
+                   for f in sorted(output.rglob(f"{TRAJECTORY}/result.json")))
+        return [r["value"] for r in results
+                if r.get("evaluation") == TRAJECTORY and r.get("error") is None]
+    return [json.loads(text) for text in output.read_text(encoding="utf-8").splitlines()
+            if text.strip()]
+
+
 def _get(line: dict, path: tuple[str, ...]):
     value = line
     for key in path:
@@ -99,7 +117,10 @@ def main(argv: list[str] | None = None) -> int:
         prog="assay compare-labels",
         description="Compare the labeling sheet with trajectory.py's output.")
     parser.add_argument("sheet", type=Path, help="a filled copy of labeling/sheet-template.csv")
-    parser.add_argument("output", type=Path, help="the JSON lines that assay trajectory writes (analysis/trajectory.jsonl)")
+    parser.add_argument("output", type=Path,
+                        help="an experiment's analysis folder (analysis/<experiment>), whose "
+                             "trajectory/result.json files are read, or the JSON lines that "
+                             "assay trajectory writes (analysis/trajectory.jsonl)")
     args = parser.parse_args(argv)
 
     report = compare(args.sheet, args.output)
