@@ -50,7 +50,7 @@ class Tool(NamedTuple):
 
 # Each analysis tool by its subcommand, in the order of the analysis process.
 TOOLS = {
-    "trace-check": Tool("analyze.trace_check", "check the trace of each trial of a job"),
+    "trace-check": Tool("analyze.trace_check", "run the validity check on each trial of a job"),
     "replay": Tool("analyze.replay", "replay the trace snapshots of a job's trials"),
     "agent-runs": Tool("analyze.agent_runs", "cross-check the agent's test runs with the replay"),
     "trajectory": Tool("analyze.trajectory", "measure test-first and red-to-green order"),

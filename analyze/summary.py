@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from analyze.agent_runs import CROSS_CHECK_FILE
-from analyze.trace_check import MixedClaudeCodeVersions, job_claude_code_version, trace_check
+from analyze.trace_check import MixedClaudeCodeVersions, job_claude_code_version, validity_check
 from analyze.trajectory import analyze_folder
 from analyze.trial import REPO_ROOT, Trial, read_job, read_json, share
 
@@ -139,7 +139,7 @@ def _shares(trials: list[dict]) -> dict:
 def _trial(job_dir: Path, trial: Trial, analysis_root: Path) -> dict:
     out = analysis_root / job_dir.name / trial.name
     metrics = analyze_folder(trial.path, analysis_root)
-    failed = trace_check(trial)
+    failed = validity_check(trial).failed
     usage = trial.usage
     return {
         "job": job_dir.name,

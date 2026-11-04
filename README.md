@@ -8,7 +8,7 @@ Assay measures the value of a context artifact for a coding agent: a skill, a ru
 | Command | What it does |
 |---|---|
 | [`uv run assay run -c jobs/<file>.yaml`](#assay-run) | Starts a job: runs `harbor run` with the job file, after it checks the Claude Code version and the job's results folder. `--overwrite` deletes earlier results first. |
-| [`uv run assay trace-check results/<job-id>`](#assay-trace-check) | Checks that the trace hook worked in each trial of the job. |
+| [`uv run assay trace-check results/<job-id>`](#assay-trace-check) | Runs the ten-check validity check on each trial of the job, and writes `trial-check.json`. |
 | [`uv run assay replay results/<job-id>`](#assay-replay) | Gives the test state (`no-tests`, `red-compile`, `fail` or `pass`) of each trace snapshot of each trial, and says whether replay works. |
 | [`uv run assay agent-runs results/<job-id>`](#assay-agent-runs) | Cross-checks each test run of the agent with the replay of the same snapshot. |
 | [`uv run assay trajectory results/<job-id>...`](#assay-trajectory) | Measures test-first order, red-to-green order and the TDD loop of each trial of one or more jobs, and writes them to `analysis/trajectory.jsonl`. |
@@ -27,20 +27,24 @@ Every result must trace back to a committed job file, and every trial must run t
 
 ### `assay trace-check`
 
-Checks that the trace hook worked in each trial of a job.
+Runs the validity check of the trial record on each trial of a job (PRD section 8, "The validity check").
 
-Replay and every process metric depend on the trace that the trace hook writes in each trial. If the hook did not work, the measurements of that trial are not valid. The trace check makes eight checks on each trial:
+Replay and every process metric depend on the trial record: the trace that the recorder writes in each trial, and the trajectory. If the record is not sound, the measurements of that trial are not valid. The validity check makes ten checks on each trial:
 
-1. `instruments`: the trial ran the committed `instruments/` folder (the same digest).
-2. `seed`: the hook made the first snapshot, of the seed repository.
-3. `tool-calls`: each tool call in the trajectory has exactly one trace line.
+1. `instruments`: the trial ran the committed `instruments/` folder (the same digest), and `instruments.json` declares `granularity` and `calls_may_overlap`.
+2. `seed`: a `seed` line exists, and its commit is the first commit.
+3. `calls`: each tool call in the trajectory, failed calls included, has exactly one trace line.
 4. `errors`: no trace line records a hook error.
-5. `changed`: at least one snapshot holds a change.
-6. `claude-code-version`: the Claude Code that ran is the pinned version.
+5. `final`: a `final` line exists, it found no change, and its commit is the last commit.
+6. `harness-version`: the Claude Code that ran is the pinned version.
 7. `harbor-version`: the Harbor that ran is the version in `uv.lock`.
-8. `file-writes`: each successful `Edit`, `MultiEdit`, or `Write` that changed a file in the seed repository has that path in its trace line.
+8. `condition`: the condition digests in the experiment log agree with the plan. Outside an experiment this check is skipped, and `trial-check.json` says so.
+9. `claimed-paths`: each successful `Edit`, `MultiEdit`, or `Write` that changed a file in the seed repository has that path in its trace line.
+10. `required-core`: the reader built every field of the required core, and `trial-check.json` names each missing field.
 
-**Expected result:** one JSON line per trial, each with `"failed_checks": []`, and exit code 0. Phase 0 needs every trial to pass. A trial that fails a check is a failure of the infrastructure: fix the cause, and run the trial again in the same cell. Exit code 2 means that the trials of the job ran more than one Claude Code version.
+A trial in which the agent changes no file passes: it is a result.
+
+**Expected result:** one JSON line per trial, each with `"failed_checks": []`, exit code 0, and `analysis/<job-id>/<trial>/trial-check.json` for each trial (`--analysis` changes the root). A failed check 1, 6, 7 or 8 is a halt: fix the cause before any trial runs again. Any other failed check is an infrastructure failure: run the trial again in the same cell. Exit code 2 means that the trials of the job ran more than one Claude Code version.
 
 ### `assay replay`
 

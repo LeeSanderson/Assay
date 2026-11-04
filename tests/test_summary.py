@@ -67,6 +67,8 @@ def red_to_green_trial(job, **kwargs):
 def test_each_trial_gives_its_trace_check_replay_and_order_verdicts(tmp_path):
     job = Job(tmp_path, "phase0-cross")
     b = red_to_green_trial(job)
+    b.finish()  # the final fire, so the trial passes the validity check
+    b.build()
     cross_check_job(job.dir, job.analysis)
 
     trial = summarize([job.dir], job.analysis)["trials"][0]
@@ -101,11 +103,14 @@ def test_a_failing_trial_lists_its_failed_checks_and_a_trial_not_replayed_has_no
     b.instruments = None
     b.step().call("Write", {"file_path": "/app/stopwatch_test.go"},
                   files={"stopwatch_test.go": GO_TEST})
+    b.finish()
     b.build()
 
     trial = summarize([job.dir], job.analysis)["trials"][0]
 
-    assert trial["trace_check"] == {"passed": False, "failed_checks": ["instruments", "harbor-version"]}
+    # With no instruments.json the record also lacks its granularity.
+    assert trial["trace_check"] == {
+        "passed": False, "failed_checks": ["instruments", "harbor-version", "required-core"]}
     assert trial["replay"] is None
     assert trial["red_to_green_order"] is None
 
