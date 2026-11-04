@@ -44,6 +44,13 @@ SKILL_TOOLS = ("Skill",)
 _EXIT_CODE = re.compile(r"Exit code (\d+)")
 
 
+# The optional parts of the record (assay.evaluation.OPTIONAL_PARTS) that this
+# reader gives. Claude Code's ATIF never gives a call's duration or a step's
+# cost, so an evaluation that needs one cannot be fed by the claude-code
+# harness.
+GIVES = frozenset({"result", "error_flag", "exit_code"})
+
+
 class Absent:
     """The mark of an optional part that the reader cannot give. Falsy."""
 
@@ -325,6 +332,24 @@ def read_trial(path: Path | str) -> Trial:
         trace=tuple(_trace_line(raw) for raw in read_jsonl(trace_dir / "trace.jsonl")),
         trace_git=trace_dir / "trace.git",
     )
+
+
+def record_digest(path: Path | str) -> str:
+    """The resume digest of a trial record: `sha256:<hex>` over the files the
+    reader reads, each by its path in the trial folder and its content."""
+    path = Path(path)
+    trace_dir = path / TRACE_FOLDER
+    files = [path / "lock.json", path / "result.json", path / "agent" / "trajectory.json",
+             path / "verifier" / "reward.json", trace_dir / "instruments.json",
+             trace_dir / "trace.jsonl",
+             *(sorted((trace_dir / "trace.git").rglob("*")) if (trace_dir / "trace.git").is_dir()
+               else [])]
+    outer = hashlib.sha256()
+    for file in files:
+        if file.is_file():
+            content = hashlib.sha256(file.read_bytes()).hexdigest()
+            outer.update(f"{file.relative_to(path).as_posix()}\0{content}\n".encode("utf-8"))
+    return f"sha256:{outer.hexdigest()}"
 
 
 def read_json(path: Path) -> Any:

@@ -12,13 +12,17 @@ trials of each cell (task packs x agents x `n_attempts`), runs the plan-time
 checks, and prints the plan. A dry run calls no Harbor and no container, and
 writes and deletes nothing; it also prints what resume would keep and rerun.
 
+The plan also loads the listed evaluations and checks them
+(assay/evaluations.py); the dry run prints them and what they would reuse.
+
 Without --dry-run, the selected jobs run in the listed order, one at a time,
 each through the `assay run` path with `--jobs-dir results/<name> -y`, and
 `--debug` when given (no other option reaches Harbor). Each invocation
 appends to the experiment log `analysis/<name>/experiment-log.jsonl`. Resume
 is the default: Harbor keeps each finished trial and runs the rest. A job
 that Harbor does not finish (Ctrl-C, or a non-zero exit) stops the
-invocation. --from-scratch first deletes `results/<name>` and
+invocation. After the last job, the evaluations run over every trial of
+the experiment, whichever jobs ran. --from-scratch first deletes `results/<name>` and
 `analysis/<name>`, the log included.
 """
 
@@ -43,6 +47,11 @@ from pathlib import Path
 import yaml
 from harbor.models.job.config import JobConfig
 
+from assay.evaluation import Containers
+from assay.evaluations import (
+    EvaluationPlanError, plan_evaluations, print_evaluation_plan, print_evaluation_reuse,
+    run_evaluations,
+)
 from instruments.agent import IMPORT_PATH
 
 EXPERIMENTS_DIR = Path("experiments")
@@ -102,6 +111,7 @@ class Plan:
     jobs: list[JobPlan]
     evaluations: list[str]
     summary: str | None
+    planned_evaluations: list = field(default_factory=list)  # assay.evaluations
 
     @property
     def expected(self) -> Counter[Cell]:
@@ -267,8 +277,15 @@ def make_plan(name: str, selected_jobs: Sequence[str] = ()) -> Plan:
     if selected and (unknown := sorted(selected - {job.name for job in jobs})):
         raise PlanError(f"--job {', '.join(unknown)}: no such job in experiment {name} "
                         f"(its jobs: {', '.join(job.name for job in jobs)})")
-    return Plan(name, jobs, list(data.get("evaluations", [])),
+    plan = Plan(name, jobs, list(data.get("evaluations", [])),
                 data.get("summary", {}).get("use"))
+    try:
+        plan.planned_evaluations = plan_evaluations(
+            EXPERIMENTS_DIR / name, plan.evaluations, data.get("evaluation-options", {}),
+            {agent.harness for job in jobs for agent in job.agents})
+    except EvaluationPlanError as e:
+        raise PlanError(str(e)) from e
+    return plan
 
 
 def print_plan(plan: Plan) -> None:
@@ -297,7 +314,7 @@ def print_plan(plan: Plan) -> None:
             item[0].condition, item[0].model_tier, item[0].language)):
         print(f"  cell {n} {cell.harness} {cell.model_tier} {cell.condition} {cell.language}")
     print(f"  {sum(expected.values())} expected trials")
-    print(f"\nevaluations, in run order: {', '.join(plan.evaluations) or 'none'}")
+    print_evaluation_plan(plan.planned_evaluations)
     print(f"summary: {plan.summary or 'none'}")
 
 
@@ -343,6 +360,8 @@ def print_resume(plan: Plan, from_scratch: bool) -> None:
         print(f"  {job.name:<22} {len(finished)} finished {noun} kept, {to_run} to run")
         for trial in [] if from_scratch else unfinished_trials(folder):
             print(f"    {trial} (unfinished, Harbor deletes it)")
+    if not from_scratch:
+        print_evaluation_reuse(plan, plan.planned_evaluations, RESULTS_DIR, ANALYSIS_DIR)
 
 
 class ExperimentLog:
@@ -409,9 +428,10 @@ def run_job(plan: Plan, job: JobPlan, log: ExperimentLog, debug: bool,
 
 
 def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
-                   run_harbor: Callable[[Sequence[str]], int]) -> int:
-    """Run the selected jobs in order, one at a time, and log the invocation.
-    Stops at the first job that Harbor did not finish."""
+                   run_harbor: Callable[[Sequence[str]], int], containers: Containers) -> int:
+    """Run the selected jobs in order, one at a time, then the evaluations
+    over every trial of the experiment, and log the invocation. Stops at the
+    first job that Harbor did not finish."""
     log = ExperimentLog(plan.experiment)
     log.write("invocation-started", command=["assay", "experiment", *argv],
               assay_commit=assay_commit(), harbor_version=harbor_version())
@@ -427,6 +447,9 @@ def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
             if exit_code != 0:
                 outcome, code = "error", exit_code
                 break
+        if outcome == "complete":
+            run_evaluations(plan, plan.planned_evaluations, containers, log, RESULTS_DIR,
+                            ANALYSIS_DIR)
     except KeyboardInterrupt:
         outcome, code = "interrupted", INTERRUPTED
     log.write("invocation-finished", outcome=outcome)
@@ -442,8 +465,11 @@ def error(message: str) -> int:
 USAGE = "usage: assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--debug]"
 
 
-def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int]) -> int:
-    """The `experiment` subcommand. `run_harbor` runs `harbor run`; a dry run never calls it."""
+def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
+               containers: Containers | None = None) -> int:
+    """The `experiment` subcommand. `run_harbor` runs `harbor run` and
+    `containers` starts the evaluations' containers (Docker when None); a dry
+    run calls neither."""
     argv = list(args)
     args = list(args)
     names, jobs = [], []
@@ -484,4 +510,8 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int]) 
             if folder.exists():
                 delete_folder(folder)
                 print(f"deleted {folder.as_posix()}")
-    return run_experiment(plan, argv, debug, run_harbor)
+    if containers is None:
+        from assay.containers import DockerContainers
+
+        containers = DockerContainers()
+    return run_experiment(plan, argv, debug, run_harbor, containers)

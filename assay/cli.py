@@ -207,14 +207,14 @@ def load_env_file(env_file: Path) -> None:
 
 
 def main(argv: Sequence[str] | None = None, run_harbor: HarborRunner = run_harbor,
-         env_file: Path | None = None) -> int:
+         env_file: Path | None = None, containers=None) -> int:
     load_env_file(env_file or ENV_FILE)
     command, *args = list(sys.argv[1:] if argv is None else argv) or [""]
     if command == "run":
         return run(args, run_harbor)
     if command == "experiment":
         from assay.experiment import experiment
-        return experiment(args, run_harbor)
+        return experiment(args, run_harbor, containers)
     if command in TOOLS:
         return importlib.import_module(TOOLS[command].module).main(args)
     print(USAGE, file=sys.stderr)
