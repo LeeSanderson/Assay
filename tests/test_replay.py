@@ -1,9 +1,9 @@
-"""Snapshot replay (`analyze/replay.py`), spec #15 seam 2.
+"""Snapshot replay (`analyze/replay.py`): spec #15 seam 2, and the `replay`
+built-in evaluation through `evaluate(TrialInput)` (issue #64).
 
-The fake runner stands in for Docker. Like the real `test.sh`, its result
-depends only on the snapshot it gets: it reads `fake-verifier.json` from the
-exported snapshot tree, so each test sets the result of a snapshot by writing
-that file in the trial's history. One slow test runs the real Docker runner.
+The fake `Containers` stands in for Docker. Like the real `test.sh`, its
+result depends only on the snapshot it gets (tests/fake_containers.py). One
+slow test runs the real Docker containers.
 """
 
 import io
@@ -15,14 +15,16 @@ from pathlib import Path
 import pytest
 
 from analyze.replay import (
-    DockerRunner, RunnerError, read_replay, replay_job, replay_trial, replay_works,
+    EVALUATION, main, read_replay, replay_job, replay_trial, replay_works,
 )
 from analyze.trial import read_trial
+from assay.containers import DockerContainers
+from assay.evaluation import TrialInput
+from tests.fake_containers import FakeContainers, fails, gives, times_out
 from tests.trial_builder import REPLAY_REWARDS, TrialBuilder
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-FAKE = "fake-verifier.json"
 IMAGE = "sha256:" + "a" * 64
 
 
@@ -33,32 +35,6 @@ def reward(compile=1, passed=0, total=0, **over) -> dict:
     }
     fields.update(over)
     return fields
-
-
-def gives(fields: dict, logs: dict[str, str] | None = None) -> dict[str, str]:
-    return {FAKE: json.dumps({"reward": fields, "logs": logs or {}})}
-
-
-def fails(message: str, logs: dict[str, str] | None = None) -> dict[str, str]:
-    return {FAKE: json.dumps({"error": message, "logs": logs or {}})}
-
-
-class FakeRunner:
-    """Like the real runner, it writes the verifier's log files into `logs`,
-    also when it then fails."""
-
-    def __init__(self):
-        self.calls: list[tuple[str, float]] = []
-
-    def run(self, image: str, snapshot: Path, timeout: float, logs: Path) -> dict:
-        self.calls.append((image, timeout))
-        spec = json.loads((snapshot / FAKE).read_text(encoding="utf-8"))
-        for name, text in spec.get("logs", {}).items():
-            (logs / name).parent.mkdir(parents=True, exist_ok=True)
-            (logs / name).write_text(text, encoding="utf-8")
-        if "error" in spec:
-            raise RunnerError(spec["error"])
-        return spec["reward"]
 
 
 def states(lines) -> list[str | None]:
@@ -76,7 +52,7 @@ def states(lines) -> list[str | None]:
 def test_test_state_follows_the_prd_rules_in_order(make_trial, fields, state):
     b = make_trial()
     b.seed(gives(fields))
-    lines = replay_trial(read_trial(b.build()), FakeRunner(), IMAGE, 600)
+    lines = replay_trial(read_trial(b.build()), FakeContainers(), IMAGE, 600)
     assert states(lines) == [state]
 
 
@@ -90,7 +66,7 @@ def test_each_snapshot_gives_one_line_with_its_call_and_all_reward_fields(make_t
     later = b.step()
     bash = later.call("Bash", {"command": "go test"}, files=gives(reward(passed=2, total=2)))
     trial = read_trial(b.build())
-    runner = FakeRunner()
+    runner = FakeContainers()
 
     lines = replay_trial(trial, runner, IMAGE, 600)
 
@@ -105,23 +81,46 @@ def test_each_snapshot_gives_one_line_with_its_call_and_all_reward_fields(make_t
     assert states(lines) == ["no-tests", "fail", "pass"]
     assert all(isinstance(l["duration_sec"], float) and l["duration_sec"] >= 0 for l in lines)
     assert all("error" not in l for l in lines)
-    assert runner.calls == [(IMAGE, 600)] * 3
+    # Each snapshot in a fresh container with no network, given longer than
+    # test.sh's own timeout so that its logs are written first.
+    assert [(r["image"], r["network"]) for r in runner.runs] == [(IMAGE, "none")] * 3
+    assert all(r["timeout"] > 600 for r in runner.runs)
+
+
+def test_an_unchanged_final_snapshot_is_not_replayed_again(make_trial):
+    b = make_trial()
+    b.seed(gives(reward()))
+    write = b.step().call("Write", files=gives(FINAL))
+    b.finish()  # the harness exited; nothing changed since the last call
+    lines = replay_trial(read_trial(b.build()), FakeContainers(), IMAGE, 600)
+    assert [l["tool_use_id"] for l in lines] == [None, write]
+
+
+def test_a_final_snapshot_with_a_change_after_the_last_call_is_replayed(make_trial):
+    b = make_trial()
+    b.seed(gives(reward()))
+    write = b.step().call("Write", files=gives(reward(total=1, compile=0)))
+    b._change(gives(FINAL), [])  # a change no tool call's hook saw
+    b.finish()
+    lines = replay_trial(read_trial(b.build()), FakeContainers(), IMAGE, 600)
+    assert [(l["seq"], l["tool_use_id"], l["test_state"]) for l in lines] == [
+        (0, None, "no-tests"), (1, write, "red-compile"), (2, None, "pass")]
 
 
 def test_reward_fields_beyond_the_seven_are_kept(make_trial):
     b = make_trial()
     b.seed(gives(reward(extra_field=7)))
-    [line] = replay_trial(read_trial(b.build()), FakeRunner(), IMAGE, 600)
+    [line] = replay_trial(read_trial(b.build()), FakeContainers(), IMAGE, 600)
     assert line["extra_field"] == 7
 
 
 def test_a_runner_timeout_or_container_error_is_a_failed_line_and_replay_goes_on(make_trial):
     b = make_trial()
-    b.seed(fails("timeout after 600 s"))
-    b.step().call("Write", files=fails("container exited 125"))
+    b.seed(times_out())
+    b.step().call("Write", files=fails(125))
     b.step().call("Write", files=gives(reward(compile=0, passed=0, total=1)))
 
-    lines = replay_trial(read_trial(b.build()), FakeRunner(), IMAGE, 600)
+    lines = replay_trial(read_trial(b.build()), FakeContainers(), IMAGE, 600)
 
     assert [l.get("error") for l in lines] == ["timeout after 600 s", "container exited 125", None]
     assert states(lines) == [None, None, "red-compile"]
@@ -132,7 +131,7 @@ def test_a_runner_timeout_or_container_error_is_a_failed_line_and_replay_goes_on
 def test_a_reward_without_the_agent_pass_fields_is_a_failed_line(make_trial):
     b = make_trial()
     b.seed(gives({"reward": 1}))
-    [line] = replay_trial(read_trial(b.build()), FakeRunner(), IMAGE, 600)
+    [line] = replay_trial(read_trial(b.build()), FakeContainers(), IMAGE, 600)
     assert line["test_state"] is None
     assert "agent_tests_total" in line["error"]
 
@@ -151,7 +150,7 @@ def _trial_with_two_snapshots(make_trial, *, last=None, verifier=FINAL):
 
 
 def _twice(trial, runner=None):
-    runner = runner or FakeRunner()
+    runner = runner or FakeContainers()
     return replay_trial(trial, runner, IMAGE, 600), replay_trial(trial, runner, IMAGE, 600)
 
 
@@ -164,7 +163,7 @@ def test_replay_works_when_all_three_conditions_hold(make_trial):
 
 def test_a_failed_snapshot_means_replay_does_not_work(make_trial):
     b = make_trial()
-    b.seed(fails("container exited 125"))
+    b.seed(fails(125))
     b.step().call("Write", files=gives(FINAL))
     b.reward = FINAL
     trial = read_trial(b.build())
@@ -207,15 +206,16 @@ def test_a_trial_with_no_snapshots_does_not_work(make_trial):
     assert verdict.causes == ["the trace has no snapshots"]
 
 
-class FlakyRunner(FakeRunner):
-    """Gives one more passing agent test on every odd call: the seed snapshot."""
+class FlakyContainers(FakeContainers):
+    """Gives one more passing agent test on every odd run: the seed snapshot."""
 
-    def run(self, image, snapshot, timeout, logs):
-        fields = dict(super().run(image, snapshot, timeout, logs))
-        if len(self.calls) % 2 == 1:
+    def run(self, image, command, **kwargs):
+        done = super().run(image, command, **kwargs)
+        fields = json.loads(done.stdout)
+        if len(self.runs) % 2 == 1:
             fields["agent_tests_passed"] += 1
             fields["agent_tests_total"] += 1
-        return fields
+        return done._replace(stdout=json.dumps(fields))
 
 
 def test_two_runs_must_give_the_same_state_and_fields_for_each_snapshot(make_trial):
@@ -224,30 +224,18 @@ def test_two_runs_must_give_the_same_state_and_fields_for_each_snapshot(make_tri
     b.step().call("Write", files=gives(FINAL))
     b.reward = FINAL
     trial = read_trial(b.build())
-    runner = FlakyRunner()
+    runner = FlakyContainers()
     first = replay_trial(trial, runner, IMAGE, 600)  # calls 1, 2: seq 0 gets +1
     second = replay_trial(trial, runner, IMAGE, 600)  # calls 3, 4: seq 0 gets +1 again
     assert replay_works(trial, first, second).works  # durations differ; nothing else
 
-    third = replay_trial(trial, FakeRunner(), IMAGE, 600)
+    third = replay_trial(trial, FakeContainers(), IMAGE, 600)
     verdict = replay_works(trial, first, third)
     assert not verdict.works
     assert verdict.causes == ["the two runs differ at snapshot seq 0"]
 
 
 # --- A job: the files under analysis/ ------------------------------------------
-
-
-class PackRunner(FakeRunner):
-    """Builds no image: the image name is the pack folder's path."""
-
-    def __init__(self):
-        super().__init__()
-        self.packs: list[Path] = []
-
-    def image(self, pack: Path) -> str:
-        self.packs.append(pack)
-        return f"image-of:{pack.as_posix()}"
 
 
 BASE_IMAGE = "golang:1@sha256:abc"
@@ -271,12 +259,12 @@ def test_replay_job_writes_replay_jsonl_and_the_verdict_under_analysis_only(tmp_
     good.reward = FINAL
     good.build()
     bad = TrialBuilder(job, name="bad__b")
-    bad.seed(fails("timeout after 42 s"))
+    bad.seed(times_out())
     bad.reward = FINAL
     bad.build()
     (job / "lock.json").write_text("{}", encoding="utf-8")  # the job's own files
     before = sorted(p for p in (tmp_path / "results").rglob("*"))
-    runner = PackRunner()
+    runner = FakeContainers()
 
     verdicts = replay_job(job, tmp_path / "analysis", runner, tasks_root=tmp_path / "repo")
 
@@ -293,8 +281,9 @@ def test_replay_job_writes_replay_jsonl_and_the_verdict_under_analysis_only(tmp_
     assert json.loads((out / "bad__b" / "replay-works.json").read_text(encoding="utf-8"))[
         "works"] is False
     # Each trial runs twice, with the pack's image and its verifier timeout.
-    assert len(runner.calls) == 2 * (2 + 1)
-    assert set(runner.calls) == {(f"image-of:{pack.as_posix()}", 42.0)}
+    assert len(runner.runs) == 2 * (2 + 1)
+    assert {r["image"] for r in runner.runs} == {f"image-of:{pack.as_posix()}"}
+    assert all("timeout 42 bash /tests/test.sh" in r["command"][-1] for r in runner.runs)
     assert set(runner.packs) == {pack}
 
 
@@ -317,7 +306,7 @@ def test_replay_job_keeps_each_snapshots_verifier_logs_in_a_folder_named_by_its_
     b.reward = FINAL
     b.build()
 
-    replay_job(job, tmp_path / "analysis", PackRunner(), tasks_root=tmp_path / "repo")
+    replay_job(job, tmp_path / "analysis", FakeContainers(), tasks_root=tmp_path / "repo")
 
     logs = tmp_path / "analysis" / "job-7" / "t__a" / "replay-logs"
     assert _files_under(logs) == {
@@ -333,12 +322,12 @@ def test_a_snapshot_with_a_runner_error_keeps_whatever_logs_exist(tmp_path):
     _fake_pack(tmp_path / "repo", 42.0)
     job = tmp_path / "results" / "job-7"
     b = TrialBuilder(job, name="t__a")
-    b.seed(fails("timeout after 42 s", logs={"outcome-tsc.log": "half a log"}))
-    b.step().call("Write", files=fails("container exited 125"))  # no logs at all
+    b.seed(times_out(logs={"outcome-tsc.log": "half a log"}))
+    b.step().call("Write", files=fails(125))  # no logs at all
     b.reward = FINAL
     b.build()
 
-    verdicts = replay_job(job, tmp_path / "analysis", PackRunner(), tasks_root=tmp_path / "repo")
+    verdicts = replay_job(job, tmp_path / "analysis", FakeContainers(), tasks_root=tmp_path / "repo")
 
     out = tmp_path / "analysis" / "job-7" / "t__a"
     assert _files_under(out / "replay-logs") == {"0/outcome-tsc.log": "half a log"}
@@ -359,7 +348,7 @@ def test_a_new_replay_replaces_the_old_logs(tmp_path):
     stale.mkdir(parents=True)
     (stale / "agent-tsc.log").write_text("old", encoding="utf-8")
 
-    replay_job(job, tmp_path / "analysis", PackRunner(), tasks_root=tmp_path / "repo")
+    replay_job(job, tmp_path / "analysis", FakeContainers(), tasks_root=tmp_path / "repo")
 
     assert _files_under(stale.parent) == {"0/agent-tsc.log": "new"}
 
@@ -374,7 +363,7 @@ def test_the_builders_replay_jsonl_matches_what_replay_writes(make_trial):
     trial = read_trial(b.build())
     out = b.write_replay({red: "red-compile", failing: "fail", passing: "pass"})
 
-    replayed = replay_trial(trial, FakeRunner(), IMAGE, 600)
+    replayed = replay_trial(trial, FakeContainers(), IMAGE, 600)
 
     def strip(lines):
         return [{k: v for k, v in l.items() if k != "duration_sec"} for l in lines]
@@ -382,7 +371,90 @@ def test_the_builders_replay_jsonl_matches_what_replay_writes(make_trial):
     assert strip(read_replay(out)) == strip(replayed)
 
 
-# --- The real Docker runner (slow) ----------------------------------------------
+# --- replay as an evaluation: evaluate(TrialInput) ---------------------------------
+
+
+def trial_input(trial_dir: Path, pack: Path, out: Path, containers) -> TrialInput:
+    out.mkdir(parents=True, exist_ok=True)
+    return TrialInput(job="job-7", trial=trial_dir.name, cell=None, task_pack=pack,
+                      record=read_trial(trial_dir), deps={}, options={}, out=out,
+                      containers=containers)
+
+
+def test_replay_evaluates_one_trial_into_one_value_with_its_logs_in_out(tmp_path):
+    pack = _fake_pack(tmp_path / "repo", 42.0)
+    b = TrialBuilder(tmp_path / "results" / "job-7", name="t__a")
+    b.seed(gives(reward(), logs={"agent-tsc.log": "seed tsc\n"}))
+    write = b.step().call("Write", files=gives(FINAL, logs={"agent-jest.log": "2 passed\n"}))
+    b.finish()
+    b.reward = FINAL
+    trial_dir = b.build()
+    containers = FakeContainers()
+
+    value = EVALUATION.evaluate(trial_input(trial_dir, pack, tmp_path / "out", containers))
+
+    assert EVALUATION.name == "replay"
+    assert EVALUATION.depends_on == () and EVALUATION.online is False
+    # replay-works.json and replay.jsonl merged into one value.
+    assert {k: value[k] for k in ("works", "causes", "image", "base_image")} == {
+        "works": True, "causes": [], "image": f"image-of:{pack.as_posix()}",
+        "base_image": BASE_IMAGE}
+    assert [(s["seq"], s["tool_use_id"], s["test_state"]) for s in value["snapshots"]] == [
+        (0, None, "no-tests"), (1, write, "pass")]
+    assert value["snapshots"][1]["agent_tests_passed"] == 2
+    json.dumps(value)  # a JSON value
+    assert _files_under(tmp_path / "out") == {"0/agent-tsc.log": "seed tsc\n",
+                                              "1/agent-jest.log": "2 passed\n"}
+    assert containers.packs == [pack]
+    assert len(containers.runs) == 4  # two snapshots, replayed twice
+
+
+def test_replay_gives_the_same_value_as_the_replay_files_of_the_thin_entry_point(tmp_path):
+    # `assay replay <job folder>` writes today's replay.jsonl and
+    # replay-works.json; the evaluation's value holds the same, merged.
+    pack = _fake_pack(tmp_path / "repo", 42.0)
+    job = tmp_path / "results" / "job-7"
+    b = TrialBuilder(job, name="t__a")
+    b.seed(gives(reward()))
+    b.step().call("Write", files=gives(reward(compile=0, total=1)))
+    b.step().call("Write", files=fails(125, "no space"))
+    b.reward = FINAL
+    trial_dir = b.build()
+
+    value = EVALUATION.evaluate(trial_input(trial_dir, pack, tmp_path / "out", FakeContainers()))
+    replay_job(job, tmp_path / "analysis", FakeContainers(), tasks_root=tmp_path / "repo")
+
+    out = tmp_path / "analysis" / "job-7" / "t__a"
+    works = json.loads((out / "replay-works.json").read_text(encoding="utf-8"))
+
+    def strip(lines):
+        return [{k: v for k, v in l.items() if k != "duration_sec"} for l in lines]
+
+    assert {k: v for k, v in value.items() if k != "snapshots"} == works
+    assert strip(value["snapshots"]) == strip(read_replay(out))
+    assert value["snapshots"][2]["error"] == "container exited 125: no space"
+    assert works["works"] is False
+
+
+def test_assay_replay_works_on_a_job_folder(tmp_path, capsys):
+    job = tmp_path / "results" / "job-7"
+    b = TrialBuilder(job, name="t__a")  # tasks/go/split-second-stopwatch of this repository
+    b.seed(gives(reward()))
+    b.step().call("Write", files=gives(FINAL))
+    b.reward = FINAL
+    b.build()
+
+    code = main([str(job), "--analysis", str(tmp_path / "analysis")],
+                containers=FakeContainers())
+
+    assert code == 0
+    assert "t__a: replay works" in capsys.readouterr().out
+    out = tmp_path / "analysis" / "job-7" / "t__a"
+    assert states(read_replay(out)) == ["no-tests", "pass"]
+    assert json.loads((out / "replay-works.json").read_text(encoding="utf-8"))["works"] is True
+
+
+# --- The real Docker containers (slow) ----------------------------------------------
 
 TS_PACK = REPO_ROOT / "tasks" / "typescript" / "split-second-stopwatch"
 TS_STUB = "split-second-stopwatch.ts"
@@ -413,9 +485,9 @@ def _app_files(image: str) -> dict[str, bytes]:
 
 
 @pytest.mark.slow
-def test_docker_runner_replays_a_typescript_trial(tmp_path):
-    runner = DockerRunner()
-    image = runner.image(TS_PACK)
+def test_docker_containers_replay_a_typescript_trial(tmp_path):
+    runner = DockerContainers()
+    image = runner.pack_image(TS_PACK)
     job = tmp_path / "results" / "job-ts"
     b = TrialBuilder(job, language="typescript", name="split-second-stopwatch__ts1")
     b.seed(_app_files(image))
@@ -457,7 +529,7 @@ RUN mkdir -p /app /tests && printf '%s\\n' \\
 
 
 @pytest.mark.slow
-def test_docker_runner_keeps_the_logs_of_a_snapshot_that_outlives_the_outer_timeout(tmp_path):
+def test_docker_containers_keep_the_logs_of_a_container_that_outlives_its_timeout(tmp_path):
     image = "assay-test-hang:1"
     subprocess.run(["docker", "build", "-q", "-t", image, "-"], input=HANG_DOCKERFILE,
                    text=True, capture_output=True, check=True, timeout=600)
@@ -465,7 +537,10 @@ def test_docker_runner_keeps_the_logs_of_a_snapshot_that_outlives_the_outer_time
     snapshot.mkdir()
     logs.mkdir()
 
-    with pytest.raises(RunnerError, match="timeout"):
-        DockerRunner(grace=5).run(image, snapshot, 1, logs)
+    done = DockerContainers().run(
+        image, ["bash", "-c", "mkdir -p /logs/verifier && bash /tests/test.sh"],
+        mounts={snapshot: "/snapshot:ro", logs: "/logs/verifier"}, timeout=5)
+
+    assert done.exit_code is None  # a timeout
 
     assert (logs / "outcome-tsc.log").read_text(encoding="utf-8") == "half a log\n"
