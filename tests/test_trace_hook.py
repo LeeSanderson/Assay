@@ -55,8 +55,8 @@ class Trial:
             f"ASSAY_TRACE_APP_DIR={_posix(app or self.app)}",
             f"ASSAY_TRACE_DIR={_posix(self.trace)}",
         ]
-        if event == "seed":
-            args, data = ["seed"], ""
+        if event in ("seed", "final"):
+            args, data = [event], ""
         else:
             args = []
             data = stdin if stdin is not None else json.dumps({
@@ -81,6 +81,15 @@ class Trial:
         result = subprocess.run(
             [*_shell_prefix(), "git", f"--git-dir={_posix(self.trace / 'trace.git')}",
              "-c", "safe.directory=*", "ls-tree", "-r", "--name-only", commit],
+            capture_output=True, text=True, check=True,
+        )
+        return result.stdout.splitlines()
+
+    def history(self) -> list[str]:
+        """The commits of `trace.git`, newest first."""
+        result = subprocess.run(
+            [*_shell_prefix(), "git", f"--git-dir={_posix(self.trace / 'trace.git')}",
+             "-c", "safe.directory=*", "rev-list", "HEAD"],
             capture_output=True, text=True, check=True,
         )
         return result.stdout.splitlines()
@@ -127,12 +136,21 @@ def test_each_line_holds_the_record_fields(trial):
     assert set(line) == {"seq", "ts", "event", "tool_name", "tool_use_id",
                          "changed", "commit", "paths"}
     assert line["seq"] == 1
-    assert line["event"] == "PostToolUseFailure"
+    assert line["event"] == "call"
     assert line["tool_name"] == "Bash"
     assert line["tool_use_id"] == "toolu_bash"
     assert line["changed"] is True
     assert line["ts"].startswith("20") and line["ts"].endswith("Z")
     assert line["paths"] == [{"status": "A", "path": "src/stopwatch.ts"}]
+
+
+@pytest.mark.parametrize("hook_event", ["PostToolUse", "PostToolUseFailure"])
+def test_each_tool_fire_writes_a_call_line(trial, hook_event):
+    trial.fire("seed")
+
+    trial.fire(hook_event, tool_name="Read", tool_use_id="toolu_read")
+
+    assert [line["event"] for line in trial.lines()] == ["seed", "call"]
 
 
 def test_paths_give_added_modified_and_deleted_files(trial):
@@ -227,8 +245,40 @@ def test_bad_hook_input_gives_an_error_line(trial):
     trial.fire(stdin="not json")
 
     line = trial.last()
+    assert line["event"] == "call"
     assert line["changed"] is None
     assert line["error"]
+
+
+def test_final_fire_commits_a_final_snapshot_when_nothing_changed(trial):
+    trial.write("src/stopwatch.ts")
+    trial.fire("seed")
+    trial.write("src/stopwatch.ts", "changed\n")
+    trial.fire()
+
+    trial.fire("final")
+
+    line = trial.last()
+    assert [l["event"] for l in trial.lines()] == ["seed", "call", "final"]
+    assert line["seq"] == 2
+    assert line["changed"] is False
+    assert line["paths"] == []
+    assert trial.history() == [line["commit"], trial.lines()[1]["commit"],
+                               trial.lines()[0]["commit"]]
+    assert trial.snapshot_files(line["commit"]) == ["src/stopwatch.ts"]
+
+
+def test_final_fire_records_a_change_no_call_recorded(trial):
+    trial.fire("seed")
+    trial.write("late.ts")
+
+    trial.fire("final")
+
+    line = trial.last()
+    assert line["event"] == "final"
+    assert line["changed"] is True
+    assert line["paths"] == [{"status": "A", "path": "late.ts"}]
+    assert trial.history()[0] == line["commit"]
 
 
 def test_commits_ignore_global_git_config_and_use_a_fixed_name_and_date(tmp_path):

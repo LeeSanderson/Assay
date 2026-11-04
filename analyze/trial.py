@@ -47,7 +47,7 @@ class PathChange:
 @dataclass(frozen=True)
 class TraceLine:
     seq: int
-    event: str | None  # "seed", "PostToolUse" or "PostToolUseFailure"
+    event: str | None  # "seed", "call" or "final"
     tool_use_id: str | None
     changed: bool | None
     commit: str | None
