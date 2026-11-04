@@ -9,12 +9,12 @@ tests/ folders.
 
 from __future__ import annotations
 
-import hashlib
 import subprocess
 import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from assay.digests import image_tag_hash
 from assay.evaluation import ContainerError, Network, RunResult
 
 INTERNAL_NETWORK = "assay-internal"  # a Docker network with no route out
@@ -24,7 +24,7 @@ DOCKER_NETWORKS = {"none": "none", "internal": INTERNAL_NETWORK, "online": "brid
 class DockerContainers:
     def pack_image(self, task_pack: Path) -> str:
         pack = Path(task_pack)
-        name = f"{pack.parent.name}-{pack.name}:{_folder_hash(pack)}"
+        name = f"{pack.parent.name}-{pack.name}:{image_tag_hash(pack, ('environment', 'tests'))}"
         tag = f"assay-replay-{name}"
         found = _docker("image", "inspect", "--format", "{{.Id}}", tag)
         if found.returncode == 0:
@@ -65,12 +65,3 @@ def _docker(*args: str, input: str | None = None, timeout: float | None = 120):
     return subprocess.run(["docker", *args], capture_output=True, text=True,
                           input=input, timeout=timeout)
 
-
-def _folder_hash(pack: Path) -> str:
-    digest = hashlib.sha256()
-    for folder in ("environment", "tests"):
-        for path in sorted((pack / folder).rglob("*")):
-            if path.is_file():
-                digest.update(path.relative_to(pack).as_posix().encode() + b"\0")
-                digest.update(path.read_bytes() + b"\0")
-    return digest.hexdigest()[:16]

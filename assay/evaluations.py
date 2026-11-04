@@ -24,7 +24,6 @@ no error. A dependency with an error gives an error result without a call.
 from __future__ import annotations
 
 import ast
-import hashlib
 import importlib
 import importlib.util
 import json
@@ -39,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from analyze.trial import GIVES, Trial, read_json, read_trial, record_digest
+from assay.digests import files_digest, folder_digest, json_digest
 from assay.evaluation import (
     OPTIONAL_PARTS, Containers, Evaluation, GuardedContainers, TrialInput,
 )
@@ -153,24 +153,20 @@ def code_digest(module_file: Path) -> str:
     """`sha256:<hex>` over the module and each repository module it imports,
     found from the imports, transitively."""
     roots = [CODE_ROOT, module_file.resolve().parent]
-    seen: dict[Path, str] = {}
+    seen: set[Path] = set()
     stack = [module_file.resolve()]
     while stack:
         file = stack.pop()
         if file in seen:
             continue
-        source = file.read_bytes()
-        seen[file] = hashlib.sha256(source).hexdigest()
+        seen.add(file)
         try:
-            tree = ast.parse(source)
+            tree = ast.parse(file.read_bytes())
         except SyntaxError:
             continue
         for name in _imported_names(tree, file, roots):
             stack += _module_files(name, roots)
-    outer = hashlib.sha256()
-    for file in sorted(seen, key=lambda f: _display(f, roots)):
-        outer.update(f"{_display(file, roots)}\0{seen[file]}\n".encode("utf-8"))
-    return f"sha256:{outer.hexdigest()}"
+    return files_digest(sorted(((_display(f, roots), f) for f in seen), key=lambda p: p[0]))
 
 
 def _imported_names(tree: ast.AST, file: Path, roots: list[Path]) -> list[str]:
@@ -230,24 +226,6 @@ def _display(file: Path, roots: list[Path]) -> str:
         except ValueError:
             continue
     return file.as_posix()
-
-
-# --- Digests ----------------------------------------------------------------------
-
-
-def json_digest(value: Any) -> str:
-    text = json.dumps(value, sort_keys=True, separators=(",", ":"))
-    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def folder_digest(folder: Path) -> str:
-    """`sha256:<hex>` over each file of the folder, by its relative path and content."""
-    outer = hashlib.sha256()
-    files = sorted(f for f in folder.rglob("*") if f.is_file()) if folder.is_dir() else []
-    for file in files:
-        content = hashlib.sha256(file.read_bytes()).hexdigest()
-        outer.update(f"{file.relative_to(folder).as_posix()}\0{content}\n".encode("utf-8"))
-    return f"sha256:{outer.hexdigest()}"
 
 
 # --- The trials -------------------------------------------------------------------

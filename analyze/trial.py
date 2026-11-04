@@ -22,7 +22,6 @@ report it instead of the reader failing.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import subprocess
@@ -30,6 +29,8 @@ from dataclasses import dataclass, fields
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any
+
+from assay.digests import files_digest, json_digest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TRACE_FOLDER = Path("artifacts", "logs", "artifacts", "trace")
@@ -344,12 +345,7 @@ def record_digest(path: Path | str) -> str:
              trace_dir / "trace.jsonl",
              *(sorted((trace_dir / "trace.git").rglob("*")) if (trace_dir / "trace.git").is_dir()
                else [])]
-    outer = hashlib.sha256()
-    for file in files:
-        if file.is_file():
-            content = hashlib.sha256(file.read_bytes()).hexdigest()
-            outer.update(f"{file.relative_to(path).as_posix()}\0{content}\n".encode("utf-8"))
-    return f"sha256:{outer.hexdigest()}"
+    return files_digest((f.relative_to(path).as_posix(), f) for f in files if f.is_file())
 
 
 def read_json(path: Path) -> Any:
@@ -390,10 +386,7 @@ def _variant_digest(lock: dict) -> str:
         "kwargs": kwargs,
         "mcp_servers": agent.get("mcp_servers") or [],
     }
-    if not any(parts.values()):
-        return ""
-    text = json.dumps(parts, sort_keys=True, separators=(",", ":"))
-    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return json_digest(parts) if any(parts.values()) else ""
 
 
 def _step(step: dict) -> Step:

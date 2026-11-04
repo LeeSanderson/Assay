@@ -38,7 +38,6 @@ leave Harbor's own retry.max_retries at 0.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -58,6 +57,7 @@ import yaml
 from harbor.models.job.config import JobConfig
 
 from analyze.trace_check import HALT, INFRASTRUCTURE_FAILURE
+from assay.digests import files_digest
 from assay.evaluation import Containers
 from assay.evaluations import (
     EvaluationPlanError, plan_evaluations, print_evaluation_plan, print_evaluation_reuse,
@@ -184,13 +184,9 @@ def content_digest(paths: Sequence[Path], inline: Sequence[object]) -> str:
     """`sha256:<hex>` over each part file's path and content, and each inline part."""
     files = sorted({f for p in paths for f in ([p] if p.is_file() else p.rglob("*"))
                     if f.is_file() and "__pycache__" not in f.parts})
-    outer = hashlib.sha256()
-    for f in files:
-        content = hashlib.sha256(f.read_bytes()).hexdigest()
-        outer.update(f"{f.as_posix()}\0{content}\n".encode("utf-8"))
-    for part in inline:
-        outer.update(json.dumps(part, sort_keys=True).encode("utf-8") + b"\n")
-    return f"sha256:{outer.hexdigest()}"
+    return files_digest(((f.as_posix(), f) for f in files),
+                        (json.dumps(part, sort_keys=True).encode("utf-8") + b"\n"
+                         for part in inline))
 
 
 def variant_folder(part: Path, job: str, what: str) -> str:
