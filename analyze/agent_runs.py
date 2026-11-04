@@ -82,7 +82,7 @@ def exit_code(call: ToolCall) -> int | None:
     None when the call has no result, or a failed result gives no exit code
     (for example an interrupted call).
     """
-    if call.result is None:
+    if not isinstance(call.result, str):  # ABSENT: the call has no result
         return None
     if not call.is_error:
         return 0

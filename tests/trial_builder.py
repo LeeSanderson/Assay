@@ -120,21 +120,29 @@ class TrialBuilder:
             "task": {
                 "name": "split-second-stopwatch",
                 "type": "local",
+                "digest": "sha256:" + "1" * 64,
                 "path": f"tasks\\{language}\\split-second-stopwatch",
             },
             "agent": {
                 "import_path": "instruments.agent:InstrumentedClaudeCode",
+                "model_name": "anthropic/claude-haiku-4-5",
                 "kwargs": {"version": claude_code_version},
             },
         }
+        # By default the trial record's required core is complete.
         self.result: dict[str, Any] | None = {
             "trial_name": name,
             "task_name": "split-second-stopwatch",
             "verifier_result": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:05:00Z",
+            "agent_result": {"n_input_tokens": 1000, "n_cache_tokens": 800,
+                             "n_output_tokens": 100, "cost_usd": 0.1},
         }
         self.reward: dict[str, Any] | None = None
         self.instruments: dict[str, Any] | None = {
             "digest": COMMITTED_DIGEST, "settings": {}, "harbor_version": "0.24.0",
+            "granularity": "per-tool-call", "calls_may_overlap": True,
         }
         self.agent_version = claude_code_version
 
@@ -145,13 +153,19 @@ class TrialBuilder:
         self._change(files or {}, [])
         self._fire("seed", None, None, trace or {})
 
-    def step(self, source: str = "agent") -> StepBuilder:
+    def finish(self, *, trace: dict | None = None) -> None:
+        """Makes the final fire, after the harness exits: it always commits."""
+        self._fire("final", None, None, trace or {})
+
+    def step(self, source: str = "agent", *, metrics: dict | None = None) -> StepBuilder:
         step = {
             "step_id": len(self.steps) + 1,
             "timestamp": _ts(len(self.steps) + 1),
             "source": source,
             "message": "",
         }
+        if metrics is not None:
+            step["metrics"] = metrics
         self.steps.append(step)
         return StepBuilder(self, step)
 
@@ -293,16 +307,16 @@ class TrialBuilder:
             "tool_name": tool_name,
             "tool_use_id": tool_use_id,
         }
-        if head and not paths:
-            line["changed"] = False
-        else:
+        # As trace.sh: the first fire and the final fire always commit; any
+        # other fire commits only when something changed.
+        line["changed"] = not (head and not paths)
+        if line["changed"] or event == "final":
             tree = self._git("write-tree").strip()
             parent = ["-p", head] if head else []
             commit = self._git(
                 "commit-tree", tree, *parent, input=f"seq {line['seq']} {event}\n"
             ).strip()
             self._git("update-ref", "HEAD", commit)
-            line["changed"] = True
             line["commit"] = commit
         line["paths"] = paths
         line.update(override)
