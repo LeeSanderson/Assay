@@ -426,6 +426,11 @@ TRIAL_COLUMNS = ("Job", "Trial", "Model tier", "Condition", "Language", "Score",
                  "Seconds", "Turns")
 
 TRIAL_KEY = [
+    "- **Red-to-green order**, from the agent's test runs that agree with the replay (the "
+    "seen states): `red-to-green` (the first seen state is red, and a later one is green), "
+    "`green-first` (the first seen state is green: the agent did not see the tests fail), "
+    "`never-green` (every seen state is red) or `not-observed` (no seen state); `-` when "
+    "there is no replay.",
     "- **TDD loop:** cycles / tests never seen red / refactor steps.",
     "- **Score:** the withheld reference tests that pass on the final repository, with ✓ when "
     "they all pass and compile (reward 1) and ✗ otherwise; **Agent tests:** the agent's own "
