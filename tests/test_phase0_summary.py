@@ -166,7 +166,7 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
     for text in ("## Phase 0 acceptance", "**4. Replay:** works on 10 of 10 trials.",
                  "of the £15 cap", "## Missing trials", "1 of 11 expected trials missing.",
                  f"claude-code · {LOCAL_MODEL} · instrument-tdd · typescript: 1 trial not run "
-                 "yet", "| Language |", "| Reference tests |", "| 29 of 29 |",
+                 "yet", "| Language | Score |", "| go | 29 of 29 ✓ |",
                  "| Tested after edit |", "| Read matches replay |", "no-implementation"):
         assert text in markdown
     for text in ("## Cells", "## Replay", "## Bash file writes", "## Agent test runs",

@@ -399,16 +399,17 @@ def _missing_markdown(summary: dict) -> list[str]:
     return lines + ["", "The next invocation runs these again.", ""]
 
 
-TRIAL_COLUMNS = ("Job", "Trial", "Model tier", "Condition", "Language", "Test-first order",
-                 "Red-to-green order", "TDD loop", "Reference tests", "Agent tests",
+TRIAL_COLUMNS = ("Job", "Trial", "Model tier", "Condition", "Language", "Score",
+                 "Test-first order", "Red-to-green order", "TDD loop", "Agent tests",
                  "Tested after edit", "Read matches replay", "Bash writes", "Ad-hoc runs",
                  "Skill loaded", "Web access", "Errors", "USD", "Tokens in / cache / out",
                  "Seconds", "Turns")
 
 TRIAL_KEY = [
     "- **TDD loop:** cycles / tests never seen red / refactor steps.",
-    "- **Reference tests:** the withheld reference tests that pass on the final repository; "
-    "**Agent tests:** the agent's own tests that pass.",
+    "- **Score:** the withheld reference tests that pass on the final repository, with ✓ when "
+    "they all pass and compile (reward 1) and ✗ otherwise; **Agent tests:** the agent's own "
+    "tests that pass.",
     "- **Tested after edit** and **Read matches replay** check the instrument, not the agent. "
     "Tested after edit: the snapshots after which the agent ran its tests before its next "
     "file write. Read matches replay: the agent's full test runs whose red or green, as read "
@@ -453,14 +454,20 @@ def _trials_markdown(summary: dict) -> list[str]:
         tokens = " / ".join(num(c[k]) for k in ("input_tokens", "cache_tokens", "output_tokens"))
         cells = [
             t["job"], t["trial"], t["model_tier"], (t["cell"] or {}).get("condition", "-"),
-            t["language"], t["test_first_order"] or "-", t["red_to_green_order"] or "-", loop,
-            _passed(reward, "reference"), _passed(reward, "agent_tests"),
+            t["language"], _score(reward), t["test_first_order"] or "-",
+            t["red_to_green_order"] or "-", loop, _passed(reward, "agent_tests"),
             of(runs.get("covered_snapshots"), runs.get("snapshots")),
             of(runs.get("agreeing_runs"), runs.get("compared_runs")),
             t["bash_writes"] or "-", str(ad_hoc), skill, web, errors, usd, tokens,
             num(c["duration_sec"]), num(c["turns"])]
         lines.append("| " + " | ".join(cells) + " |")
     return lines + ["", *TRIAL_KEY]
+
+
+def _score(reward: dict) -> str:
+    passed = _passed(reward, "reference")
+    mark = {1: " ✓", 0: " ✗"}.get(reward.get("reward"), "")
+    return passed + mark if passed != "-" else passed
 
 
 def _passed(reward: dict, prefix: str) -> str:
