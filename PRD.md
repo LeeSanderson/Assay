@@ -1192,9 +1192,10 @@ The reward is not a criterion: the gate checks the setup, not the agent. Run the
 
 The summary is experiment-local, `experiments/phase0-tdd/summary.py`. It writes `analysis/phase0-tdd/summary/phase0-summary.md` and `phase0-summary.json`. It gives each acceptance number of Phase 0, and also:
 
-- For each cell, the counts of discarded, halted, and kept trials against the expected trials. It marks short cells.
+- Each trial that is missing from a short cell, with the cause of its discard or halt, or that it has not run yet.
 - The cost of the hosted trials against the limit of £15. This cost includes the cost of each discarded trial.
-- The values of the local trial from the trial record. The values that come from the server log stay by hand.
+- Whether the tool arguments of the local trial are present in its trajectory. The values that come from the server log are recorded outside the summary.
+- One table of the trials: the cell and language, the process metrics, the reference and agent test counts from `reward.json`, the cross-check of each trial, the `Bash` file writes, web access, and the cost.
 
 There is no `paired-delta` in Phase 0, because each cell has one trial.
 

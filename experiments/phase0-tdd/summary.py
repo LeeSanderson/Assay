@@ -5,12 +5,15 @@ invocation that completes. It writes analysis/phase0-tdd/summary/
 phase0-summary.md (for a person) and phase0-summary.json: each Phase 0
 acceptance number, and also
 
-- for each cell, the discarded, halted and kept trials against the expected
-  trials, with each short cell marked;
+- each trial missing from a short cell, with the cause of its discard or
+  halt, or that it has not run yet;
 - the cost of the hosted trials against the £15 cap: the kept trials' cost
   plus the cost of each discarded trial in the experiment log;
-- the local trial's values from its trial record. The values that come from
-  the server log stay by hand.
+- whether the local trial's tool arguments are present. The values that come
+  from the server log are recorded outside the summary.
+
+The markdown gives the acceptance numbers, the missing trials and one table
+of the trials; the JSON also keeps each value the markdown leaves out.
 
 Every kept trial passed the validity check (acceptance 3); a trial that
 failed it was discarded, and shows in its cell's discarded count and in the
@@ -94,6 +97,7 @@ def phase0_summary(view: ExperimentView, options: dict) -> dict:
         "expected_trials": sum(view.expected.values()),
         "kept_trials": len(trials),
         "discard_causes": _causes(view.log),
+        "missing_trials": _missing(view),
         "hosted_cost": {
             "kept_usd": kept_usd, "discarded_usd": discarded_usd, "total_usd": total_usd,
             "total_gbp": total_usd / usd_per_gbp, "usd_per_gbp": usd_per_gbp,
@@ -109,16 +113,22 @@ def _trial(t: TrialView) -> dict:
     runs = t.values.get("agent-runs")
     record = t.record
     usage = record.usage
+    bash = trajectory.get("bash")
     return {
         "job": t.job,
         "trial": t.trial,
         "cell": asdict(t.cell) if t.cell is not None else None,
+        "language": t.cell.language if t.cell is not None else Path(t.task_pack).parts[-2],
+        "reward": record.reward,
         "replay": None if replay is None else {"works": replay["works"],
                                                "causes": replay["causes"]},
         "test_first_order": (trajectory.get("test_first_order") or {}).get("verdict"),
         "red_to_green_order": (trajectory.get("red_to_green_order") or {}).get("verdict"),
         "tdd_loop": trajectory.get("tdd_loop"),
-        "bash": trajectory.get("bash"),
+        "bash": bash,
+        "bash_writes": None if bash is None
+        else "test/impl" if bash["bash_writes_test_or_implementation"]
+        else "yes" if bash["file_writing_bash"] else "no",
         "skill_load": trajectory.get("skill_load"),
         "ad_hoc_runs": trajectory.get("ad_hoc_runs"),
         "web_access": trajectory.get("web_access"),
@@ -157,17 +167,55 @@ def _cells(view: ExperimentView) -> list[dict]:
              "short": kept[key] < expected[key]} for key in keys]
 
 
+def _cause(event) -> str:
+    cause = event.get("cause") or {}
+    return cause.get("exception") or ", ".join(cause.get("failed_checks", []))
+
+
 def _causes(log) -> list[dict]:
     """The causes of the discarded and halted trials, by exception type or
     failed check; an unlisted exception type is marked for a person to classify."""
     counts: Counter[tuple[str, bool]] = Counter()
     for e in log:
         if e["event"] == "halt" or (e["event"] == "trial-discarded" and not e.get("after_halt")):
-            cause = e.get("cause") or {}
-            name = cause.get("exception") or ", ".join(cause.get("failed_checks", []))
-            counts[(name, bool(cause.get("unlisted")))] += 1
+            counts[(_cause(e), bool((e.get("cause") or {}).get("unlisted")))] += 1
     return [{"cause": name, "count": n, "unlisted": unlisted}
             for (name, unlisted), n in sorted(counts.items())]
+
+
+def _missing(view: ExperimentView) -> dict:
+    """The trials missing from each short cell: the last discards and the
+    unresolved halts of the cell, one for each missing trial, and the rest
+    not run yet. A halt is resolved when the next invocation deletes its
+    trial (trial-discarded, after_halt); an unresolved halt with no cell is
+    listed on its own."""
+    resolved = {(e["job"], e["trial"]) for e in view.log
+                if e["event"] == "trial-discarded" and e.get("after_halt")}
+    lost = [e for e in view.log
+            if (e["event"] == "trial-discarded" and not e.get("after_halt"))
+            or (e["event"] == "halt" and (e["job"], e["trial"]) not in resolved)]
+
+    def entry(e) -> dict:
+        cause = e.get("cause") or {}
+        return {"job": e["job"], "trial": e["trial"],
+                "outcome": "halted" if e["event"] == "halt" else "discarded",
+                "cause": cause.get("exception")
+                or "failed check " + ", ".join(cause.get("failed_checks", [])),
+                "unlisted": bool(cause.get("unlisted"))}
+
+    cells = []
+    for c in _cells(view):
+        if not c["short"]:
+            continue
+        key = tuple(c[k] for k in CELL_KEYS)
+        missing = c["expected"] - c["kept"]
+        found = [e for e in lost if _cell_key(e.get("cell")) == key][-missing:]
+        cells.append({**{k: c[k] for k in CELL_KEYS}, "expected": c["expected"],
+                      "kept": c["kept"], "trials": [entry(e) for e in found],
+                      "not_run": missing - len(found)})
+    return {"count": sum(c["expected"] - c["kept"] for c in cells), "cells": cells,
+            "halted_without_cell": [entry(e) for e in lost
+                                    if e["event"] == "halt" and e.get("cell") is None]}
 
 
 def _local_trial(t: TrialView) -> dict:
@@ -264,24 +312,131 @@ def num(value, digits=0) -> str:
     return "-" if value is None else f"{value:,.{digits}f}"
 
 
+def of(count, total) -> str:
+    """`count of total (share)`, or "-" when there is no total."""
+    return "-" if not total else f"{count} of {total} ({pct(count / total)})"
+
+
+def counted(shares, key) -> str:
+    return of(shares[key]["count"], shares["trials"])
+
+
 def render_markdown(summary: dict) -> str:
     versions = ", ".join(f"{job} {', '.join(v) or '-'}"
                          for job, v in summary["claude_code_versions"].items()) or "-"
     lines = ["# Phase 0 summary", "", f"Claude Code version for each job: {versions}.", ""]
-    lines += _cells_markdown(summary)
-    lines += ["", "## Trials", "",
-              "Every trial here passed the validity check; a trial that failed it was "
-              "discarded and counts in its cell.", "",
-              "| Job | Trial | Model tier | Condition | Replay | Test-first order "
-              "| Red-to-green order | TDD loop (cycles / never seen red / refactor steps) "
-              "| Coverage | Agreement | Skill loaded | Web access (steps) | Errors |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
-    for t in summary["trials"]:
-        replay = "not run" if t["replay"] is None else \
-            "works" if t["replay"]["works"] else "fails: " + "; ".join(t["replay"]["causes"])
+    lines += _acceptance_markdown(summary)
+    lines += _missing_markdown(summary)
+    lines += _trials_markdown(summary)
+    return "\n".join(lines) + "\n"
+
+
+def _acceptance_markdown(summary: dict) -> list[str]:
+    shares, runs = summary["shares"], summary["agent_test_runs"]
+    flagged = shares["web_access"]["count"]
+    unflagged = summary["unflagged"]
+
+    def without_web(text) -> str:
+        """The value again without the web-access trials, when a trial is flagged."""
+        return f" (without the {flagged} web-access trials: {text})" if flagged else ""
+
+    def bash(s) -> str:
+        return (f"{counted(s, 'file_writing_bash')} trials have a file-writing `Bash` call; "
+                f"in {counted(s, 'bash_writes_test_or_implementation')} a `Bash` call writes a "
+                "test or implementation file")
+
+    def tested(r) -> str:
+        return (f"tested after edit {of(r['covered_snapshots'], r['snapshots'])} snapshots; "
+                f"read matches replay {of(r['agreeing_runs'], r['compared_runs'])} runs")
+
+    missing = summary["missing_trials"]["count"]
+    replays = [t for t in summary["trials"] if not (t["replay"] or {}).get("works")]
+    works = summary["replay_works"]
+    h = summary["hosted_cost"]
+    lines = ["## Phase 0 acceptance", "",
+             f"- **2. Bash file writes:** {bash(shares)}{without_web(bash(unflagged['shares']))}.",
+             "- **3. Validity:** every kept trial passed the validity check"
+             + (f"; {missing} trials missing (see Missing trials)." if missing else "."),
+             f"- **4. Replay:** works on {works['count']} of {works['of']} trials."]
+    for t in replays:
+        why = "not run" if t["replay"] is None else "; ".join(t["replay"]["causes"]) or "fails"
+        lines.append(f"  - `{t['job']}/{t['trial']}`: {why}")
+    lines += [
+        f"- **5. Agent test runs:** {tested(runs)}{without_web(tested(unflagged['agent_test_runs']))}.",
+        f"- **7. Cost:** £{h['total_gbp']:.2f} of the £{h['cap_gbp']} cap, "
+        f"{'within' if h['within_cap'] else 'over'} it ({num(h['total_usd'], 2)} USD: "
+        f"{num(h['kept_usd'], 2)} kept + {num(h['discarded_usd'], 2)} discarded; "
+        f"1 GBP = {h['usd_per_gbp']} USD assumed)."]
+    for t in summary["local_trials"]:
+        present = "present" if t["tool_arguments_present"] else "missing"
+        lines.append(f"- **Local trial `{t['job']}/{t['trial']}`:** tool arguments {present} "
+                     "in the trajectory.")
+    lines += ["", "Acceptance 1 and 6 need a person's labels, so the summary does not give them.",
+              ""]
+    return lines
+
+
+def _lost(t: dict) -> str:
+    mark = " (an unlisted exception type: classify it)" if t["unlisted"] else ""
+    return f"`{t['trial']}` {t['outcome']}, {t['cause']}{mark}"
+
+
+def _missing_markdown(summary: dict) -> list[str]:
+    missing = summary["missing_trials"]
+    if not missing["count"] and not missing["halted_without_cell"]:
+        return []
+    lines = ["## Missing trials", "",
+             f"{missing['count']} of {summary['expected_trials']} expected trials missing.", ""]
+    for c in missing["cells"]:
+        cell = " · ".join(str(c[k]) for k in CELL_KEYS)
+        for t in c["trials"]:
+            lines.append(f"- `{t['job']}` · {cell}: {_lost(t)}")
+        if c["not_run"]:
+            lines.append(f"- {cell}: {c['not_run']} trial{'s' if c['not_run'] > 1 else ''} "
+                         "not run yet")
+    for t in missing["halted_without_cell"]:
+        lines.append(f"- `{t['job']}`, no cell: {_lost(t)}")
+    return lines + ["", "The next invocation runs these again.", ""]
+
+
+TRIAL_COLUMNS = ("Job", "Trial", "Model tier", "Condition", "Language", "Test-first order",
+                 "Red-to-green order", "TDD loop", "Reference tests", "Agent tests",
+                 "Tested after edit", "Read matches replay", "Bash writes", "Ad-hoc runs",
+                 "Skill loaded", "Web access", "Errors", "USD", "Tokens in / cache / out",
+                 "Seconds", "Turns")
+
+TRIAL_KEY = [
+    "- **TDD loop:** cycles / tests never seen red / refactor steps.",
+    "- **Reference tests:** the withheld reference tests that pass on the final repository; "
+    "**Agent tests:** the agent's own tests that pass.",
+    "- **Tested after edit** and **Read matches replay** check the instrument, not the agent. "
+    "Tested after edit: the snapshots after which the agent ran its tests before its next "
+    "file write. Read matches replay: the agent's full test runs whose red or green, as read "
+    "from their output, matches the replay of the same snapshot.",
+    "- **Bash writes:** whether a `Bash` call wrote a file (`yes`), and whether it wrote a "
+    "test or implementation file (`test/impl`); test-first order cannot see such a write.",
+    "- **Ad-hoc runs:** scripts the agent wrote and ran, which the cross-check does not see.",
+    "- **Web access:** the steps of a web tool call that did not fail, or of a `Bash` command "
+    "with a URL, `curl`, `wget` or `git clone`.",
+    "- **USD:** the local tier's money cost is zero (L5).",
+]
+
+
+def _trials_markdown(summary: dict) -> list[str]:
+    lines = ["## Trials", "",
+             "| " + " | ".join(TRIAL_COLUMNS) + " |",
+             "|" + "---|" * len(TRIAL_COLUMNS)]
+
+    def order(t):
+        cell = t["cell"] or {}
+        return (str(cell.get("condition")), str(t["model_tier"]), t["language"], t["job"],
+                t["trial"])
+
+    for t in sorted(summary["trials"], key=order):
         loop = t["tdd_loop"]
         loop = "-" if loop is None else \
             f"{loop['cycles']} / {loop['tests_never_seen_red']} / {loop['refactor_steps']}"
+        reward = t["reward"] or {}
         runs = t["agent_test_runs"] or {}
         skill = t["skill_load"]
         skill = "-" if skill is None else ("before first file write"
@@ -291,98 +446,23 @@ def render_markdown(summary: dict) -> str:
         web = t["web_access"]
         web = "-" if web is None else \
             ", ".join(map(str, web["step_ids"])) if web["flagged"] else "no"
+        ad_hoc = (t["ad_hoc_runs"] or {}).get("count") or "-"
         errors = "; ".join(f"{name}: {error}" for name, error in t["errors"].items()) or "-"
-        condition = (t["cell"] or {}).get("condition", "-")
-        lines.append(
-            f"| {t['job']} | {t['trial']} | {t['model_tier']} | {condition} | {replay} "
-            f"| {t['test_first_order'] or '-'} | {t['red_to_green_order'] or '-'} | {loop} "
-            f"| {pct(runs.get('coverage'))} | {pct(runs.get('agreement'))} | {skill} | {web} "
-            f"| {errors} |")
-    works = summary["replay_works"]
-    lines += ["", "## Replay", "",
-              f"- Replay works on {works['count']} of {works['of']} trials."]
-
-    def counted(shares, text, key):
-        s = shares[key]
-        return f"- {text}: {s['count']} of {shares['trials']} ({pct(s['share'])})."
-
-    def sections(shares, runs, level):
-        return [
-            "", f"{level} Bash file writes", "",
-            counted(shares, "Trials with a file-writing `Bash` call", "file_writing_bash"),
-            counted(shares, "Trials where a `Bash` call writes a test or implementation file",
-                    "bash_writes_test_or_implementation"),
-            counted(shares, "Trials where offline replay applies (no file-writing `Bash` call)",
-                    "offline_replay_applies"),
-            "", f"{level} Agent test runs", "",
-            f"- Coverage: {runs['covered_snapshots']} of {runs['snapshots']} snapshots "
-            f"({pct(runs['coverage'])}).",
-            f"- Agreement: {runs['agreeing_runs']} of {runs['compared_runs']} compared runs "
-            f"({pct(runs['agreement'])}).",
-            counted(shares, "Trials with an ad-hoc run (a script the agent wrote, not in the "
-                            "cross-check)", "ad_hoc_runs"),
-        ]
-
-    unflagged = summary["unflagged"]
-    lines += sections(summary["shares"], summary["agent_test_runs"], "##")
-    lines += ["", "## Web access", "",
-              counted(summary["shares"], "Trials that may have reached the web", "web_access"),
-              "", "These trials stay in the data above. A web tool call that did not fail, or "
-              "a `Bash` command with a URL, `curl`, `wget` or `git clone`, flags a trial.",
-              "", "## Without the web-access trials"]
-    lines += sections(unflagged["shares"], unflagged["agent_test_runs"], "###")
-    lines += ["", "## Cost for each model tier", "",
-              "Kept trials only. The local tier's money cost is zero (L5); its token counts "
-              "are kept. Values per trial are means.", "",
-              "| Model tier | Trials | Total USD | USD per trial | Input tokens | Cache tokens "
-              "| Output tokens | Seconds | Turns |",
-              "|---|---|---|---|---|---|---|---|---|"]
-    for tier, c in summary["cost"].items():
-        p = c["per_trial"]
-        name = f"{tier} (local)" if c["local"] else tier
-        lines.append(
-            f"| {name} | {c['trials']} | {num(c['total_cost_usd'], 2)} | {num(p['cost_usd'], 2)} "
-            f"| {num(p['input_tokens'])} | {num(p['cache_tokens'])} | {num(p['output_tokens'])} "
-            f"| {num(p['duration_sec'])} | {num(p['turns'], 1)} |")
-    h = summary["hosted_cost"]
-    lines += ["", "## The £15 cap", "",
-              f"Hosted trials: {num(h['kept_usd'], 2)} USD kept + {num(h['discarded_usd'], 2)} "
-              f"USD discarded (from the experiment log) = {num(h['total_usd'], 2)} USD = "
-              f"£{h['total_gbp']:.2f} of the £{h['cap_gbp']} cap "
-              f"({'within' if h['within_cap'] else 'over'} the cap; "
-              f"1 GBP = {h['usd_per_gbp']} USD assumed). Each trial that ran again counts."]
-    for t in summary["local_trials"]:
-        after = t["tool_calls_after_system_message"]
-        cached = t["cached_tokens_per_turn"]
-        lines += ["", f"## Local trial {t['job']}/{t['trial']}", "",
-                  f"- Time: {num(t['duration_sec'])} seconds.",
-                  f"- Tool arguments present in the trajectory: "
-                  f"{'yes' if t['tool_arguments_present'] else 'no'}.",
-                  "- Tool calls after a system message in the middle of the conversation: "
-                  + (f"none in the trajectory; {BY_HAND}." if after is None else f"{after}."),
-                  "- Prefix cache hits for each turn: "
-                  + (f"{BY_HAND}." if cached is None
-                     else f"cached tokens {', '.join(num(c) for c in cached)} (ATIF)."),
-                  f"- Background requests: {BY_HAND}."]
-    return "\n".join(lines) + "\n"
+        c = t["cost"]
+        usd = f"{num(c['cost_usd'], 2)}{' (local)' if t['local'] else ''}"
+        tokens = " / ".join(num(c[k]) for k in ("input_tokens", "cache_tokens", "output_tokens"))
+        cells = [
+            t["job"], t["trial"], t["model_tier"], (t["cell"] or {}).get("condition", "-"),
+            t["language"], t["test_first_order"] or "-", t["red_to_green_order"] or "-", loop,
+            _passed(reward, "reference"), _passed(reward, "agent_tests"),
+            of(runs.get("covered_snapshots"), runs.get("snapshots")),
+            of(runs.get("agreeing_runs"), runs.get("compared_runs")),
+            t["bash_writes"] or "-", str(ad_hoc), skill, web, errors, usd, tokens,
+            num(c["duration_sec"]), num(c["turns"])]
+        lines.append("| " + " | ".join(cells) + " |")
+    return lines + ["", *TRIAL_KEY]
 
 
-def _cells_markdown(summary: dict) -> list[str]:
-    lines = ["## Cells", "",
-             f"{summary['kept_trials']} of {summary['expected_trials']} expected trials kept. "
-             "A short cell holds fewer kept trials than its jobs promise: a job that has not "
-             "run yet, or a discarded trial that was not replaced. It is not a failure.", "",
-             "| Harness | Model tier | Condition | Language | Expected | Kept | Discarded "
-             "| Halted | |",
-             "|---|---|---|---|---|---|---|---|---|"]
-    for c in summary["cells"]:
-        lines.append(
-            f"| {c['harness'] or '-'} | {c['model_tier'] or '-'} | {c['condition'] or '-'} "
-            f"| {c['language'] or '-'} | {c['expected']} | {c['kept']} | {c['discarded']} "
-            f"| {c['halted']} | {'short' if c['short'] else ''} |")
-    if summary["discard_causes"]:
-        lines += ["", "Causes of the discarded and halted trials:", ""]
-        for cause in summary["discard_causes"]:
-            mark = " (an unlisted exception type: classify it)" if cause["unlisted"] else ""
-            lines.append(f"- {cause['cause']}: {cause['count']}{mark}")
-    return lines
+def _passed(reward: dict, prefix: str) -> str:
+    passed, total = reward.get(f"{prefix}_passed"), reward.get(f"{prefix}_total")
+    return "-" if total is None else f"{passed} of {total}"

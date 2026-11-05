@@ -156,9 +156,26 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
     assert cap["total_usd"] == pytest.approx(5.0)
     assert cap["within_cap"] is True
     assert data["claude_code_versions"] == {job: ["2.1.308"] for job in HOSTED}
-    for text in ("## Cells", "short", "Replay works on 10 of 10 trials",
-                 "no-implementation", "Coverage", "Agreement", "of the £15 cap"):
+    assert first["language"] == "go"
+    assert first["reward"] == REWARD
+    assert first["bash_writes"] == "no"
+    assert data["missing_trials"] == {"count": 1, "cells": [
+        {"harness": "claude-code", "model_tier": LOCAL_MODEL, "condition": "instrument-tdd",
+         "language": "typescript", "expected": 1, "kept": 0, "trials": [], "not_run": 1}],
+        "halted_without_cell": []}
+    for text in ("## Phase 0 acceptance", "**4. Replay:** works on 10 of 10 trials.",
+                 "of the £15 cap", "## Missing trials", "1 of 11 expected trials missing.",
+                 f"claude-code · {LOCAL_MODEL} · instrument-tdd · typescript: 1 trial not run "
+                 "yet", "| Language |", "| Reference tests |", "| 29 of 29 |",
+                 "| Tested after edit |", "| Read matches replay |", "no-implementation"):
         assert text in markdown
+    for text in ("## Cells", "## Replay", "## Bash file writes", "## Agent test runs",
+                 "## Web access", "Coverage", "Agreement", "## Cost for each model tier"):
+        assert text not in markdown
+    # Rows go by condition, then model tier, then language.
+    rows = [line for line in markdown.splitlines() if line.startswith("| phase0-")]
+    assert [row.split(" | ")[3] for row in rows[:4]] == ["control"] * 4
+    assert [row.split(" | ")[4] for row in rows[:2]] == ["go", "typescript"]
 
 
 def test_the_cap_counts_each_discarded_trial_and_the_cells_count_it(repo):
@@ -175,7 +192,9 @@ def test_the_cap_counts_each_discarded_trial_and_the_cells_count_it(repo):
     assert cap["total_usd"] == pytest.approx(5.5)
     assert data["discard_causes"] == [{"cause": "ApiOverloadedError", "count": 1,
                                        "unlisted": False}]
-    assert "ApiOverloadedError" in markdown
+    # It was run again, so it is not a missing trial; only the local job's trial is.
+    missing = data["missing_trials"]
+    assert missing["count"] == 1 and [c["trials"] for c in missing["cells"]] == [[]]
 
 
 def test_a_halted_trial_counts_once_as_halted_and_its_cost_once(repo):
@@ -185,10 +204,14 @@ def test_a_halted_trial_counts_once_as_halted_and_its_cost_once(repo):
 
     assert experiment(harbor, *hosted()) == 0
 
-    data, _ = summary(repo)
+    data, markdown = summary(repo)
     haiku_go = cell(data, "anthropic/claude-haiku-5-5", "control", "go")
     assert (haiku_go["kept"], haiku_go["discarded"], haiku_go["halted"]) == (1, 0, 1)
     assert data["hosted_cost"]["discarded_usd"] == pytest.approx(0.5)
+    # The halt was resolved: its trial ran again.
+    missing = data["missing_trials"]
+    assert [c["trials"] for c in missing["cells"]] == [[]]
+    assert missing["halted_without_cell"] == []
 
 
 def test_an_unresolved_discard_leaves_its_cell_short(repo):
@@ -202,6 +225,14 @@ def test_an_unresolved_discard_leaves_its_cell_short(repo):
             haiku_go["short"]) == (2, 1, 1, True)
     assert data["discard_causes"] == [{"cause": "SomethingNewError", "count": 1,
                                        "unlisted": True}]
+    [short] = [c for c in data["missing_trials"]["cells"] if c["language"] == "go"]
+    assert short["trials"] == [{"job": "phase0-extra", "trial": "go__00", "outcome": "discarded",
+                                "cause": "SomethingNewError", "unlisted": True}]
+    assert short["not_run"] == 0
+    assert ("`phase0-extra` · claude-code · anthropic/claude-haiku-5-5 · instrument-tdd · go: "
+            "`go__00` discarded, SomethingNewError (an unlisted exception type: classify it)"
+            in markdown)
+    assert "The next invocation runs these again." in markdown
 
 
 def local_trial(builder):
@@ -229,5 +260,8 @@ def test_the_local_trial_values_come_from_its_record_and_its_cost_is_not_hosted(
     # L5: a local trial's cost_usd is no money cost.
     assert data["hosted_cost"]["kept_usd"] == pytest.approx(5.0)
     assert data["cost"][LOCAL_MODEL]["total_cost_usd"] == 0
-    assert "Background requests: record by hand from the server log." in markdown
-    assert "Prefix cache hits for each turn: cached tokens 900, - (ATIF)." in markdown
+    assert ("**Local trial `phase0-local/typescript__00`:** tool arguments present in the "
+            "trajectory." in markdown)
+    assert "| 0.00 (local) |" in markdown
+    for text in ("Background requests", "Prefix cache hits", "## Local trial"):
+        assert text not in markdown

@@ -113,6 +113,10 @@ _Avoid_: Logs, trace, results
 The measurement instrument of one harness that writes the shared trace folder in each trial: the repository history from seed to final, one line for each tool call, and what the trial had.
 _Avoid_: Tracer, logger
 
+**Snapshot**:
+One state of the repository in a trial's history, kept by the recorder: the seed, the state after each tool call that makes a file write, and the final state.
+_Avoid_: Checkpoint, commit
+
 **Reader**:
 The code for one harness that builds the trial record from the recorder's trace folder and Harbor's trial folder, filling each optional part or marking it absent.
 _Avoid_: Parser, adapter
