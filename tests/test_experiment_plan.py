@@ -21,12 +21,17 @@ def no_env_file(tmp_path, monkeypatch):
     monkeypatch.setattr("assay.cli.ENV_FILE", tmp_path / "no.env")
 
 
+def repo_files() -> set[Path]:
+    """Each file and folder in the repository's results/ and analysis/. A real
+    run may have left phase0-tdd folders there; a dry run must add nothing."""
+    return {p for folder in ("results", "analysis") for p in (REPO_ROOT / folder).rglob("*")}
+
+
 def test_the_phase0_dry_run_prints_the_jobs_conditions_and_expected_trials_by_cell(
         monkeypatch, capsys):
     monkeypatch.chdir(REPO_ROOT)
     monkeypatch.setenv("ASSAY_LOCAL_BASE_URL", "http://192.0.2.1:8080")
-    before = {p for p in (REPO_ROOT / "results").rglob("*")} \
-        if (REPO_ROOT / "results").exists() else set()
+    before = repo_files()
 
     assert main(["experiment", "phase0-tdd", "--dry-run"], run_harbor=never_harbor) == 0
 
@@ -55,11 +60,7 @@ def test_the_phase0_dry_run_prints_the_jobs_conditions_and_expected_trials_by_ce
         "  agent-runs (built-in) depends on replay",
         "  trajectory (built-in) depends on replay, agent-runs",
     ]
-    after = {p for p in (REPO_ROOT / "results").rglob("*")} \
-        if (REPO_ROOT / "results").exists() else set()
-    assert after == before
-    assert not (REPO_ROOT / "results" / "phase0-tdd").exists()
-    assert not (REPO_ROOT / "analysis" / "phase0-tdd").exists()
+    assert repo_files() == before
 
 
 # A small repository in a temporary folder: two variant folders, a job file
