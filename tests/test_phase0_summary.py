@@ -164,8 +164,11 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
          "language": "typescript", "expected": 1, "kept": 0, "trials": [], "not_run": 1}],
         "halted_without_cell": []}
     for text in ("## Phase 0 acceptance", "**4. Replay:** works on 10 of 10 trials.",
-                 "- **1. Test-first order:** not assessed here",
-                 "- **6. Red-to-green order and TDD loop:** not assessed here",
+                 "- **1. Test-first order:** `trajectory` gives a verdict on 10 of 10 trials "
+                 "(no-implementation 10).",
+                 "- **6. Red-to-green order and TDD loop:** `trajectory` gives a verdict on 10 of "
+                 "10 trials (not-observed 10), and the TDD loop on 10 of 10.",
+                 "Check both against a person's labels with `assay compare-labels`",
                  "- **8. Local trial:** not run yet.",
                  "of the £15 cap", "## Missing trials", "1 of 11 expected trials missing.",
                  f"claude-code · {LOCAL_MODEL} · instrument-tdd · typescript: 1 trial not run "

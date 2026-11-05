@@ -37,8 +37,8 @@ from assay.summary import ExperimentView, PlanView, Summary, TrialView
 SUMMARY_NAME = "phase0-summary"
 CAP_GBP = 15
 USD_PER_GBP = 1.27
-BY_PERSON = ("not assessed here; a person labels the trajectories and compares them with "
-             "`trajectory` (PRD section 16).")
+PERSON_CHECK = ("Check both against a person's labels with `assay compare-labels` "
+                "(PRD section 16); the summary does not give that half of 1 and 6.")
 CELL_KEYS = ("harness", "model_tier", "condition", "language")
 
 
@@ -350,12 +350,21 @@ def _acceptance_markdown(summary: dict) -> list[str]:
         return (f"tested after edit {of(r['covered_snapshots'], r['snapshots'])} snapshots; "
                 f"read matches replay {of(r['agreeing_runs'], r['compared_runs'])} runs")
 
+    trials = summary["trials"]
+
+    def verdicts(key) -> str:
+        found = Counter(t[key] for t in trials if t[key] is not None)
+        split = ", ".join(f"{v} {n}" for v, n in sorted(found.items()))
+        return (f"`trajectory` gives a verdict on {sum(found.values())} of {len(trials)} trials"
+                + (f" ({split})" if split else ""))
+
+    loops = sum(1 for t in trials if t["tdd_loop"] is not None)
     missing = summary["missing_trials"]["count"]
     replays = [t for t in summary["trials"] if not (t["replay"] or {}).get("works")]
     works = summary["replay_works"]
     h = summary["hosted_cost"]
     lines = ["## Phase 0 acceptance", "",
-             f"- **1. Test-first order:** {BY_PERSON}",
+             f"- **1. Test-first order:** {verdicts('test_first_order')}.",
              f"- **2. Bash file writes:** {bash(shares)}{without_web(bash(unflagged['shares']))}.",
              "- **3. Validity:** every kept trial passed the validity check"
              + (f"; {missing} trials missing (see Missing trials)." if missing else "."),
@@ -365,7 +374,8 @@ def _acceptance_markdown(summary: dict) -> list[str]:
         lines.append(f"  - `{t['job']}/{t['trial']}`: {why}")
     lines += [
         f"- **5. Agent test runs:** {tested(runs)}{without_web(tested(unflagged['agent_test_runs']))}.",
-        f"- **6. Red-to-green order and TDD loop:** {BY_PERSON}",
+        f"- **6. Red-to-green order and TDD loop:** {verdicts('red_to_green_order')}, and the "
+        f"TDD loop on {loops} of {len(trials)}.",
         f"- **7. Cost:** £{h['total_gbp']:.2f} of the £{h['cap_gbp']} cap, "
         f"{'within' if h['within_cap'] else 'over'} it ({num(h['total_usd'], 2)} USD: "
         f"{num(h['kept_usd'], 2)} kept + {num(h['discarded_usd'], 2)} discarded; "
@@ -376,7 +386,7 @@ def _acceptance_markdown(summary: dict) -> list[str]:
                      f"{present} in the trajectory.")
     if not summary["local_trials"]:
         lines.append("- **8. Local trial:** not run yet.")
-    return lines + [""]
+    return lines + ["", PERSON_CHECK, ""]
 
 
 def _lost(t: dict) -> str:

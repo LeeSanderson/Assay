@@ -50,12 +50,12 @@ After the jobs, the evaluations (`replay`, `agent-runs`, `trajectory` for Phase 
 
 **Expected result:** `experiment phase0-tdd: complete` and exit code 0. Exit code 3 means a halt, 130 an interruption (run again to resume), and 2 an error. Phase 0 passes when the summary shows all of these:
 
-- No cell is short, and every trial is kept (each kept trial passed the validity check).
+- No trial is missing (each kept trial passed the validity check).
 - Replay works on every trial.
 - The hosted trials are `within` the £15 cap.
 - The local trial's trajectory holds its tool arguments.
 
-The person check (`assay compare-labels`) is the other acceptance value, and it is not in the summary. Where the summary says "record by hand from the server log", record the local trial's prefix cache hits and background requests by hand.
+The person check (`assay compare-labels`) is the other half of acceptance 1 and 6, and it is not in the summary. Record the local trial's tool calls after a mid-conversation system message, prefix cache hits and background requests by hand from the server log; the summary does not give them.
 
 ### `assay run`
 
