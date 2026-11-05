@@ -204,6 +204,10 @@ def _missing(view: ExperimentView) -> dict:
                 or "failed check " + ", ".join(cause.get("failed_checks", [])),
                 "unlisted": bool(cause.get("unlisted"))}
 
+    kept: dict[tuple, list[str]] = {}
+    for t in view.trials:
+        key = _cell_key(asdict(t.cell) if t.cell else None)
+        kept.setdefault(key, []).append(f"{t.job}/{t.trial}")
     cells = []
     for c in _cells(view):
         if not c["short"]:
@@ -212,7 +216,8 @@ def _missing(view: ExperimentView) -> dict:
         missing = c["expected"] - c["kept"]
         found = [e for e in lost if _cell_key(e.get("cell")) == key][-missing:]
         cells.append({**{k: c[k] for k in CELL_KEYS}, "expected": c["expected"],
-                      "kept": c["kept"], "trials": [entry(e) for e in found],
+                      "kept": c["kept"], "kept_trials": sorted(kept.get(key, [])),
+                      "trials": [entry(e) for e in found],
                       "not_run": missing - len(found)})
     return {"count": sum(c["expected"] - c["kept"] for c in cells), "cells": cells,
             "halted_without_cell": [entry(e) for e in lost
@@ -391,7 +396,7 @@ def _acceptance_markdown(summary: dict) -> list[str]:
 
 def _lost(t: dict) -> str:
     mark = " (an unlisted exception type: classify it)" if t["unlisted"] else ""
-    return f"`{t['trial']}` {t['outcome']}, {t['cause']}{mark}"
+    return f"`{t['job']}/{t['trial']}` {t['outcome']}, {t['cause']}{mark}"
 
 
 def _missing_markdown(summary: dict) -> list[str]:
@@ -402,13 +407,15 @@ def _missing_markdown(summary: dict) -> list[str]:
              f"{missing['count']} of {summary['expected_trials']} expected trials missing.", ""]
     for c in missing["cells"]:
         cell = " · ".join(str(c[k]) for k in CELL_KEYS)
-        for t in c["trials"]:
-            lines.append(f"- `{t['job']}` · {cell}: {_lost(t)}")
+        names = ", ".join(f"`{name}`" for name in c["kept_trials"])
+        lines.append(f"- {cell}: {c['kept']} of {c['expected']} kept"
+                     + (f" ({names})" if names else ""))
+        lines += [f"  - {_lost(t)}" for t in c["trials"]]
         if c["not_run"]:
-            lines.append(f"- {cell}: {c['not_run']} trial{'s' if c['not_run'] > 1 else ''} "
+            lines.append(f"  - {c['not_run']} trial{'s' if c['not_run'] > 1 else ''} "
                          "not run yet")
     for t in missing["halted_without_cell"]:
-        lines.append(f"- `{t['job']}`, no cell: {_lost(t)}")
+        lines.append(f"- no cell: {_lost(t)}")
     return lines + ["", "The next invocation runs these again.", ""]
 
 

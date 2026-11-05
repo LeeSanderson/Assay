@@ -161,7 +161,8 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
     assert first["bash_writes"] == "no"
     assert data["missing_trials"] == {"count": 1, "cells": [
         {"harness": "claude-code", "model_tier": LOCAL_MODEL, "condition": "instrument-tdd",
-         "language": "typescript", "expected": 1, "kept": 0, "trials": [], "not_run": 1}],
+         "language": "typescript", "expected": 1, "kept": 0, "kept_trials": [], "trials": [],
+         "not_run": 1}],
         "halted_without_cell": []}
     for text in ("## Phase 0 acceptance", "**4. Replay:** works on 10 of 10 trials.",
                  "- **1. Test-first order:** `trajectory` gives a verdict on 10 of 10 trials "
@@ -171,8 +172,8 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
                  "Check both against a person's labels with `assay compare-labels`",
                  "- **8. Local trial:** not run yet.",
                  "of the £15 cap", "## Missing trials", "1 of 11 expected trials missing.",
-                 f"claude-code · {LOCAL_MODEL} · instrument-tdd · typescript: 1 trial not run "
-                 "yet", "| Language | Score |", "| go | 29 of 29 ✓ |",
+                 f"- claude-code · {LOCAL_MODEL} · instrument-tdd · typescript: 0 of 1 kept\n"
+                 "  - 1 trial not run yet","| Language | Score |", "| go | 29 of 29 ✓ |",
                  "| Tested after edit |", "| Read matches replay |", "no-implementation"):
         assert text in markdown
     for text in ("## Cells", "## Replay", "## Bash file writes", "## Agent test runs",
@@ -235,9 +236,11 @@ def test_an_unresolved_discard_leaves_its_cell_short(repo):
     assert short["trials"] == [{"job": "phase0-extra", "trial": "go__00", "outcome": "discarded",
                                 "cause": "SomethingNewError", "unlisted": True}]
     assert short["not_run"] == 0
-    assert ("`phase0-extra` · claude-code · anthropic/claude-haiku-5-5 · instrument-tdd · go: "
-            "`go__00` discarded, SomethingNewError (an unlisted exception type: classify it)"
-            in markdown)
+    assert short["kept_trials"] == ["phase0-cross-tdd/go__00"]
+    assert ("- claude-code · anthropic/claude-haiku-5-5 · instrument-tdd · go: 1 of 2 kept "
+            "(`phase0-cross-tdd/go__00`)\n"
+            "  - `phase0-extra/go__00` discarded, SomethingNewError (an unlisted exception "
+            "type: classify it)" in markdown)
     assert "The next invocation runs these again." in markdown
 
 
