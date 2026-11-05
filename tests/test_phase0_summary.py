@@ -164,6 +164,9 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
          "language": "typescript", "expected": 1, "kept": 0, "trials": [], "not_run": 1}],
         "halted_without_cell": []}
     for text in ("## Phase 0 acceptance", "**4. Replay:** works on 10 of 10 trials.",
+                 "- **1. Test-first order:** not assessed here",
+                 "- **6. Red-to-green order and TDD loop:** not assessed here",
+                 "- **8. Local trial:** not run yet.",
                  "of the £15 cap", "## Missing trials", "1 of 11 expected trials missing.",
                  f"claude-code · {LOCAL_MODEL} · instrument-tdd · typescript: 1 trial not run "
                  "yet", "| Language | Score |", "| go | 29 of 29 ✓ |",
@@ -260,7 +263,7 @@ def test_the_local_trial_values_come_from_its_record_and_its_cost_is_not_hosted(
     # L5: a local trial's cost_usd is no money cost.
     assert data["hosted_cost"]["kept_usd"] == pytest.approx(5.0)
     assert data["cost"][LOCAL_MODEL]["total_cost_usd"] == 0
-    assert ("**Local trial `phase0-local/typescript__00`:** tool arguments present in the "
+    assert ("- **8. Local trial `phase0-local/typescript__00`:** tool arguments present in the "
             "trajectory." in markdown)
     assert "| 0.00 (local) |" in markdown
     for text in ("Background requests", "Prefix cache hits", "## Local trial"):

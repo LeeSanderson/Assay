@@ -1210,8 +1210,9 @@ Over ten trials on the hosted model tiers:
 5. The summary gives the coverage and the agreement of the test runs of the agent.
 6. `trajectory` finds the red-to-green order and the three counts of the TDD loop, and a person agrees every time.
 7. The hosted trials cost £15 or less, and this includes each trial that runs again.
+8. One more trial runs Claude Code against a local model server, and its trajectory holds verbatim tool arguments.
 
-One more trial runs Claude Code against a local model server, and its trajectory holds verbatim tool arguments. That trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation.
+The local trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation.
 
 **Phase 0 blocks all other phases of this experiment.**
 

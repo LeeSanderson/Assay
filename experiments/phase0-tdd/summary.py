@@ -37,7 +37,8 @@ from assay.summary import ExperimentView, PlanView, Summary, TrialView
 SUMMARY_NAME = "phase0-summary"
 CAP_GBP = 15
 USD_PER_GBP = 1.27
-BY_HAND = "record by hand from the server log"
+BY_PERSON = ("not assessed here; a person labels the trajectories and compares them with "
+             "`trajectory` (PRD section 16).")
 CELL_KEYS = ("harness", "model_tier", "condition", "language")
 
 
@@ -354,6 +355,7 @@ def _acceptance_markdown(summary: dict) -> list[str]:
     works = summary["replay_works"]
     h = summary["hosted_cost"]
     lines = ["## Phase 0 acceptance", "",
+             f"- **1. Test-first order:** {BY_PERSON}",
              f"- **2. Bash file writes:** {bash(shares)}{without_web(bash(unflagged['shares']))}.",
              "- **3. Validity:** every kept trial passed the validity check"
              + (f"; {missing} trials missing (see Missing trials)." if missing else "."),
@@ -363,17 +365,18 @@ def _acceptance_markdown(summary: dict) -> list[str]:
         lines.append(f"  - `{t['job']}/{t['trial']}`: {why}")
     lines += [
         f"- **5. Agent test runs:** {tested(runs)}{without_web(tested(unflagged['agent_test_runs']))}.",
+        f"- **6. Red-to-green order and TDD loop:** {BY_PERSON}",
         f"- **7. Cost:** £{h['total_gbp']:.2f} of the £{h['cap_gbp']} cap, "
         f"{'within' if h['within_cap'] else 'over'} it ({num(h['total_usd'], 2)} USD: "
         f"{num(h['kept_usd'], 2)} kept + {num(h['discarded_usd'], 2)} discarded; "
         f"1 GBP = {h['usd_per_gbp']} USD assumed)."]
     for t in summary["local_trials"]:
         present = "present" if t["tool_arguments_present"] else "missing"
-        lines.append(f"- **Local trial `{t['job']}/{t['trial']}`:** tool arguments {present} "
-                     "in the trajectory.")
-    lines += ["", "Acceptance 1 and 6 need a person's labels, so the summary does not give them.",
-              ""]
-    return lines
+        lines.append(f"- **8. Local trial `{t['job']}/{t['trial']}`:** tool arguments "
+                     f"{present} in the trajectory.")
+    if not summary["local_trials"]:
+        lines.append("- **8. Local trial:** not run yet.")
+    return lines + [""]
 
 
 def _lost(t: dict) -> str:
