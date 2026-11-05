@@ -17,7 +17,7 @@ from tests.trial_builder import TrialBuilder
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REWARD = {"reward": 1, "reference_compiles": 1, "reference_passed": 29, "reference_total": 29,
           "agent_tests_compile": 1, "agent_tests_passed": 1, "agent_tests_total": 1}
-HOSTED = ["phase0-cross-control", "phase0-cross-tdd", "phase0-extra"]
+HOSTED = ["phase0-cross-control", "phase0-cross-tdd"]
 LOCAL_MODEL = "laguna-s-2.1"
 TEST_FILES = {"go": "stopwatch_test.go", "typescript": "stopwatch.test.ts"}
 
@@ -128,7 +128,7 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
     assert [e["files"] for e in log(repo) if e["event"] == "summary-written"] == [[
         "analysis/phase0-tdd/summary/phase0-summary.json",
         "analysis/phase0-tdd/summary/phase0-summary.md"]]
-    assert len(data["trials"]) == 10
+    assert len(data["trials"]) == 8
     first = data["trials"][0]
     assert first["job"] == "phase0-cross-control"
     assert first["cell"]["condition"] == "control"
@@ -139,21 +139,21 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
     assert first["agent_test_runs"]["snapshots"] == 2
     assert first["errors"] == {}
     # Acceptance 2, 4 and 5.
-    assert data["shares"]["trials"] == 10
+    assert data["shares"]["trials"] == 8
     assert data["shares"]["file_writing_bash"] == {"count": 0, "share": 0.0}
-    assert data["replay_works"] == {"count": 10, "of": 10}
-    assert data["agent_test_runs"]["snapshots"] == 20
+    assert data["replay_works"] == {"count": 8, "of": 8}
+    assert data["agent_test_runs"]["snapshots"] == 16
     # The local job has not run: its cell is short, not a failure.
     local = cell(data, LOCAL_MODEL, "instrument-tdd", "typescript")
     assert (local["expected"], local["kept"], local["short"]) == (1, 0, True)
     haiku = cell(data, "anthropic/claude-haiku-5-5", "instrument-tdd", "typescript")
     assert (haiku["expected"], haiku["kept"], haiku["discarded"], haiku["halted"],
-            haiku["short"]) == (2, 2, 0, 0, False)
-    assert data["expected_trials"] == 11 and data["kept_trials"] == 10
-    # Acceptance 7: ten hosted trials at 0.50 USD.
+            haiku["short"]) == (1, 1, 0, 0, False)
+    assert data["expected_trials"] == 9 and data["kept_trials"] == 8
+    # Acceptance 7: eight hosted trials at 0.50 USD.
     cap = data["hosted_cost"]
-    assert (cap["kept_usd"], cap["discarded_usd"]) == (pytest.approx(5.0), 0)
-    assert cap["total_usd"] == pytest.approx(5.0)
+    assert (cap["kept_usd"], cap["discarded_usd"]) == (pytest.approx(4.0), 0)
+    assert cap["total_usd"] == pytest.approx(4.0)
     assert cap["within_cap"] is True
     assert data["claude_code_versions"] == {job: ["2.1.308"] for job in HOSTED}
     assert first["language"] == "go"
@@ -164,14 +164,14 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
          "language": "typescript", "expected": 1, "kept": 0, "kept_trials": [], "trials": [],
          "not_run": 1}],
         "halted_without_cell": []}
-    for text in ("## Phase 0 acceptance", "**4. Replay:** works on 10 of 10 trials.",
-                 "- **1. Test-first order:** `trajectory` gives a verdict on 10 of 10 trials "
-                 "(no-implementation 10).",
-                 "- **6. Red-to-green order and TDD loop:** `trajectory` gives a verdict on 10 of "
-                 "10 trials (not-observed 10), and the TDD loop on 10 of 10.",
+    for text in ("## Phase 0 acceptance", "**4. Replay:** works on 8 of 8 trials.",
+                 "- **1. Test-first order:** `trajectory` gives a verdict on 8 of 8 trials "
+                 "(no-implementation 8).",
+                 "- **6. Red-to-green order and TDD loop:** `trajectory` gives a verdict on 8 of "
+                 "8 trials (not-observed 8), and the TDD loop on 8 of 8.",
                  "Check both against a person's labels with `assay compare-labels`",
                  "- **8. Local trial:** not run yet.",
-                 "of the £15 cap", "## Missing trials", "1 of 11 expected trials missing.",
+                 "of the £15 cap", "## Missing trials", "1 of 9 expected trials missing.",
                  f"- claude-code · {LOCAL_MODEL} · instrument-tdd · typescript: 0 of 1 kept\n"
                  "  - 1 trial not run yet","| Language | Score |", "| go | 29 of 29 ✓ |",
                  "| Tested after edit |", "| Read matches replay |", "no-implementation"):
@@ -195,8 +195,8 @@ def test_the_cap_counts_each_discarded_trial_and_the_cells_count_it(repo):
     assert (sonnet_go["expected"], sonnet_go["kept"], sonnet_go["discarded"],
             sonnet_go["short"]) == (1, 1, 1, False)
     cap = data["hosted_cost"]
-    assert (cap["kept_usd"], cap["discarded_usd"]) == (pytest.approx(5.0), pytest.approx(0.5))
-    assert cap["total_usd"] == pytest.approx(5.5)
+    assert (cap["kept_usd"], cap["discarded_usd"]) == (pytest.approx(4.0), pytest.approx(0.5))
+    assert cap["total_usd"] == pytest.approx(4.5)
     assert data["discard_causes"] == [{"cause": "ApiOverloadedError", "count": 1,
                                        "unlisted": False}]
     # It was run again, so it is not a missing trial; only the local job's trial is.
@@ -222,24 +222,24 @@ def test_a_halted_trial_counts_once_as_halted_and_its_cost_once(repo):
 
 
 def test_an_unresolved_discard_leaves_its_cell_short(repo):
-    harbor = FakeHarbor(outcomes={"phase0-extra/go__00": [exception("SomethingNewError")]})
+    harbor = FakeHarbor(outcomes={"phase0-cross-tdd/go__00": [exception("SomethingNewError")]})
 
     assert experiment(harbor, *hosted()) == 0
 
     data, markdown = summary(repo)
     haiku_go = cell(data, "anthropic/claude-haiku-5-5", "instrument-tdd", "go")
     assert (haiku_go["expected"], haiku_go["kept"], haiku_go["discarded"],
-            haiku_go["short"]) == (2, 1, 1, True)
+            haiku_go["short"]) == (1, 0, 1, True)
     assert data["discard_causes"] == [{"cause": "SomethingNewError", "count": 1,
                                        "unlisted": True}]
     [short] = [c for c in data["missing_trials"]["cells"] if c["language"] == "go"]
-    assert short["trials"] == [{"job": "phase0-extra", "trial": "go__00", "outcome": "discarded",
-                                "cause": "SomethingNewError", "unlisted": True}]
+    assert short["trials"] == [{"job": "phase0-cross-tdd", "trial": "go__00",
+                                "outcome": "discarded", "cause": "SomethingNewError",
+                                "unlisted": True}]
     assert short["not_run"] == 0
-    assert short["kept_trials"] == ["phase0-cross-tdd/go__00"]
-    assert ("- claude-code · anthropic/claude-haiku-5-5 · instrument-tdd · go: 1 of 2 kept "
-            "(`phase0-cross-tdd/go__00`)\n"
-            "  - `phase0-extra/go__00` discarded, SomethingNewError (an unlisted exception "
+    assert short["kept_trials"] == []
+    assert ("- claude-code · anthropic/claude-haiku-5-5 · instrument-tdd · go: 0 of 1 kept\n"
+            "  - `phase0-cross-tdd/go__00` discarded, SomethingNewError (an unlisted exception "
             "type: classify it)" in markdown)
     assert "The next invocation runs these again." in markdown
 
@@ -267,7 +267,7 @@ def test_the_local_trial_values_come_from_its_record_and_its_cost_is_not_hosted(
     assert local["cached_tokens_per_turn"] == [900, None]  # the Write's step has none
     assert cell(data, LOCAL_MODEL, "instrument-tdd", "typescript")["short"] is False
     # L5: a local trial's cost_usd is no money cost.
-    assert data["hosted_cost"]["kept_usd"] == pytest.approx(5.0)
+    assert data["hosted_cost"]["kept_usd"] == pytest.approx(4.0)
     assert data["cost"][LOCAL_MODEL]["total_cost_usd"] == 0
     assert ("- **8. Local trial `phase0-local/typescript__00`:** tool arguments present in the "
             "trajectory." in markdown)

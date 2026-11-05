@@ -36,10 +36,10 @@ def test_the_phase0_dry_run_prints_the_jobs_conditions_and_expected_trials_by_ce
     assert main(["experiment", "phase0-tdd", "--dry-run"], run_harbor=never_harbor) == 0
 
     out = capsys.readouterr().out
-    for job in ["phase0-cross-control", "phase0-cross-tdd", "phase0-extra", "phase0-local"]:
+    for job in ["phase0-cross-control", "phase0-cross-tdd", "phase0-local"]:
         assert job in out
     assert out.index("phase0-cross-control") < out.index("phase0-cross-tdd") \
-        < out.index("phase0-extra") < out.index("phase0-local")
+        < out.index("phase0-local")
     cells = [line.split() for line in out.splitlines() if line.startswith("  cell ")]
     # cell <n> <harness> <model tier> <condition> <language>
     assert sorted((c[3], c[4], c[5], int(c[1])) for c in cells) == sorted([
@@ -47,14 +47,14 @@ def test_the_phase0_dry_run_prints_the_jobs_conditions_and_expected_trials_by_ce
         ("anthropic/claude-haiku-5-5", "control", "go", 1),
         ("anthropic/claude-sonnet-5-5", "control", "typescript", 1),
         ("anthropic/claude-sonnet-5-5", "control", "go", 1),
-        ("anthropic/claude-haiku-5-5", "instrument-tdd", "typescript", 2),
-        ("anthropic/claude-haiku-5-5", "instrument-tdd", "go", 2),
+        ("anthropic/claude-haiku-5-5", "instrument-tdd", "typescript", 1),
+        ("anthropic/claude-haiku-5-5", "instrument-tdd", "go", 1),
         ("anthropic/claude-sonnet-5-5", "instrument-tdd", "typescript", 1),
         ("anthropic/claude-sonnet-5-5", "instrument-tdd", "go", 1),
         ("laguna-s-2.1", "instrument-tdd", "typescript", 1),
     ])
     assert {c[2] for c in cells} == {"claude-code"}
-    assert "11 expected trials" in out
+    assert "9 expected trials" in out
     assert out[out.index("evaluations, in run order:"):].splitlines()[1:4] == [
         "  replay (built-in)",
         "  agent-runs (built-in) depends on replay",

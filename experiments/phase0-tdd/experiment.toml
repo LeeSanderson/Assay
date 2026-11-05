@@ -10,7 +10,6 @@
 jobs = [                              # run in this order, one after another
   "jobs/phase0-cross-control.yaml",
   "jobs/phase0-cross-tdd.yaml",
-  "jobs/phase0-extra.yaml",
   "jobs/phase0-local.yaml",           # on the host of the local server: --job phase0-local
 ]
 

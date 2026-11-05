@@ -146,7 +146,6 @@ Each experiment has a folder, `experiments/<name>/`. The file `experiments/<name
 jobs = [                              # run in this order, one after another
   "jobs/phase0-cross-control.yaml",
   "jobs/phase0-cross-tdd.yaml",
-  "jobs/phase0-extra.yaml",
   "jobs/phase0-local.yaml",
 ]
 
@@ -237,12 +236,12 @@ The `phase0-tdd` experiment (section 17) shows the relation:
 ```
 experiments/phase0-tdd/experiment.toml
   jobs = ["jobs/phase0-cross-control.yaml", "jobs/phase0-cross-tdd.yaml",
-          "jobs/phase0-extra.yaml", "jobs/phase0-local.yaml"]
+          "jobs/phase0-local.yaml"]
             │
             ├─ phase0-cross-control.yaml   no part            → condition: control
             │
             └─ phase0-cross-tdd.yaml ┐
-               phase0-extra.yaml     ├─ parts from variants/instrument-tdd/
+                                     ├─ parts from variants/instrument-tdd/
                phase0-local.yaml     ┘                    → condition: instrument-tdd
 
 variants/instrument-tdd/
@@ -1014,13 +1013,13 @@ Use these rules:
    | `no-test` | The agent writes an implementation file and writes no test file. |
    | `no-implementation` | The agent writes no implementation file. |
 
-**How a person checks `trajectory`.** Phase 0 compares `trajectory` with a person on the ten hosted trials:
+**How a person checks `trajectory`.** Phase 0 compares `trajectory` with a person on the eight hosted trials:
 
 1. A `jq` command, kept separate from `trajectory`, prints a neutral listing of each trial. Each line gives the `step_id`, the position in the array, the `function_name`, the path or the `Bash` command, and the `paths` value of the trace line for that tool call (joined by `tool_use_id`). The listing gives no class and no verdict.
-2. The person labels all ten trials from the listing before `trajectory` runs. The person can read `trajectory.json` when the listing is not sufficient. For each trial, the labeling sheet records the first test write and the first implementation write as anchors (`step_id`, position, and path), the verdict, and a note. An anchor can be a `Bash` call.
-3. `trajectory` then runs on the ten trials. `assay compare-labels` compares the labels with the result of `trajectory`. The two agree on a trial when the verdict and the two anchors are the same.
+2. The person labels all eight trials from the listing before `trajectory` runs. The person can read `trajectory.json` when the listing is not sufficient. For each trial, the labeling sheet records the first test write and the first implementation write as anchors (`step_id`, position, and path), the verdict, and a note. An anchor can be a `Bash` call.
+3. `trajectory` then runs on the eight trials. `assay compare-labels` compares the labels with the result of `trajectory`. The two agree on a trial when the verdict and the two anchors are the same.
 4. For each difference, the person finds the cause. If the script is wrong, fix `trajectory` and run it again on all ten. If the person is wrong, correct the label and write the cause in the note. If a rule is not clear, correct the rule here, and then both sides apply it again.
-5. "Agrees every time" means one full pass over the ten trials with no difference. The sheet keeps a record of each correction.
+5. "Agrees every time" means one full pass over the eight trials with no difference. The sheet keeps a record of each correction.
 
 ### How Assay measures red and green
 
@@ -1129,12 +1128,12 @@ For example, the seen states red, green with 1 test, green with 1 test after an 
 
 These metrics use the test state of the whole suite, and not of each test. Thus, when the agent adds two failing tests and makes them both pass, this counts as one cycle. The snapshots stay in `trace.git`. Thus a later version of `test.sh` can give the result of each test, and replay can run again with no new trial.
 
-**How a person checks the two metrics.** Phase 0 compares `trajectory` with a person on the ten hosted trials. The person labels these metrics in the same pass as test-first order, and uses the same procedure (see "How a person checks `trajectory`"), with these changes:
+**How a person checks the two metrics.** Phase 0 compares `trajectory` with a person on the eight hosted trials. The person labels these metrics in the same pass as test-first order, and uses the same procedure (see "How a person checks `trajectory`"), with these changes:
 
 1. The `jq` listing also gives the `partial` flag and the exit code of each test run of the agent. For each tool call that made a snapshot, it gives the test state from the replay and `agent_tests_total`. The listing gives no seen state, no verdict, and no count.
 2. For each trial, the labeling sheet also records the red-to-green verdict, two anchors (the `tool_use_id` of the first seen red and of the first seen green), the three counts of the TDD loop, and a note.
 3. The two agree on a trial when the verdict, the two anchors, and the three counts are the same.
-4. "Agrees every time" means one full pass over the ten trials with no difference, for each metric.
+4. "Agrees every time" means one full pass over the eight trials with no difference, for each metric.
 
 ## 17. Phase 0: the measurement spike
 
@@ -1179,13 +1178,12 @@ The reward is not a criterion: the gate checks the setup, not the agent. Run the
 
 ### The `phase0-tdd` experiment
 
-`experiments/phase0-tdd/experiment.toml` is the example in section 5. It has four jobs:
+`experiments/phase0-tdd/experiment.toml` is the example in section 5. It has three jobs:
 
 | Job | Condition | Trials |
 |---|---|---|
 | `phase0-cross-control` | `control` | 4: Haiku and Sonnet, TypeScript and Go |
 | `phase0-cross-tdd` | `instrument-tdd` | 4: Haiku and Sonnet, TypeScript and Go |
-| `phase0-extra` | `instrument-tdd` | 2: Haiku, TypeScript and Go |
 | `phase0-local` | `instrument-tdd` | 1: the local tier, TypeScript |
 
 `phase0-local` is last. It runs on the host of the local server, with `--job phase0-local`. Before that job runs, the other jobs give a short cell for the local tier.
@@ -1201,12 +1199,12 @@ There is no `paired-delta` in Phase 0, because each cell has one trial.
 
 ### Phase 0 acceptance
 
-Over ten trials on the hosted model tiers:
+Over eight trials on the hosted model tiers:
 
 1. `trajectory` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order").
 2. The summary gives the share of trials with a file-writing `Bash` call, and the share of trials in which a `Bash` call writes a test file or an implementation file.
 3. Every trial passes the validity check.
-4. Replay of the trace snapshots works on all eleven trials. For each failure, find the cause, fix it, and replay all eleven trials again.
+4. Replay of the trace snapshots works on all nine trials. For each failure, find the cause, fix it, and replay all nine trials again.
 5. The summary gives the coverage and the agreement of the test runs of the agent.
 6. `trajectory` finds the red-to-green order and the three counts of the TDD loop, and a person agrees every time.
 7. The hosted trials cost £15 or less, and this includes each trial that runs again.
@@ -1244,7 +1242,7 @@ Phase 0 comes first because it tests the assumption under all later phases.
 
 | # | Risk | Validation | Fallback |
 |---|---|---|---|
-| 1 | Red-to-green state is not recoverable. Write order is visible in ATIF, but the test state between writes is not. | Phase 0 replays the trace snapshots of all eleven trials. It also gives the coverage and the agreement of the test runs of the agent, and the share of trials where offline replay can work. | If the replay cannot give the environment of the trial, and the cause cannot be fixed, make the mutation score the primary process metric. |
+| 1 | Red-to-green state is not recoverable. Write order is visible in ATIF, but the test state between writes is not. | Phase 0 replays the trace snapshots of all nine trials. It also gives the coverage and the agreement of the test runs of the agent, and the share of trials where offline replay can work. | If the replay cannot give the environment of the trial, and the cause cannot be fixed, make the mutation score the primary process metric. |
 | 2 | Agents write code through `Bash` instead of `Write`, and offline replay fails | Phase 0 reports the share of trials with a file-writing `Bash` call, from the history | No fallback is necessary. Replay of the trace snapshots is the method for the whole matrix, and it does not use offline replay. |
 | 3 | Frontier models solve Exercism task packs too easily | Measure the control in Phase 1 | The withheld tests already make the task harder. Write one or two packs from unpublished work as a control for contamination. |
 | 4 | The agent never activates the artifact, and the result is a silent false null | The activation rate is a reported metric from Phase 2 | Gate the effect calculation on activation. Report the rate as a result. |

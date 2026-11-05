@@ -61,15 +61,6 @@ def test_the_two_cross_jobs_expand_to_the_eight_planned_trials():
     )
 
 
-def test_extra_job_expands_to_haiku_instrument_tdd_in_each_language():
-    trials = expand_trials(load_job("phase0-extra.yaml"))
-
-    assert sorted(trial_key(t) for t in trials) == [
-        ("anthropic/claude-haiku-5-5", "instrument-tdd", "go"),
-        ("anthropic/claude-haiku-5-5", "instrument-tdd", "typescript"),
-    ]
-
-
 def test_local_job_is_one_instrument_tdd_trial_on_one_server_slot():
     config = load_job("phase0-local.yaml")
     trials = expand_trials(config)
@@ -92,7 +83,7 @@ def test_smoke_job_is_one_haiku_instrument_tdd_trial():
     ]
 
 
-JOB_FILES = ("phase0-cross-control.yaml", "phase0-cross-tdd.yaml", "phase0-extra.yaml", "phase0-local.yaml", "phase0-smoke.yaml")
+JOB_FILES = ("phase0-cross-control.yaml", "phase0-cross-tdd.yaml", "phase0-local.yaml", "phase0-smoke.yaml")
 
 
 def all_agents():
@@ -129,7 +120,7 @@ INSTRUMENT_INSTRUCTION = "variants/instrument-tdd/extra-instruction.md"
 
 
 @pytest.mark.parametrize("name", [
-    "phase0-cross-tdd.yaml", "phase0-extra.yaml", "phase0-local.yaml", "phase0-smoke.yaml",
+    "phase0-cross-tdd.yaml", "phase0-local.yaml", "phase0-smoke.yaml",
 ])
 def test_instrument_only_jobs_name_the_skill_in_an_extra_instruction(name):
     # PRD "The phase 0 instrument": the smoke trial did not load the skill
@@ -151,10 +142,10 @@ def test_server_address_appears_only_in_the_host_setting():
 
 @pytest.mark.slow
 def test_a_job_file_trial_through_assay_delivers_the_trace_and_resumes_on_a_re_run(tmp_path):
-    # The extra job, cut to its TypeScript task, with the agent swapped for the
+    # The smoke job, on its TypeScript task, with the agent swapped for the
     # same class minus the install and the model run. Everything else (skills,
     # kwargs, env) comes from the committed job file.
-    data = yaml.safe_load((JOBS_DIR / "phase0-extra.yaml").read_text(encoding="utf-8"))
+    data = yaml.safe_load((JOBS_DIR / "phase0-smoke.yaml").read_text(encoding="utf-8"))
     data["jobs_dir"] = str(tmp_path)
     data["job_name"] = "trace-delivery"
     data["tasks"] = [{"path": "tasks/typescript/split-second-stopwatch"}]

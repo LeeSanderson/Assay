@@ -63,7 +63,7 @@ Runs an Assay job in Harbor: it checks the job file, then runs `harbor run` with
 
 Every result must trace back to a committed job file, and every trial must run the pinned Claude Code version. `assay run` makes sure of both before Harbor starts. It refuses a job without `-c`, and a job whose Claude Code version is not `stable`, `latest` or `X.Y.Z` (for example the placeholder). Harbor cannot resume a job whose job file changed, and it cannot overwrite earlier results, so `assay run` looks at the job's results folder first. If that folder holds results of a different config, it stops and says to re-run with `--overwrite`.
 
-**Expected result:** Harbor's exit code, and one trial folder for each trial in `results/<job_name>/`. A `--dry-run` lists the trials and runs none: 4 each for `phase0-cross-control` and `phase0-cross-tdd`, 2 for `phase0-extra` and 1 for `phase0-local`. Exit code 2 means that `assay run` stopped before Harbor started, and the message says why.
+**Expected result:** Harbor's exit code, and one trial folder for each trial in `results/<job_name>/`. A `--dry-run` lists the trials and runs none: 4 each for `phase0-cross-control` and `phase0-cross-tdd`, and 1 for `phase0-local`. Exit code 2 means that `assay run` stopped before Harbor started, and the message says why.
 
 ### `assay trace-check`
 
@@ -104,7 +104,7 @@ Phase 0 replays each trial two times, to show that replay can rebuild the enviro
 - The replay of the last snapshot gives the same `reward.json`, field for field, as the trial's verifier.
 - The two runs give the same result for each snapshot.
 
-Phase 0 needs replay to work on all eleven trials. A trial where it does not work prints `replay does not work` and the causes, and the command exits 1. For each failure, find the cause, fix it, and replay all the trials again. If replay cannot rebuild the trial's environment and the cause cannot be fixed, the PRD's fallback is to make the mutation score the primary process metric.
+Phase 0 needs replay to work on all nine trials. A trial where it does not work prints `replay does not work` and the causes, and the command exits 1. For each failure, find the cause, fix it, and replay all the trials again. If replay cannot rebuild the trial's environment and the cause cannot be fixed, the PRD's fallback is to make the mutation score the primary process metric.
 
 ### `assay agent-runs`
 
@@ -144,9 +144,9 @@ It writes `analysis/trajectory.jsonl`, with one JSON line for each trial, and re
 
 Compares a person's labels of the trials with the values of `trajectory`. The second argument is an experiment's analysis folder, such as `analysis\phase0-tdd`, whose `<job>/<trial>/trajectory/result.json` files `assay experiment` writes, or the `analysis/trajectory.jsonl` that `assay trajectory` writes.
 
-`assay trajectory` is useful only if its rules give the same answer as a careful person. In Phase 0, a person labels the ten hosted trials from the neutral `jq` listing before `assay trajectory` runs. `assay compare-labels` then compares the labels with the script. The two agree on a trial, for one metric, when every field of that metric is the same: for test-first order, the verdict and the two anchors; for red-to-green order, the verdict, the two anchors and the three counts of the TDD loop. Notes are not compared.
+`assay trajectory` is useful only if its rules give the same answer as a careful person. In Phase 0, a person labels the eight hosted trials from the neutral `jq` listing before `assay trajectory` runs. `assay compare-labels` then compares the labels with the script. The two agree on a trial, for one metric, when every field of that metric is the same: for test-first order, the verdict and the two anchors; for red-to-green order, the verdict, the two anchors and the three counts of the TDD loop. Notes are not compared.
 
-**Expected result:** each trial prints `test_first: agrees  red_to_green: agrees`, the last line is `agrees every time: test_first=True  red_to_green=True`, and the exit code is 0. Phase 0 needs one full pass over the ten trials with no difference, for each metric. Each difference prints the field and the two values, and the command exits 1. A trial that is in one file only is also a difference. For each difference, fix the script, the label or the rule in the PRD, record the correction, and compare again.
+**Expected result:** each trial prints `test_first: agrees  red_to_green: agrees`, the last line is `agrees every time: test_first=True  red_to_green=True`, and the exit code is 0. Phase 0 needs one full pass over the eight trials with no difference, for each metric. Each difference prints the field and the two values, and the command exits 1. A trial that is in one file only is also a difference. For each difference, fix the script, the label or the rule in the PRD, record the correction, and compare again.
 
 ### Help
 
@@ -194,7 +194,6 @@ The Phase 0 job files are in `jobs/`. Each runs at `-k 1` with `instruments.agen
 |---|---|
 | `jobs/phase0-cross-control.yaml` | Haiku and Sonnet × control × TypeScript and Go: 4 |
 | `jobs/phase0-cross-tdd.yaml` | Haiku and Sonnet × `instrument-tdd` × TypeScript and Go: 4 |
-| `jobs/phase0-extra.yaml` | Haiku × `instrument-tdd` × TypeScript and Go: 2 |
 | `jobs/phase0-local.yaml` | the local model × `instrument-tdd` × one task pack: 1 |
 | `jobs/phase0-smoke.yaml` | Haiku × `instrument-tdd` × TypeScript: 1. The smoke gate, outside the experiment. |
 
@@ -226,7 +225,7 @@ Get-Content results\phase0-smoke\*\agent\claude-code.txt -Wait -Tail 20
 
 ### Stage 2: Run the experiment
 
-Check the plan first. It costs nothing: it prints the four jobs, the 11 expected trials by cell, the evaluations and the summary, and what resume would do:
+Check the plan first. It costs nothing: it prints the three jobs, the 9 expected trials by cell, the evaluations and the summary, and what resume would do:
 
 ```powershell
 uv run assay experiment phase0-tdd --dry-run
@@ -235,7 +234,7 @@ uv run assay experiment phase0-tdd --dry-run
 Run the hosted jobs. They read `ANTHROPIC_API_KEY` from `.env` (see [Setup](#setup)):
 
 ```powershell
-uv run assay experiment phase0-tdd --job phase0-cross-control --job phase0-cross-tdd --job phase0-extra --debug
+uv run assay experiment phase0-tdd --job phase0-cross-control --job phase0-cross-tdd --debug
 ```
 
 The evaluations and the summary run after the jobs, over every trial of the experiment. Until `phase0-local` runs, the summary shows the local cell as short. If the run stops (Ctrl-C, a halt or an error), fix the cause and run the same command again: finished trials are kept, discarded and halted trials run again, and unchanged evaluation results are reused. Add `--retries 1` to rerun an infrastructure failure at once. `--from-scratch` deletes `results/phase0-tdd` and `analysis/phase0-tdd` and starts again.
@@ -252,13 +251,13 @@ uv run assay experiment phase0-tdd --job phase0-local --debug
 
 ### Stage 3: Check `trajectory.py` by hand
 
-A person labels the ten hosted trials and compares the labels with `trajectory.py`, for test-first order and for red-to-green order and the TDD loop. The full procedure is in the PRD, "How a person checks `trajectory.py`" and its red-to-green extension. In short:
+A person labels the eight hosted trials and compares the labels with `trajectory.py`, for test-first order and for red-to-green order and the TDD loop. The full procedure is in the PRD, "How a person checks `trajectory.py`" and its red-to-green extension. In short:
 
 1. Print the neutral listing of each trial with `jq`. The listing gives no class, no seen state, no verdict, and no count. The header of `analyze/listing.jq` explains each field. This loop takes the replay snapshots and the agent's test runs from the evaluation results, and writes the listing of each hosted trial to `analysis/phase0-tdd/<job>/<trial>/listing.txt`:
 
    ```powershell
    [Console]::OutputEncoding = [Text.UTF8Encoding]::new()   # read jq's output as UTF-8
-   foreach ($job in 'phase0-cross-control', 'phase0-cross-tdd', 'phase0-extra') {
+   foreach ($job in 'phase0-cross-control', 'phase0-cross-tdd') {
      $trials = Get-ChildItem results\phase0-tdd\$job -Directory | Where-Object { Test-Path "$_\lock.json" }
      foreach ($t in $trials) {
        $out = "analysis\phase0-tdd\$job\$($t.Name)"
@@ -285,7 +284,7 @@ A person labels the ten hosted trials and compares the labels with `trajectory.p
    uv run assay compare-labels analysis\sheet.csv analysis\phase0-tdd
    ```
 
-4. For each difference, find the cause and fix the script, the label, or the rule in the PRD. Record each correction in a copy of `labeling/corrections-template.csv` (`corrected` is `script`, `label`, or `rule`). After a fix to `trajectory.py`, run `uv run assay experiment phase0-tdd` again: only `trajectory` reruns. Repeat until one full pass over the ten trials gives no difference for each metric.
+4. For each difference, find the cause and fix the script, the label, or the rule in the PRD. Record each correction in a copy of `labeling/corrections-template.csv` (`corrected` is `script`, `label`, or `rule`). After a fix to `trajectory.py`, run `uv run assay experiment phase0-tdd` again: only `trajectory` reruns. Repeat until one full pass over the eight trials gives no difference for each metric.
 
    ```powershell
    Copy-Item labeling\corrections-template.csv analysis\corrections.csv
