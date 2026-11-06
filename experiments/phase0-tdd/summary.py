@@ -13,7 +13,9 @@ acceptance number, and also
   from the server log are recorded outside the summary.
 
 The markdown gives the acceptance numbers, the missing trials and one table
-of the trials; the JSON also keeps each value the markdown leaves out.
+of the trials; the JSON also keeps each value the markdown leaves out. The
+trial values, the cells, the missing trials and the trials table come from
+assay.summary_parts, which the difficulty-ladder summary shares.
 
 Every kept trial passed the validity check (acceptance 3); a trial that
 failed it was discarded, and shows in its cell's discarded count and in the
@@ -28,18 +30,18 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from dataclasses import asdict
 from pathlib import Path
 
 from analyze.trial import share
 from assay.summary import ExperimentView, PlanView, Summary, TrialView
+from assay.summary_parts import (cells, discard_causes, missing_markdown, missing_trials,
+                                 num, of, trial_values, trials_markdown)
 
 SUMMARY_NAME = "phase0-summary"
 CAP_GBP = 15
 USD_PER_GBP = 1.27
 PERSON_CHECK = ("Check both against a person's labels with `assay compare-labels` "
                 "(PRD section 16); the summary does not give that half of 1 and 6.")
-CELL_KEYS = ("harness", "model_tier", "condition", "language")
 
 
 def check_options(options: dict, plan: PlanView) -> None:
@@ -67,7 +69,7 @@ SUMMARY = Summary(summarize, check_options=check_options)
 def phase0_summary(view: ExperimentView, options: dict) -> dict:
     usd_per_gbp = options.get("usd_per_gbp", USD_PER_GBP)
     cap_gbp = options.get("cap_gbp", CAP_GBP)
-    trials = [_trial(t) for t in view.trials]
+    trials = [trial_values(t) for t in view.trials]
     unflagged = [t for t in trials if not (t["web_access"] or {}).get("flagged")]
     versions: dict[str, set[str]] = {}
     for t in view.trials:
@@ -94,11 +96,11 @@ def phase0_summary(view: ExperimentView, options: dict) -> dict:
         # The same values without the trials that may have read the solution from the web.
         "unflagged": {"shares": _shares(unflagged), "agent_test_runs": _pooled(unflagged)},
         "cost": _cost(trials),
-        "cells": _cells(view),
+        "cells": cells(view),
         "expected_trials": sum(view.expected.values()),
         "kept_trials": len(trials),
-        "discard_causes": _causes(view.log),
-        "missing_trials": _missing(view),
+        "discard_causes": discard_causes(view.log),
+        "missing_trials": missing_trials(view),
         "hosted_cost": {
             "kept_usd": kept_usd, "discarded_usd": discarded_usd, "total_usd": total_usd,
             "total_gbp": total_usd / usd_per_gbp, "usd_per_gbp": usd_per_gbp,
@@ -106,122 +108,6 @@ def phase0_summary(view: ExperimentView, options: dict) -> dict:
         },
         "local_trials": [_local_trial(t) for t in view.trials if t.record.local],
     }
-
-
-def _trial(t: TrialView) -> dict:
-    replay = t.values.get("replay")
-    trajectory = t.values.get("trajectory") or {}
-    runs = t.values.get("agent-runs")
-    record = t.record
-    usage = record.usage
-    bash = trajectory.get("bash")
-    return {
-        "job": t.job,
-        "trial": t.trial,
-        "cell": asdict(t.cell) if t.cell is not None else None,
-        "language": t.cell.language if t.cell is not None else Path(t.task_pack).parts[-2],
-        "reward": record.reward,
-        "replay": None if replay is None else {"works": replay["works"],
-                                               "causes": replay["causes"]},
-        "test_first_order": (trajectory.get("test_first_order") or {}).get("verdict"),
-        "red_to_green_order": (trajectory.get("red_to_green_order") or {}).get("verdict"),
-        "tdd_loop": trajectory.get("tdd_loop"),
-        "bash": bash,
-        "bash_writes": None if bash is None
-        else "test/impl" if bash["bash_writes_test_or_implementation"]
-        else "yes" if bash["file_writing_bash"] else "no",
-        "skill_load": trajectory.get("skill_load"),
-        "ad_hoc_runs": trajectory.get("ad_hoc_runs"),
-        "web_access": trajectory.get("web_access"),
-        "agent_test_runs": None if runs is None else runs["cross_check"],
-        "errors": {name: error for name, error in t.errors.items() if error is not None},
-        "model_tier": record.identity.model_tier,
-        "local": record.local,
-        "cost": {
-            # L5: Claude Code's total_cost_usd is not a money cost for a local model.
-            "cost_usd": 0 if record.local else usage.cost_usd,
-            "input_tokens": usage.input_tokens,
-            "cache_tokens": usage.cache_tokens,
-            "output_tokens": usage.output_tokens,
-            "duration_sec": record.duration_sec,
-            "turns": record.turns,
-        },
-    }
-
-
-def _cell_key(cell: dict | None) -> tuple:
-    return tuple((cell or {}).get(k) for k in CELL_KEYS)
-
-
-def _cells(view: ExperimentView) -> list[dict]:
-    """Each cell: the expected trials, and the kept, discarded and halted
-    trials. A short cell holds fewer kept trials than expected."""
-    expected = Counter({_cell_key(asdict(c)): n for c, n in view.expected.items()})
-    kept = Counter(_cell_key(asdict(t.cell) if t.cell else None) for t in view.trials)
-    discarded = Counter(_cell_key(e.get("cell")) for e in view.log
-                        if e["event"] == "trial-discarded" and not e.get("after_halt"))
-    halted = Counter(_cell_key(e.get("cell")) for e in view.log if e["event"] == "halt")
-    keys = sorted(set(expected) | set(kept) | set(discarded) | set(halted),
-                  key=lambda k: tuple(str(v) for v in (k[2], k[1], k[3], k[0])))
-    return [{**dict(zip(CELL_KEYS, key)), "expected": expected[key], "kept": kept[key],
-             "discarded": discarded[key], "halted": halted[key],
-             "short": kept[key] < expected[key]} for key in keys]
-
-
-def _cause(event) -> str:
-    cause = event.get("cause") or {}
-    return cause.get("exception") or ", ".join(cause.get("failed_checks", []))
-
-
-def _causes(log) -> list[dict]:
-    """The causes of the discarded and halted trials, by exception type or
-    failed check; an unlisted exception type is marked for a person to classify."""
-    counts: Counter[tuple[str, bool]] = Counter()
-    for e in log:
-        if e["event"] == "halt" or (e["event"] == "trial-discarded" and not e.get("after_halt")):
-            counts[(_cause(e), bool((e.get("cause") or {}).get("unlisted")))] += 1
-    return [{"cause": name, "count": n, "unlisted": unlisted}
-            for (name, unlisted), n in sorted(counts.items())]
-
-
-def _missing(view: ExperimentView) -> dict:
-    """The trials missing from each short cell: the last discards and the
-    unresolved halts of the cell, one for each missing trial, and the rest
-    not run yet. A halt is resolved when the next invocation deletes its
-    trial (trial-discarded, after_halt); an unresolved halt with no cell is
-    listed on its own."""
-    resolved = {(e["job"], e["trial"]) for e in view.log
-                if e["event"] == "trial-discarded" and e.get("after_halt")}
-    lost = [e for e in view.log
-            if (e["event"] == "trial-discarded" and not e.get("after_halt"))
-            or (e["event"] == "halt" and (e["job"], e["trial"]) not in resolved)]
-
-    def entry(e) -> dict:
-        cause = e.get("cause") or {}
-        return {"job": e["job"], "trial": e["trial"],
-                "outcome": "halted" if e["event"] == "halt" else "discarded",
-                "cause": cause.get("exception")
-                or "failed check " + ", ".join(cause.get("failed_checks", [])),
-                "unlisted": bool(cause.get("unlisted"))}
-
-    kept: dict[tuple, list[str]] = {}
-    for t in view.trials:
-        key = _cell_key(asdict(t.cell) if t.cell else None)
-        kept.setdefault(key, []).append(f"{t.job}/{t.trial}")
-    cells = []
-    for c in _cells(view):
-        if not c["short"]:
-            continue
-        key = tuple(c[k] for k in CELL_KEYS)
-        missing = c["expected"] - c["kept"]
-        found = [e for e in lost if _cell_key(e.get("cell")) == key][-missing:]
-        cells.append({**{k: c[k] for k in CELL_KEYS}, "expected": c["expected"],
-                      "kept": c["kept"], "kept_trials": sorted(kept.get(key, [])),
-                      "trials": [entry(e) for e in found],
-                      "not_run": missing - len(found)})
-    return {"count": sum(c["expected"] - c["kept"] for c in cells), "cells": cells,
-            "halted_without_cell": [entry(e) for e in lost
-                                    if e["event"] == "halt" and e.get("cell") is None]}
 
 
 def _local_trial(t: TrialView) -> dict:
@@ -310,19 +196,6 @@ def _shares(trials: list[dict]) -> dict:
 # --- The markdown ---------------------------------------------------------------
 
 
-def pct(value) -> str:
-    return "-" if value is None else f"{value:.0%}"
-
-
-def num(value, digits=0) -> str:
-    return "-" if value is None else f"{value:,.{digits}f}"
-
-
-def of(count, total) -> str:
-    """`count of total (share)`, or "-" when there is no total."""
-    return "-" if not total else f"{count} of {total} ({pct(count / total)})"
-
-
 def counted(shares, key) -> str:
     return of(shares[key]["count"], shares["trials"])
 
@@ -332,8 +205,8 @@ def render_markdown(summary: dict) -> str:
                          for job, v in summary["claude_code_versions"].items()) or "-"
     lines = ["# Phase 0 summary", "", f"Claude Code version for each job: {versions}.", ""]
     lines += _acceptance_markdown(summary)
-    lines += _missing_markdown(summary)
-    lines += _trials_markdown(summary)
+    lines += missing_markdown(summary["missing_trials"], summary["expected_trials"])
+    lines += trials_markdown(summary["trials"])
     return "\n".join(lines) + "\n"
 
 
@@ -392,109 +265,3 @@ def _acceptance_markdown(summary: dict) -> list[str]:
     if not summary["local_trials"]:
         lines.append("- **8. Local trial:** not run yet.")
     return lines + ["", PERSON_CHECK, ""]
-
-
-def _lost(t: dict) -> str:
-    mark = " (an unlisted exception type: classify it)" if t["unlisted"] else ""
-    return f"`{t['job']}/{t['trial']}` {t['outcome']}, {t['cause']}{mark}"
-
-
-def _missing_markdown(summary: dict) -> list[str]:
-    missing = summary["missing_trials"]
-    if not missing["count"] and not missing["halted_without_cell"]:
-        return []
-    lines = ["## Missing trials", "",
-             f"{missing['count']} of {summary['expected_trials']} expected trials missing.", ""]
-    for c in missing["cells"]:
-        cell = " · ".join(str(c[k]) for k in CELL_KEYS)
-        names = ", ".join(f"`{name}`" for name in c["kept_trials"])
-        lines.append(f"- {cell}: {c['kept']} of {c['expected']} kept"
-                     + (f" ({names})" if names else ""))
-        lines += [f"  - {_lost(t)}" for t in c["trials"]]
-        if c["not_run"]:
-            lines.append(f"  - {c['not_run']} trial{'s' if c['not_run'] > 1 else ''} "
-                         "not run yet")
-    for t in missing["halted_without_cell"]:
-        lines.append(f"- no cell: {_lost(t)}")
-    return lines + ["", "The next invocation runs these again.", ""]
-
-
-TRIAL_COLUMNS = ("Job", "Trial", "Model tier", "Condition", "Language", "Score",
-                 "Test-first order", "Red-to-green order", "TDD loop", "Agent tests",
-                 "Tested after edit", "Read matches replay", "Bash writes", "Ad-hoc runs",
-                 "Skill loaded", "Web access", "Errors", "USD", "Tokens in / cache / out",
-                 "Seconds", "Turns")
-
-TRIAL_KEY = [
-    "- **Red-to-green order**, from the agent's test runs that agree with the replay (the "
-    "seen states): `red-to-green` (the first seen state is red, and a later one is green), "
-    "`green-first` (the first seen state is green: the agent did not see the tests fail), "
-    "`never-green` (every seen state is red) or `not-observed` (no seen state); `-` when "
-    "there is no replay.",
-    "- **TDD loop:** cycles / tests never seen red / refactor steps.",
-    "- **Score:** the withheld reference tests that pass on the final repository, with ✓ when "
-    "they all pass and compile (reward 1) and ✗ otherwise; **Agent tests:** the agent's own "
-    "tests that pass.",
-    "- **Tested after edit** and **Read matches replay** check the instrument, not the agent. "
-    "Tested after edit: the snapshots after which the agent ran its tests before its next "
-    "file write. Read matches replay: the agent's full test runs whose red or green, as read "
-    "from their output, matches the replay of the same snapshot.",
-    "- **Bash writes:** whether a `Bash` call wrote a file (`yes`), and whether it wrote a "
-    "test or implementation file (`test/impl`); test-first order cannot see such a write.",
-    "- **Ad-hoc runs:** scripts the agent wrote and ran, which the cross-check does not see.",
-    "- **Web access:** the steps of a web tool call that did not fail, or of a `Bash` command "
-    "with a URL, `curl`, `wget` or `git clone`.",
-    "- **USD:** the local tier's money cost is zero (L5).",
-]
-
-
-def _trials_markdown(summary: dict) -> list[str]:
-    lines = ["## Trials", "",
-             "| " + " | ".join(TRIAL_COLUMNS) + " |",
-             "|" + "---|" * len(TRIAL_COLUMNS)]
-
-    def order(t):
-        cell = t["cell"] or {}
-        return (str(cell.get("condition")), str(t["model_tier"]), t["language"], t["job"],
-                t["trial"])
-
-    for t in sorted(summary["trials"], key=order):
-        loop = t["tdd_loop"]
-        loop = "-" if loop is None else \
-            f"{loop['cycles']} / {loop['tests_never_seen_red']} / {loop['refactor_steps']}"
-        reward = t["reward"] or {}
-        runs = t["agent_test_runs"] or {}
-        skill = t["skill_load"]
-        skill = "-" if skill is None else ("before first file write"
-                                           if skill["before_first_file_write"]
-                                           else "after first file write" if skill["loaded"]
-                                           else "no")
-        web = t["web_access"]
-        web = "-" if web is None else \
-            ", ".join(map(str, web["step_ids"])) if web["flagged"] else "no"
-        ad_hoc = (t["ad_hoc_runs"] or {}).get("count") or "-"
-        errors = "; ".join(f"{name}: {error}" for name, error in t["errors"].items()) or "-"
-        c = t["cost"]
-        usd = f"{num(c['cost_usd'], 2)}{' (local)' if t['local'] else ''}"
-        tokens = " / ".join(num(c[k]) for k in ("input_tokens", "cache_tokens", "output_tokens"))
-        cells = [
-            t["job"], t["trial"], t["model_tier"], (t["cell"] or {}).get("condition", "-"),
-            t["language"], _score(reward), t["test_first_order"] or "-",
-            t["red_to_green_order"] or "-", loop, _passed(reward, "agent_tests"),
-            of(runs.get("covered_snapshots"), runs.get("snapshots")),
-            of(runs.get("agreeing_runs"), runs.get("compared_runs")),
-            t["bash_writes"] or "-", str(ad_hoc), skill, web, errors, usd, tokens,
-            num(c["duration_sec"]), num(c["turns"])]
-        lines.append("| " + " | ".join(cells) + " |")
-    return lines + ["", *TRIAL_KEY]
-
-
-def _score(reward: dict) -> str:
-    passed = _passed(reward, "reference")
-    mark = {1: " ✓", 0: " ✗"}.get(reward.get("reward"), "")
-    return passed + mark if passed != "-" else passed
-
-
-def _passed(reward: dict, prefix: str) -> str:
-    passed, total = reward.get(f"{prefix}_passed"), reward.get(f"{prefix}_total")
-    return "-" if total is None else f"{passed} of {total}"
