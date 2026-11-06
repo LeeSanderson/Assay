@@ -1,0 +1,23 @@
+# The difficulty ladder (PRD Part II): on which rung does each model tier,
+# condition and language start to fail? The full matrix on each rung, at one
+# repetition. Its task packs come from the job files only; the rung order of
+# the summary is RUNGS in summary.py.
+#
+#   uv run assay experiment difficulty-ladder --dry-run    the plan, at no cost
+#   uv run assay experiment difficulty-ladder              run the jobs; again to resume
+#
+# The trials of each job go to results/difficulty-ladder/<job_name>/, and the
+# experiment log to analysis/difficulty-ladder/experiment-log.jsonl.
+
+jobs = [                              # run in this order, one after another
+  "jobs/ladder-hosted-control.yaml",
+  "jobs/ladder-hosted-tdd.yaml",
+  "jobs/ladder-local-control.yaml",   # on the host of the local server: --job ladder-local-control
+  "jobs/ladder-local-tdd.yaml",       # on the host of the local server: --job ladder-local-tdd
+]
+
+evaluations = ["replay", "agent-runs", "trajectory"]   # run order; a built-in name or ./path
+
+[summary]
+use = "./summary.py"
+# options = { usd_per_gbp = 1.27 }   # the rate that converts USD to GBP; set it on the day
