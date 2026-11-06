@@ -52,9 +52,10 @@ def test_the_phase0_dry_run_prints_the_jobs_conditions_and_expected_trials_by_ce
         ("anthropic/claude-sonnet-5-5", "instrument-tdd", "typescript", 1),
         ("anthropic/claude-sonnet-5-5", "instrument-tdd", "go", 1),
         ("laguna-s-2.1", "instrument-tdd", "typescript", 1),
+        ("laguna-s-2.1", "instrument-tdd", "go", 1),
     ])
     assert {c[2] for c in cells} == {"claude-code"}
-    assert "9 expected trials" in out
+    assert "10 expected trials" in out
     assert out[out.index("evaluations, in run order:"):].splitlines()[1:4] == [
         "  replay (built-in)",
         "  agent-runs (built-in) depends on replay",

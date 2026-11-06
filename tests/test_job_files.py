@@ -61,11 +61,14 @@ def test_the_two_cross_jobs_expand_to_the_eight_planned_trials():
     )
 
 
-def test_local_job_is_one_instrument_tdd_trial_on_one_server_slot():
+def test_local_job_is_one_instrument_tdd_trial_in_each_language_on_one_server_slot():
     config = load_job("phase0-local.yaml")
     trials = expand_trials(config)
 
-    assert len(trials) == 1
+    assert sorted(trial_key(t) for t in trials) == [
+        ("laguna-s-2.1", "instrument-tdd", "go"),
+        ("laguna-s-2.1", "instrument-tdd", "typescript"),
+    ]
     (agent,) = config.agents
     assert agent.skills  # instrument-tdd
     assert agent.concurrency_group is not None  # L3
