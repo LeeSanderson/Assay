@@ -290,6 +290,32 @@ A person labels the eight hosted trials and compares the labels with `trajectory
 
 Each complete invocation of stage 2 writes `analysis/phase0-tdd/summary/phase0-summary.md` (for a person) and `phase0-summary.json` again. [`assay experiment`](#assay-experiment) says what they hold and when Phase 0 passes.
 
+## Run the difficulty ladder
+
+The ladder (PRD section 19) runs the experiment `difficulty-ladder`: four jobs, 72 trials, on six rungs.
+
+**1. Pass the smoke gate on the new rungs.** `jobs/ladder-smoke.yaml` runs one Haiku × `instrument-tdd` × TypeScript trial on each rung after the first (5 trials). Rung 1 passed the Phase 0 smoke gate. The gate criteria are the same as in [Stage 1](#stage-1-pass-the-smoke-gate):
+
+```powershell
+uv run assay run -c jobs/ladder-smoke.yaml -y --debug
+uv run assay trace-check results\ladder-smoke
+uv run assay replay results\ladder-smoke
+uv run assay agent-runs results\ladder-smoke
+uv run assay trajectory results\ladder-smoke
+```
+
+If a trial fails the gate, fix the cause and run the job again with `--overwrite`.
+
+**2. Run the experiment.** Check the plan, then run the hosted jobs. Run the local jobs on the host of the local server:
+
+```powershell
+uv run assay experiment difficulty-ladder --dry-run
+uv run assay experiment difficulty-ladder --job ladder-hosted-control --job ladder-hosted-tdd --debug
+uv run assay experiment difficulty-ladder --job ladder-local-control --job ladder-local-tdd --debug
+```
+
+The summary is written to `analysis/difficulty-ladder/summary/ladder-summary.md`.
+
 ## Run the tests
 
 ```powershell

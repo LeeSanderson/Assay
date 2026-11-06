@@ -1,0 +1,33 @@
+# The difficulty ladder, the smoke job: Haiku x instrument-tdd x TypeScript,
+# one trial on each new rung, at -k 1. 5 trials (issue #77). It applies the
+# PRD section 17 smoke gate to the new task packs before the ladder runs.
+#
+# Launch from the repository root:  uv run assay run -c jobs/ladder-smoke.yaml -y --debug
+# See README.md, "Run the difficulty ladder".
+
+job_name: ladder-smoke
+jobs_dir: results
+n_attempts: 1
+# instrument-tdd: the skill's description alone did not load it on the smoke
+# trial, so the prompt names it (PRD "The phase 0 instrument").
+extra_instruction_paths: [variants/instrument-tdd/extra-instruction.md]
+
+tasks:
+  # Rung 1 (split-second-stopwatch) passed the Phase 0 smoke gate.
+  - path: tasks/typescript/wordy
+  - path: tasks/typescript/poker
+  - path: tasks/typescript/bowling
+  - path: tasks/typescript/two-bucket
+  - path: tasks/typescript/alphametics
+
+agents:
+  # instrument-tdd (parts from variants/instrument-tdd/): the skill, and the extra instruction above.
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-haiku-5-5
+    skills: [variants/instrument-tdd/tdd]
+    kwargs:
+      # Claude Code version: the same value in all the job files (PRD "Version pins").
+      version: "2.1.308"
+    env:
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"   # every model tier (L9)
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"

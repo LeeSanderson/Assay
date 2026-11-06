@@ -61,8 +61,20 @@ def test_the_four_ladder_jobs_hold_the_72_planned_trials():
     assert len({ladder_key(t) for t in trials}) == len(trials)
 
 
+def test_the_ladder_smoke_job_is_one_haiku_instrument_tdd_trial_on_each_new_rung():
+    # Issue #77: the smoke gate (PRD section 17) on the rungs after the first.
+    config = load_job("ladder-smoke.yaml")
+
+    trials = expand_trials(config)
+
+    assert [ladder_key(t) for t in trials] == [
+        ("anthropic/claude-haiku-5-5", "instrument-tdd", "typescript", rung) for rung in RUNGS[1:]]
+    assert [Path(p).as_posix() for p in config.extra_instruction_paths] == [INSTRUMENT_INSTRUCTION]
+
+
 def test_every_ladder_agent_shares_the_phase0_claude_code_version_and_l9_settings():
-    agents = [a for name in (*JOBS, "phase0-cross-tdd.yaml") for a in load_job(name).agents]
+    agents = [a for name in (*JOBS, "ladder-smoke.yaml", "phase0-cross-tdd.yaml")
+              for a in load_job(name).agents]
 
     assert len({a.kwargs.get("version") for a in agents}) == 1
     for agent in agents:
