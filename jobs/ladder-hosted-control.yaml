@@ -25,6 +25,9 @@ tasks:
   # Rung 4: bowling (rule-dense state with validation).
   - path: tasks/typescript/bowling
   - path: tasks/go/bowling
+  # Rung 6: alphametics (backtracking search with a time limit).
+  - path: tasks/typescript/alphametics
+  - path: tasks/go/alphametics
 
 agents:
   # Control: no variant flags (no skills, no settings, no extra instructions).
