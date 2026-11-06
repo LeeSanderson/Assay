@@ -4,16 +4,21 @@ An experiment-local summary (see assay.summary) builds its values from the
 ExperimentView. These are the values and the markdown that the Phase 0
 summary and the difficulty-ladder summary share, so neither copies them:
 
+- `check_number_options`: the options check of a summary whose options are
+  all numbers above 0;
 - `trial_values`: the values of one kept trial, as a dict for the JSON;
+- `money_cost_usd`: the money cost of one kept trial, the one place of the
+  L5 rule that a local trial has none;
 - `hosted_cost`: the cost of the hosted trials, kept plus discarded;
 - `cells`: each cell's expected, kept, discarded and halted trials, and
-  whether it is short;
+  whether it is short; `cell_key` gives a cell's key;
 - `discard_causes`: the causes of the discarded and halted trials;
 - `missing_trials` and `missing_markdown`: the trials missing from each short
   cell, with the cause of each discard or halt, or that it has not run yet;
 - `trials_markdown`: the trials table and its key, from the trial values.
   Its columns are a sequence of `Column`, so a summary can add its own
-  (`TRIAL_COLUMNS` gives the Phase 0 columns, `TRIAL_KEY` their key).
+  (`TRIAL_COLUMNS` gives the Phase 0 columns, `TRIAL_KEY` their key);
+- `markdown_table`, `score`, `num`, `pct` and `of`: the markdown pieces.
 """
 
 from __future__ import annotations
@@ -21,11 +26,21 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
-from pathlib import Path
 
 from assay.summary import ExperimentView, TrialView
 
 CELL_KEYS = ("harness", "model_tier", "condition", "language")
+
+
+def check_number_options(options: dict, keys: Sequence[str]) -> None:
+    """Raises ValueError for an option that is not one of `keys`, or for a
+    value that is not a number above 0."""
+    if unknown := sorted(set(options) - set(keys)):
+        raise ValueError(f"unknown option {', '.join(unknown)} ({', '.join(keys)})")
+    for key in keys:
+        value = options.get(key, 1)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError(f"{key} must be a number above 0, not {value!r}")
 
 
 # --- The values -----------------------------------------------------------------
@@ -33,7 +48,8 @@ CELL_KEYS = ("harness", "model_tier", "condition", "language")
 
 def trial_values(t: TrialView) -> dict:
     """One kept trial: its cell and outcome, the values of its evaluations
-    and its cost (a local trial's money cost is 0, L5)."""
+    and its cost. A local trial's cost_usd is 0, the price that L5 gives the
+    local model; whether a trial has a money cost is `money_cost_usd`."""
     replay = t.values.get("replay")
     trajectory = t.values.get("trajectory") or {}
     runs = t.values.get("agent-runs")
@@ -44,7 +60,7 @@ def trial_values(t: TrialView) -> dict:
         "job": t.job,
         "trial": t.trial,
         "cell": asdict(t.cell) if t.cell is not None else None,
-        "language": t.cell.language if t.cell is not None else Path(t.task_pack).parts[-2],
+        "language": t.cell.language if t.cell is not None else t.pack_language,
         "reward": record.reward,
         "replay": None if replay is None else {"works": replay["works"],
                                                "causes": replay["causes"]},
@@ -63,7 +79,6 @@ def trial_values(t: TrialView) -> dict:
         "model_tier": record.identity.model_tier,
         "local": record.local,
         "cost": {
-            # L5: Claude Code's total_cost_usd is not a money cost for a local model.
             "cost_usd": 0 if record.local else usage.cost_usd,
             "input_tokens": usage.input_tokens,
             "cache_tokens": usage.cache_tokens,
@@ -72,6 +87,13 @@ def trial_values(t: TrialView) -> dict:
             "turns": record.turns,
         },
     }
+
+
+def money_cost_usd(t: dict) -> float | None:
+    """The money cost of a kept trial (a `trial_values` dict) in USD. L5: the
+    cost that Claude Code reports for a local model is no money cost, so a
+    local trial has none (None). Every summary takes the rule from here."""
+    return None if t["local"] else t["cost"]["cost_usd"]
 
 
 def hosted_cost(view: ExperimentView, trials: Sequence[dict], usd_per_gbp: float) -> dict:
@@ -84,13 +106,14 @@ def hosted_cost(view: ExperimentView, trials: Sequence[dict], usd_per_gbp: float
     # from the trial-discarded line.
     discarded_usd = sum(e.get("cost_usd") or 0 for e in discards
                         if (e.get("cell") or {}).get("model_tier") not in local_tiers)
-    kept_usd = sum(t["cost"]["cost_usd"] or 0 for t in trials if not t["local"])
+    kept_usd = sum(money_cost_usd(t) or 0 for t in trials)
     total_usd = kept_usd + discarded_usd
     return {"kept_usd": kept_usd, "discarded_usd": discarded_usd, "total_usd": total_usd,
             "total_gbp": total_usd / usd_per_gbp, "usd_per_gbp": usd_per_gbp}
 
 
-def _cell_key(cell: dict | None) -> tuple:
+def cell_key(cell: dict | None) -> tuple:
+    """A cell's levels, in CELL_KEYS order; None for each level of no cell."""
     return tuple((cell or {}).get(k) for k in CELL_KEYS)
 
 
@@ -98,11 +121,11 @@ def cells(view: ExperimentView) -> list[dict]:
     """Each cell: the expected trials, and the kept, discarded and halted
     trials. A short cell holds fewer kept trials than expected. The cells go
     by condition, then model tier, then language."""
-    expected = Counter({_cell_key(asdict(c)): n for c, n in view.expected.items()})
-    kept = Counter(_cell_key(asdict(t.cell) if t.cell else None) for t in view.trials)
-    discarded = Counter(_cell_key(e.get("cell")) for e in view.log
+    expected = Counter({cell_key(asdict(c)): n for c, n in view.expected.items()})
+    kept = Counter(cell_key(asdict(t.cell) if t.cell else None) for t in view.trials)
+    discarded = Counter(cell_key(e.get("cell")) for e in view.log
                         if e["event"] == "trial-discarded" and not e.get("after_halt"))
-    halted = Counter(_cell_key(e.get("cell")) for e in view.log if e["event"] == "halt")
+    halted = Counter(cell_key(e.get("cell")) for e in view.log if e["event"] == "halt")
     keys = sorted(set(expected) | set(kept) | set(discarded) | set(halted),
                   key=lambda k: tuple(str(v) for v in (k[2], k[1], k[3], k[0])))
     return [{**dict(zip(CELL_KEYS, key)), "expected": expected[key], "kept": kept[key],
@@ -148,7 +171,7 @@ def missing_trials(view: ExperimentView) -> dict:
 
     kept: dict[tuple, list[str]] = {}
     for t in view.trials:
-        key = _cell_key(asdict(t.cell) if t.cell else None)
+        key = cell_key(asdict(t.cell) if t.cell else None)
         kept.setdefault(key, []).append(f"{t.job}/{t.trial}")
     short = []
     for c in cells(view):
@@ -156,7 +179,7 @@ def missing_trials(view: ExperimentView) -> dict:
             continue
         key = tuple(c[k] for k in CELL_KEYS)
         missing = c["expected"] - c["kept"]
-        found = [e for e in lost if _cell_key(e.get("cell")) == key][-missing:]
+        found = [e for e in lost if cell_key(e.get("cell")) == key][-missing:]
         short.append({**{k: c[k] for k in CELL_KEYS}, "expected": c["expected"],
                       "kept": c["kept"], "kept_trials": sorted(kept.get(key, [])),
                       "trials": [entry(e) for e in found],
@@ -222,11 +245,21 @@ def _passed(reward: dict, prefix: str) -> str:
     return "-" if total is None else f"{passed} of {total}"
 
 
-def _score(t: dict) -> str:
-    reward = t["reward"] or {}
-    passed = _passed(reward, "reference")
+def score(reward: dict, of_word: str = " of ") -> str:
+    """The reference tests passed of the total (`29 of 29`, or with
+    `of_word="/"` `29/29`), with ✓ for reward 1 and ✗ for reward 0; "-" when
+    the reward gives no total."""
+    passed, total = reward.get("reference_passed"), reward.get("reference_total")
+    if total is None:
+        return "-"
     mark = {1: " ✓", 0: " ✗"}.get(reward.get("reward"), "")
-    return passed + mark if passed != "-" else passed
+    return f"{passed}{of_word}{total}{mark}"
+
+
+def markdown_table(header: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
+    """The lines of a markdown table."""
+    return ["| " + " | ".join(header) + " |", "|" + "---|" * len(header),
+            *("| " + " | ".join(r) + " |" for r in rows)]
 
 
 def _tdd_loop(t: dict) -> str:
@@ -260,7 +293,7 @@ TRIAL_COLUMNS: tuple[Column, ...] = (
     Column("Model tier", lambda t: t["model_tier"]),
     Column("Condition", lambda t: (t["cell"] or {}).get("condition", "-")),
     Column("Language", lambda t: t["language"]),
-    Column("Score", _score),
+    Column("Score", lambda t: score(t["reward"] or {})),
     Column("Test-first order", lambda t: t["test_first_order"] or "-"),
     Column("Red-to-green order", lambda t: t["red_to_green_order"] or "-"),
     Column("TDD loop", _tdd_loop),
@@ -316,9 +349,5 @@ def trials_markdown(trials: Sequence[dict], columns: Sequence[Column] = TRIAL_CO
                     order: Callable[[dict], tuple] = _trial_order) -> list[str]:
     """The Trials section: one row for each trial, in `order` (by default by
     condition, then model tier, then language), and the key under the table."""
-    lines = ["## Trials", "",
-             "| " + " | ".join(c.header for c in columns) + " |",
-             "|" + "---|" * len(columns)]
-    for t in sorted(trials, key=order):
-        lines.append("| " + " | ".join(c.text(t) for c in columns) + " |")
-    return lines + ["", *key]
+    rows = [[c.text(t) for c in columns] for t in sorted(trials, key=order)]
+    return ["## Trials", "", *markdown_table([c.header for c in columns], rows), "", *key]

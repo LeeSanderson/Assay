@@ -199,9 +199,10 @@ def test_the_rollup_totals_every_kept_trial_and_means_the_passed_ones_only(repo)
     grid = row(markdown, f"{HAIKU} · control · go")
     assert (grid[0], grid[1], grid[-1]) == ("29/29 ✓", "—", "20/29 ✗")
     assert row(markdown, "Model tier · condition · language", "Rollup") == [
-        "Passed", "Input tokens", "Input tokens per passed trial", "Cached tokens",
-        "Cached tokens per passed trial", "Output tokens", "Output tokens per passed trial",
-        "USD", "USD per passed trial", "Agent time (s)", "Agent time (s) per passed trial"]
+        "Passed", "Input tokens", "Mean input tokens per passed trial", "Cached tokens",
+        "Mean cached tokens per passed trial", "Output tokens",
+        "Mean output tokens per passed trial", "USD", "Mean USD per passed trial",
+        "Agent time (s)", "Mean agent time (s) per passed trial"]
     # Totals over the passed and the failed trial; means over the passed one only.
     assert row(markdown, f"{HAIKU} · control · go", "Rollup") == [
         "1 of 2", "4,000", "1,000", "1,600", "600", "200", "50", "1.00", "0.30", "1,000", "100"]
@@ -215,6 +216,21 @@ def test_the_rollup_totals_every_kept_trial_and_means_the_passed_ones_only(repo)
     assert (haiku_go["kept"], haiku_go["passed"]) == (2, 1)
     assert haiku_go["totals"]["cost_usd"] == pytest.approx(1.0)
     assert haiku_go["means_per_passed_trial"]["agent_time_sec"] == 100
+
+
+def test_a_timed_out_trial_with_reward_1_is_a_failed_trial_in_the_grid_and_the_rollup(repo):
+    # The verifier runs after an agent timeout, so the code left behind may
+    # still pass every reference test; the trial is a failed one (story 17).
+    fake = harbor({trial(HOSTED[0], HAIKU, "go"): [exception("AgentTimeoutError")]})
+
+    assert experiment(fake, *hosted()) == 0
+
+    data, markdown = summary(repo)
+    assert row(markdown, f"{HAIKU} · control · go")[0] == "timeout"
+    assert row(markdown, f"{HAIKU} · control · go", "Rollup")[0] == "0 of 1"
+    [haiku_go] = [r for r in data["rollup"]
+                  if (r["model_tier"], r["condition"], r["language"]) == (HAIKU, "control", "go")]
+    assert (haiku_go["kept"], haiku_go["passed"]) == (1, 0)
 
 
 def test_a_discarded_trial_is_left_out_of_the_rollup_but_counted_in_the_hosted_cost(repo):
