@@ -1,0 +1,37 @@
+# The difficulty ladder (PRD Part II), hosted instrument-tdd job: Haiku and
+# Sonnet x instrument-tdd x TypeScript and Go, on every rung, at -k 1.
+#
+# The task packs: the same as in the other three ladder-*.yaml jobs.
+#
+# Run it through the experiment:  uv run assay experiment difficulty-ladder
+
+job_name: ladder-hosted-tdd
+jobs_dir: results
+n_attempts: 1
+# instrument-tdd: the skill's description alone did not load it on the smoke
+# trial, so the prompt names it (PRD "The phase 0 instrument").
+extra_instruction_paths: [variants/instrument-tdd/extra-instruction.md]
+
+tasks:
+  # Rung 1: split-second-stopwatch (a state machine).
+  - path: tasks/typescript/split-second-stopwatch
+  - path: tasks/go/split-second-stopwatch
+
+agents:
+  # instrument-tdd (parts from variants/instrument-tdd/): the skill, and the extra instruction above.
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-haiku-5-5
+    skills: [variants/instrument-tdd/tdd]
+    kwargs:
+      # Claude Code version: the same value in all the job files (PRD "Version pins").
+      version: &claude_code_version "2.1.308"
+    env: &hosted_env
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"   # every model tier (L9)
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-sonnet-5-5
+    skills: [variants/instrument-tdd/tdd]
+    kwargs:
+      version: *claude_code_version
+    env: *hosted_env
