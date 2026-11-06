@@ -1,92 +1,40 @@
-"""The TypeScript task pack `tasks/typescript/split-second-stopwatch/`.
+"""The TypeScript task pack `tasks/typescript/split-second-stopwatch/`: what
+is specific to it, chiefly how its verifier counts the agent's tests.
+tests/test_task_packs.py gives it the checks that every pack shares.
 
 The fast tests read the pack's files. The slow tests (seam 5) need Docker:
 they run `tests/test.sh` on prepared repositories in the task image with no
-network, as replay does, and they run the pack through Harbor with the
-`oracle` and do-nothing (`nop`) agents.
+network, as replay does.
 """
 
-import json
 import re
-import subprocess
-import tomllib
-import uuid
-from pathlib import Path
 
 import pytest
 
 from analyze.languages import TEST, classify
+from tests.task_packs import REPO_ROOT, packs, run_in_image, verify
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-PACK = REPO_ROOT / "tasks" / "typescript" / "split-second-stopwatch"
-SEED = PACK / "environment" / "seed"
-STUB = "split-second-stopwatch.ts"
+PACK = packs("split-second-stopwatch")["typescript"]
+STUB = PACK.stub
 REFERENCE_TEST = "assay-reference.split-second-stopwatch.test.ts"
-REWARD_KEYS = {
-    "reward", "reference_compiles", "reference_passed", "reference_total",
-    "agent_tests_compile", "agent_tests_passed", "agent_tests_total",
-}
-REFERENCE_TEST_COUNT = 29
-
-
-def _metadata() -> dict:
-    return tomllib.loads((PACK / "task.toml").read_text(encoding="utf-8"))["metadata"]
-
-
-def _seed_files() -> list[str]:
-    return sorted(p.relative_to(SEED).as_posix() for p in SEED.rglob("*") if p.is_file())
+REFERENCE_TEST_COUNT = PACK.reference_count
 
 
 # --- The pack's files -------------------------------------------------------
 
 
-def test_reference_tests_carry_the_prefix_and_no_xit():
-    tests = [p.name for p in (PACK / "tests").iterdir() if classify("typescript", p.name) == TEST]
-    assert tests == [REFERENCE_TEST]
-    text = (PACK / "tests" / REFERENCE_TEST).read_text(encoding="utf-8")
-    assert not re.search(r"\bxit\(", text)
-    assert len(re.findall(r"^\s*it\(", text, re.MULTILINE)) == REFERENCE_TEST_COUNT
-
-
-def test_seed_repository_holds_the_prd_files_and_no_test_or_claude_dir():
-    assert _seed_files() == sorted([
-        STUB, "package.json", "yarn.lock", ".yarnrc.yml", "tsconfig.json",
-        "jest.config.cjs", "babel.config.cjs", "eslint.config.mjs",
-    ])
-    assert not (SEED / ".claude").exists()
-    assert (SEED / "yarn.lock").stat().st_size > 0
-
-
-def test_prompt_is_the_exercism_instructions_plus_the_footer():
-    text = (PACK / "instruction.md").read_text(encoding="utf-8")
-    assert text.startswith("# Instructions\n\nYour task is to build a stopwatch")
-    assert text.endswith(
-        "Implement the solution in `split-second-stopwatch.ts`. Keep the exported "
-        "names and signatures as they are. Tests that you cannot see will check "
-        "your solution.\n"
-    )
-
-
-FOOTER_START = "Implement the solution in `split-second-stopwatch.ts`."
-
-
-def _interface_section() -> str:
-    """The instruction's Interface section: from its heading up to the footer."""
-    text = (PACK / "instruction.md").read_text(encoding="utf-8")
-    heading = re.search(r"^## Interface$", text, re.MULTILINE)
-    assert heading, "instruction.md has no '## Interface' section"
-    footer = text.index(FOOTER_START)
-    assert heading.start() < footer
-    return text[heading.start():footer]
+def test_seed_lock_file_is_not_empty_and_there_is_no_claude_dir():
+    assert not (PACK.seed / ".claude").exists()
+    assert (PACK.seed / "yarn.lock").stat().st_size > 0
 
 
 def _reference_error_messages() -> set[str]:
-    text = (PACK / "tests" / REFERENCE_TEST).read_text(encoding="utf-8")
+    text = (PACK.path / "tests" / REFERENCE_TEST).read_text(encoding="utf-8")
     return set(re.findall(r"toThrow\(\s*'([^']+)'\s*\)", text))
 
 
 def test_instruction_interface_states_the_getter_and_advance_time_formats():
-    section = _interface_section()
+    section = PACK.interface_section()
     for name in ("currentLap", "total", "previousLaps", "state", "advanceTime"):
         assert re.search(rf"`{name}[`(]", section), name
     assert '`"HH:MM:SS"`' in section
@@ -97,99 +45,8 @@ def test_instruction_interface_states_the_getter_and_advance_time_formats():
 def test_instruction_interface_names_exactly_the_reference_error_messages():
     messages = _reference_error_messages()
     assert len(messages) == 4
-    stated = set(re.findall(r'`"(cannot [^"`]+)"`', _interface_section()))
+    stated = set(re.findall(r'`"(cannot [^"`]+)"`', PACK.interface_section()))
     assert stated == messages
-
-
-def test_instruction_does_not_name_a_test_command():
-    text = (PACK / "instruction.md").read_text(encoding="utf-8")
-    for command in ("yarn", "npm", "jest", "npx"):
-        assert command not in text.lower(), command
-
-
-def test_task_toml_records_the_interface_section():
-    assert any("Interface section" in change for change in _metadata()["mechanical_changes"])
-
-
-def test_task_toml_sets_the_prd_limits():
-    config = tomllib.loads((PACK / "task.toml").read_text(encoding="utf-8"))
-    assert config["agent"]["timeout_sec"] == 1800
-    assert config["verifier"]["timeout_sec"] == 600
-    assert config["environment"]["cpus"] == 2
-    assert config["environment"]["memory_mb"] == 4096
-    assert config["environment"].get("network_mode", "public") == "public"
-
-
-def test_metadata_records_the_provenance():
-    meta = _metadata()
-    assert meta["source_repo"] == "https://github.com/exercism/typescript"
-    assert re.fullmatch(r"[0-9a-f]{40}", meta["source_commit"])
-    exercise = "exercises/practice/split-second-stopwatch/"
-    assert set(meta["copied_paths"]) >= {
-        exercise + STUB,
-        exercise + "split-second-stopwatch.test.ts",
-        exercise + ".meta/proof.ci.ts",
-        exercise + ".docs/instructions.md",
-    }
-    assert all(p.startswith(exercise) for p in meta["copied_paths"])
-    assert any("xit" in change for change in meta["mechanical_changes"])
-    assert any("assay-reference." in change for change in meta["mechanical_changes"])
-    assert sorted(meta["seed_files"]) == _seed_files()
-
-
-def test_metadata_image_digest_is_the_dockerfile_base_image():
-    dockerfile = (PACK / "environment" / "Dockerfile").read_text(encoding="utf-8")
-    base = re.search(r"^FROM\s+(\S+)", dockerfile, re.MULTILINE).group(1)
-    assert re.fullmatch(r"node:\d+[\d.]*-bookworm@sha256:[0-9a-f]{64}", base)
-    assert _metadata()["base_image"] == base
-
-
-def test_no_seed_file_mentions_exercism():
-    # Earlier trials recognised the exercise from these fingerprints and
-    # fetched its solution.
-    for path in SEED.rglob("*"):
-        if path.is_file():
-            assert "exercism" not in path.read_text(encoding="utf-8").lower(), path
-
-
-# The exported names and signatures of the source stub (Exercism commit
-# a24e6ae, exercises/practice/split-second-stopwatch/split-second-stopwatch.ts).
-SOURCE_STUB_SIGNATURES = [
-    "export class SplitSecondStopwatch {",
-    "constructor() {",
-    "public get state(): unknown {",
-    "public get currentLap(): unknown {",
-    "public get total(): unknown {",
-    "public get previousLaps(): unknown[] {",
-    "public start(): unknown {",
-    "public stop(): unknown {",
-    "public lap(): unknown {",
-    "public reset(): unknown {",
-    "public advanceTime(duration: unknown): unknown {",
-]
-
-
-def test_stub_keeps_the_source_signatures_with_neutral_bodies():
-    text = (SEED / STUB).read_text(encoding="utf-8")
-    signatures = [line.strip() for line in text.splitlines()
-                  if re.match(r"\s*(export |public |constructor\()", line)]
-    assert signatures == SOURCE_STUB_SIGNATURES
-    assert "Remove this line" not in text
-
-
-def test_metadata_records_the_scrub_and_the_tooling_swap():
-    changes = " ".join(_metadata()["mechanical_changes"])
-    for edited in ["package.json", "tsconfig.json", "babel.config.cjs",
-                   "eslint.config.mjs", "yarn.lock", STUB]:
-        assert edited in changes, edited
-    assert "@babel/preset-env" in changes
-    assert "typescript-eslint" in changes
-
-
-def test_pack_files_have_lf_line_endings():
-    for path in PACK.rglob("*"):
-        if path.is_file():
-            assert b"\r\n" not in path.read_bytes(), path
 
 
 # --- Seam 5: test.sh in the task image (Docker) ------------------------------
@@ -230,58 +87,17 @@ it('starts ready', () => {
 """
 
 
-def _proof() -> str:
-    return (PACK / "solution" / "proof.ci.ts").read_text(encoding="utf-8")
+@pytest.fixture
+def image(pack_images):
+    return pack_images(PACK)
 
 
-def _docker(*args: str, **kwargs) -> subprocess.CompletedProcess:
-    return subprocess.run(["docker", *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", **kwargs)
+def _verify(image: str, tmp_path, files: dict[str, str] | None = None) -> dict:
+    return verify(PACK, image, tmp_path, files)
 
 
-@pytest.fixture(scope="module")
-def image():
-    tag = f"assay-test-ts-sss:{uuid.uuid4().hex[:8]}"
-    build = _docker("build", "-q", "-t", tag, str(PACK / "environment"), timeout=1200)
-    assert build.returncode == 0, build.stderr
-    yield tag
-    _docker("image", "rm", "-f", tag)
-
-
-def _run_in_image(image: str, script: str, files: dict[str, str] | None = None,
-                  tmp_path: Path | None = None) -> subprocess.CompletedProcess:
-    """Run a bash script in a fresh container with no network.
-
-    `files` are written over `/app` first (paths relative to `/app`); the pack's
-    `tests/` folder is mounted at `/tests`, as Harbor uploads it.
-    """
-    mounts = ["-v", f"{PACK / 'tests'}:/tests:ro"]
-    prelude = ""
-    if files:
-        overlay = tmp_path / "overlay"
-        for rel, content in files.items():
-            target = overlay / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8", newline="\n")
-        mounts += ["-v", f"{overlay}:/overlay:ro"]
-        prelude = "cp -r /overlay/. /app/ && "
-    return _docker("run", "--rm", "--network", "none", *mounts, image,
-                   "bash", "-c", prelude + script, timeout=600)
-
-
-def _verify(image: str, tmp_path: Path, files: dict[str, str] | None = None) -> dict:
-    result = _run_in_image(
-        image, "bash /tests/test.sh >/dev/null 2>&1; cat /logs/verifier/reward.json",
-        files, tmp_path)
-    assert result.returncode == 0, result.stderr
-    return json.loads(result.stdout)
-
-
-@pytest.mark.slow
-def test_reward_json_holds_the_seven_numeric_fields(image, tmp_path):
-    reward = _verify(image, tmp_path, {STUB: _proof()})
-    assert set(reward) == REWARD_KEYS
-    assert all(type(v) in (int, float) for v in reward.values())
+def _run_in_image(image: str, script: str, files: dict[str, str] | None = None, tmp_path=None):
+    return run_in_image(PACK, image, script, files, tmp_path)
 
 
 @pytest.mark.slow
@@ -290,7 +106,7 @@ def test_agent_pass_counts_the_prd_test_file_class_only(image, tmp_path):
     # PRD's TypeScript test-file class (`*.test.ts`, `*.spec.ts`), so the
     # agent pass must not count them.
     files = {
-        STUB: _proof(),
+        STUB: PACK.gold(),
         "split-second-stopwatch.test.ts": PASSING_AGENT_TESTS,
         "nested/laps.spec.ts": NESTED_SPEC,
         "__tests__/extra.ts": NESTED_SPEC,
@@ -308,19 +124,6 @@ def test_agent_pass_counts_the_prd_test_file_class_only(image, tmp_path):
     }
 
 
-@pytest.mark.slow
-def test_non_compiling_agent_tests_leave_the_outcome_pass_unaffected(image, tmp_path):
-    reward = _verify(image, tmp_path, {
-        STUB: _proof(),
-        "split-second-stopwatch.test.ts": NON_COMPILING_AGENT_TEST,
-        "nested/broken.spec.ts": NON_COMPILING_AGENT_TEST.replace("'./", "'../"),
-    })
-    assert reward["reward"] == 1
-    assert reward["reference_compiles"] == 1
-    assert reward["reference_passed"] == REFERENCE_TEST_COUNT
-    assert reward["agent_tests_compile"] == 0
-
-
 # Type-checks, but throws while Jest loads the suite, so it has no test.
 AGENT_TEST_THAT_FAILS_TO_LOAD = """\
 import { it } from '@jest/globals'
@@ -335,10 +138,11 @@ it('never registered', () => {})
 def test_agent_tests_that_do_not_compile_count_their_files_and_pass_none(image, tmp_path):
     # Replay reads agent_tests_total 0 as `no-tests`, so a red compile must count.
     reward = _verify(image, tmp_path, {
-        STUB: _proof(),
+        STUB: PACK.gold(),
         "split-second-stopwatch.test.ts": NON_COMPILING_AGENT_TEST,
         "nested/broken.spec.ts": NON_COMPILING_AGENT_TEST.replace("'./", "'../"),
     })
+    assert reward["reward"] == 1
     assert reward["agent_tests_compile"] == 0
     assert reward["agent_tests_passed"] == 0
     assert reward["agent_tests_total"] == 2
@@ -347,7 +151,7 @@ def test_agent_tests_that_do_not_compile_count_their_files_and_pass_none(image, 
 @pytest.mark.slow
 def test_agent_suite_that_fails_to_load_does_not_compile(image, tmp_path):
     reward = _verify(image, tmp_path, {
-        STUB: _proof(),
+        STUB: PACK.gold(),
         "split-second-stopwatch.test.ts": AGENT_TEST_THAT_FAILS_TO_LOAD,
     })
     assert reward["reward"] == 1
@@ -358,8 +162,8 @@ def test_agent_suite_that_fails_to_load_does_not_compile(image, tmp_path):
 
 @pytest.mark.slow
 def test_changed_stub_signature_fails_the_reference_compile(image, tmp_path):
-    changed = _proof().replace("advanceTime(duration: string)", "advanceTime(duration: number)")
-    assert changed != _proof()
+    changed = PACK.gold().replace("advanceTime(duration: string)", "advanceTime(duration: number)")
+    assert changed != PACK.gold()
     reward = _verify(image, tmp_path, {STUB: changed})
     assert reward["reference_compiles"] == 0
     assert reward["reward"] == 0
@@ -368,7 +172,7 @@ def test_changed_stub_signature_fails_the_reference_compile(image, tmp_path):
 @pytest.mark.slow
 def test_a_type_error_in_a_file_the_reference_tests_do_not_import_leaves_the_reward(image, tmp_path):
     reward = _verify(image, tmp_path, {
-        STUB: _proof(),
+        STUB: PACK.gold(),
         "scratch.ts": "export const broken: number = 'x'\n",
     })
     assert reward["reference_compiles"] == 1
@@ -376,8 +180,8 @@ def test_a_type_error_in_a_file_the_reference_tests_do_not_import_leaves_the_rew
 
 
 @pytest.mark.slow
-def test_no_agent_tests_gives_zero_agent_tests_total(image, tmp_path):
-    reward = _verify(image, tmp_path, {STUB: _proof()})
+def test_no_agent_tests_gives_zero_agent_tests_total_and_compiles(image, tmp_path):
+    reward = _verify(image, tmp_path, {STUB: PACK.gold()})
     assert reward["agent_tests_total"] == 0
     assert reward["agent_tests_compile"] == 1
     assert reward["reward"] == 1
@@ -385,17 +189,15 @@ def test_no_agent_tests_gives_zero_agent_tests_total(image, tmp_path):
 
 @pytest.mark.slow
 def test_no_agent_tests_and_code_that_does_not_build_gives_zero_compile(image, tmp_path):
-    reward = _verify(image, tmp_path, {STUB: _proof() + "\nconst broken: number = 'x'\n"})
+    reward = _verify(image, tmp_path, {STUB: PACK.gold() + "\nconst broken: number = 'x'\n"})
     assert reward["agent_tests_total"] == 0
     assert reward["agent_tests_compile"] == 0
     assert reward["reference_compiles"] == 0
 
 
 @pytest.mark.slow
-def test_seed_stub_gives_zero_reward(image, tmp_path):
+def test_seed_stub_runs_every_reference_test(image, tmp_path):
     reward = _verify(image, tmp_path)
-    assert reward["reward"] == 0
-    assert reward["reference_compiles"] == 1
     assert reward["reference_total"] == REFERENCE_TEST_COUNT
     assert reward["reference_passed"] < REFERENCE_TEST_COUNT
 
@@ -451,66 +253,14 @@ def test_package_test_script_runs_the_agent_tests(image, tmp_path, command):
     # `yarn test` / `npm test` is the agent's most natural test command.
     test_file = "split-second-stopwatch.test.ts"
     passing = _run_in_image(image, f"cd /app && {command}",
-                            {STUB: _proof(), test_file: ONE_PASSING_AGENT_TEST},
+                            {STUB: PACK.gold(), test_file: ONE_PASSING_AGENT_TEST},
                             tmp_path / "pass")
     assert passing.returncode == 0, passing.stdout + passing.stderr
     assert "1 passed" in passing.stdout + passing.stderr
 
     failing = _run_in_image(image, f"cd /app && {command}",
-                            {STUB: _proof(),
+                            {STUB: PACK.gold(),
                              test_file: ONE_PASSING_AGENT_TEST.replace("'ready'", "'running'")},
                             tmp_path / "fail")
     assert failing.returncode != 0
     assert "1 failed" in failing.stdout + failing.stderr
-
-
-@pytest.mark.slow
-def test_image_holds_seed_commit_and_no_claude_config(image, tmp_path):
-    result = _run_in_image(image, " ; ".join([
-        "cd /app",
-        "git log --format=%s",
-        "git ls-files",
-        "git status --porcelain | wc -l",
-        "test -e ~/.claude/skills && echo HAS_SKILLS",
-        "test -e /app/.claude && echo HAS_CLAUDE",
-        "true",
-    ]))
-    assert result.returncode == 0, result.stderr
-    lines = result.stdout.splitlines()
-    assert lines[0] == "seed"
-    tracked = lines[1:-1]
-    assert sorted(tracked) == _seed_files()
-    assert lines[-1] == "0"
-    assert "HAS_SKILLS" not in result.stdout and "HAS_CLAUDE" not in result.stdout
-
-
-# --- Seam 5: Harbor --------------------------------------------------------
-
-
-def _harbor_reward(agent: str, tmp_path: Path) -> dict:
-    job = f"ts-sss-{agent}"
-    result = subprocess.run(
-        ["uv", "run", "harbor", "run", "-p", str(PACK), "-a", agent,
-         "-o", str(tmp_path), "--job-name", job, "-y", "-q"],
-        cwd=REPO_ROOT, capture_output=True, text=True, timeout=1800,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    rewards = list((tmp_path / job).glob("*/verifier/reward.json"))
-    assert len(rewards) == 1, result.stdout
-    return json.loads(rewards[0].read_text(encoding="utf-8"))
-
-
-@pytest.mark.slow
-def test_harbor_oracle_agent_gets_full_reward(tmp_path):
-    reward = _harbor_reward("oracle", tmp_path)
-    assert set(reward) == REWARD_KEYS
-    assert reward["reward"] == 1
-    assert reward["reference_passed"] == REFERENCE_TEST_COUNT
-
-
-@pytest.mark.slow
-def test_harbor_do_nothing_agent_gets_zero_reward(tmp_path):
-    reward = _harbor_reward("nop", tmp_path)
-    assert set(reward) == REWARD_KEYS
-    assert reward["reward"] == 0
-    assert reward["agent_tests_total"] == 0
