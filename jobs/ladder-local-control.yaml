@@ -20,6 +20,9 @@ tasks:
   # Rung 1: split-second-stopwatch (a state machine).
   - path: tasks/typescript/split-second-stopwatch
   - path: tasks/go/split-second-stopwatch
+  # Rung 6: alphametics (backtracking search with a time limit).
+  - path: tasks/typescript/alphametics
+  - path: tasks/go/alphametics
 
 agents:
   # Control: no variant flags (no skills, no settings, no extra instructions).

@@ -23,6 +23,9 @@ tasks:
   # Rung 1: split-second-stopwatch (a state machine).
   - path: tasks/typescript/split-second-stopwatch
   - path: tasks/go/split-second-stopwatch
+  # Rung 6: alphametics (backtracking search with a time limit).
+  - path: tasks/typescript/alphametics
+  - path: tasks/go/alphametics
 
 agents:
   # instrument-tdd (parts from variants/instrument-tdd/): the skill, and the extra instruction above.
