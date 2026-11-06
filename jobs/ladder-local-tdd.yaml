@@ -23,6 +23,9 @@ tasks:
   # Rung 1: split-second-stopwatch (a state machine).
   - path: tasks/typescript/split-second-stopwatch
   - path: tasks/go/split-second-stopwatch
+  # Rung 5: two-bucket (state-space search).
+  - path: tasks/typescript/two-bucket
+  - path: tasks/go/two-bucket
 
 agents:
   # instrument-tdd (parts from variants/instrument-tdd/): the skill, and the extra instruction above.
