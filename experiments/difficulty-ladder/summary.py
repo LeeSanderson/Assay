@@ -84,12 +84,15 @@ def ladder_summary(view: ExperimentView, options: dict) -> dict:
 
 
 def _trial(t: TrialView) -> dict:
-    """The shared trial values, plus the ladder's own."""
+    """The shared trial values, plus the ladder's own. A trial whose agent ran
+    out of time is a failed trial, even when the code it left passes (the
+    verifier runs after an agent timeout)."""
     record = t.record
+    timeout = record.exception_type == TIMEOUT
     return {**trial_values(t),
             "rung": Path(t.task_pack).parts[-1],
-            "timeout": record.exception_type == TIMEOUT,
-            "passed": (record.reward or {}).get("reward") == 1,
+            "timeout": timeout,
+            "passed": not timeout and (record.reward or {}).get("reward") == 1,
             "agent_time_sec": None if record.agent_time_sec is ABSENT else record.agent_time_sec,
             "started_at": record.started_at}
 

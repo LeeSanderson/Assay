@@ -217,6 +217,21 @@ def test_the_rollup_totals_every_kept_trial_and_means_the_passed_ones_only(repo)
     assert haiku_go["means_per_passed_trial"]["agent_time_sec"] == 100
 
 
+def test_a_timed_out_trial_with_reward_1_is_a_failed_trial_in_the_grid_and_the_rollup(repo):
+    # The verifier runs after an agent timeout, so the code left behind may
+    # still pass every reference test; the trial is a failed one (story 17).
+    fake = harbor({trial(HOSTED[0], HAIKU, "go"): [exception("AgentTimeoutError")]})
+
+    assert experiment(fake, *hosted()) == 0
+
+    data, markdown = summary(repo)
+    assert row(markdown, f"{HAIKU} · control · go")[0] == "timeout"
+    assert row(markdown, f"{HAIKU} · control · go", "Rollup")[0] == "0 of 1"
+    [haiku_go] = [r for r in data["rollup"]
+                  if (r["model_tier"], r["condition"], r["language"]) == (HAIKU, "control", "go")]
+    assert (haiku_go["kept"], haiku_go["passed"]) == (1, 0)
+
+
 def test_a_discarded_trial_is_left_out_of_the_rollup_but_counted_in_the_hosted_cost(repo):
     discarded = trial(HOSTED[1], SONNET, "go")
     fake = harbor({discarded: [exception("ApiOverloadedError")]})

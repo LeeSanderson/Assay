@@ -443,7 +443,7 @@ The reference setup is guidance. Another local setup can be different from it. E
 | L1 | One harness serves every model tier of a comparison across model tiers. Two harnesses confound the model with the harness. A comparison across harnesses holds the model tier fixed. |
 | L2 | The harness records verbatim tool arguments. The preferred harness for the local tier is Claude Code against a server that speaks the Anthropic format, because it keeps the trajectory of the hosted tiers unchanged. |
 | L3 | The local tier declares a `concurrency_group` with `n_concurrent = 1`. One local server answers one request at a time. The hosted tiers keep their parallel trials. |
-| L4 | The local tier runs with a higher `timeout_multiplier`. This key applies to the full job and not to one agent, so the local tier runs as a separate job. The summary gives the timeout rate for each model tier. A trial that reaches the timeout is not a failure of capability. |
+| L4 | The local tier runs with a higher `timeout_multiplier`. This key applies to the full job and not to one agent, so the local tier runs as a separate job. The summary gives the timeout rate for each model tier. A trial that reaches the timeout is not a failure of capability. The difficulty ladder also counts it as a failed trial, and marks it `timeout` (section 19, "Timeouts in the ladder"). |
 | L5 | The summary gives seconds for each solved task pack beside the figure in USD. The local model has a price of zero, so that Harbor can calculate the cost of its steps. The token counts stay correct. |
 | L7 | The container reaches the server at its network address, and not through `host.docker.internal`. In WSL2, `host.docker.internal:host-gateway` goes to the WSL2 virtual machine and not to the Windows host. Thus the reference setup adds no `extra_hosts` overlay and changes no networking on the `main` service. This also keeps the egress sidecar correct. If the address cannot be reached, use WSL2 mirrored networking and `127.0.0.1`. |
 | L8 | The local tier is one model tier of the same experiment. It uses the same task packs, the same variants, and the same verifiers as the hosted tiers. Its job runs on its own host, and it is one job of the experiment. |
@@ -1278,7 +1278,9 @@ The ladder runs the full matrix on each rung: the local tier, Haiku and Sonnet, 
 | `ladder-local-control` | the local tier | `control` |
 | `ladder-local-tdd` | the local tier | `instrument-tdd` |
 
-Each job lists the task packs of every rung, in both languages, at one attempt. The extra instruction and the timeout multiplier apply to a whole job, so each condition and each kind of tier is a job of its own. Every agent pins the Phase 0 Claude Code version, with the same settings for non-essential traffic (L9). The local jobs use one server slot (L3) and `timeout_multiplier: 3.0` (L4). They run last, on the host of the local server, with `--job`, as `phase0-local` does. The agent timeout stays at 1800 seconds for every rung. A trial in which the agent runs out of time is kept as a failed trial. It is not an infrastructure failure (section 11).
+Each job lists the task packs of every rung, in both languages, at one attempt. The extra instruction and the timeout multiplier apply to a whole job, so each condition and each kind of tier is a job of its own. Every agent pins the Phase 0 Claude Code version, with the same settings for non-essential traffic (L9). The local jobs use one server slot (L3) and `timeout_multiplier: 3.0` (L4). They run last, on the host of the local server, with `--job`, as `phase0-local` does. The agent timeout stays at 1800 seconds for every rung.
+
+**Timeouts in the ladder.** In the ladder, a trial in which the agent runs out of time counts as a failed trial (story 17 of the ladder spec, issue #67). It is kept: it is not an infrastructure failure (section 11). It is a failed trial even when the code that the agent left passes every reference test. The pass grid shows it as `timeout`, not as `✗`, so that a reader can tell slowness from failure. This matters most for the local tier. L4 is unchanged: the timeout rate of each model tier stays a separate figure, and a timeout is not a failure of capability. The ladder counts a timeout as a failed trial, and the grid marks it, so that the two can be told apart.
 
 ### The rungs
 
@@ -1297,13 +1299,13 @@ Each rung has a task pack in TypeScript and in Go, made by the TDD pack recipe (
 
 The summary orders the rungs by `RUNGS` in `experiments/difficulty-ladder/summary.py`. A new rung adds its two task packs to the four job files.
 
-**The alphametics change.** The Go alphametics task pack drops the "ten letters and 199 addends" case from its reference tests, so that the top rung holds the same cases in both languages. The mechanical changes of the pack record this removal. Go also has a "two digits final carry" case that TypeScript does not have. The pack records whether it keeps that case as a small difference or drops it.
+**The alphametics change.** The Go alphametics task pack drops two cases from its reference tests: the "ten letters and 199 addends" case and the "two digits final carry" case, which TypeScript does not have. Thus both languages hold the same 8 cases on the top rung. The mechanical changes of the pack record both removals.
 
 ### The summary
 
 The summary is experiment-local, `experiments/difficulty-ladder/summary.py`. It writes `analysis/difficulty-ladder/summary/ladder-summary.md` for a person and `ladder-summary.json` with every value. It does not give the Phase 0 acceptance numbers. It shares the trial values, the cells, the missing trials, the hosted cost and the trials table with the Phase 0 summary, through `assay/summary_parts.py`. Its sections, in order:
 
-1. **Pass grid.** One row for each model tier · condition · language, and one column for each rung, in ladder order. A cell shows `passed/total ✓` (reward 1), `passed/total ✗`, `timeout` (the agent ran out of time, from the trial's exception), or `—` (no kept trial yet).
+1. **Pass grid.** One row for each model tier · condition · language, and one column for each rung, in ladder order. A cell shows `passed/total ✓` (reward 1), `passed/total ✗`, `timeout` (the agent ran out of time, from the trial's exception: a failed trial, see "Timeouts in the ladder"), or `—` (no kept trial yet).
 2. **Rollup.** One row for each model tier · condition · language. It gives the passed trials as "n of m". Then, for input tokens, cached tokens, output tokens, cost (USD) and agent time, it gives the total over all kept trials and the mean per passed trial. A note under the table says that failed trials count in the totals but not in the means.
 3. **Missing trials**, as in Phase 0: each short cell, with the cause of each discard or halt, or that a trial has not run yet.
 4. **Trials table.** The Phase 0 columns, the rung, and the model name and date of each local trial, so that results from different runs of the local server show.
@@ -1311,7 +1313,7 @@ The summary is experiment-local, `experiments/difficulty-ladder/summary.py`. It 
 
 The definitions:
 
-- **Passed.** A kept trial with reward 1: all the reference tests compile and pass.
+- **Passed.** A kept trial with reward 1 in which the agent did not run out of time: all the reference tests compile and pass. Every other kept trial is a failed trial.
 - **Agent time.** The time of the agent's run, from the `agent_execution` span of Harbor's trial result. It leaves out the container setup, the harness installation and the verifier, so that they do not hide the difference between easy and hard rungs. When the span is missing, the value is absent; it is not guessed.
 - **Mean per passed trial.** The sum of a value over the passed trials of a row, divided by their count. Failed trials often stop early or run out of time, so a mean over all trials does not show what a success costs. A row with no passed trial shows `-`.
 
