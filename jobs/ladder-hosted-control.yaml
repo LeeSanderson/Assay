@@ -16,6 +16,9 @@ tasks:
   # Rung 1: split-second-stopwatch (a state machine).
   - path: tasks/typescript/split-second-stopwatch
   - path: tasks/go/split-second-stopwatch
+  # Rung 3: poker (parsing with ranking rules).
+  - path: tasks/typescript/poker
+  - path: tasks/go/poker
 
 agents:
   # Control: no variant flags (no skills, no settings, no extra instructions).

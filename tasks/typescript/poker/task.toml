@@ -1,0 +1,72 @@
+schema_version = "1.4"
+
+[metadata]
+language = "typescript"
+exercise = "poker"
+source_repo = "https://github.com/exercism/typescript"
+source_commit = "a24e6ae756c61932165bb7d0a2703417a8291af3"
+# Each copied path, relative to the source repository, mapped to its place in this pack.
+copied_paths = [
+    "exercises/practice/poker/.docs/instructions.md",
+    "exercises/practice/poker/poker.ts",
+    "exercises/practice/poker/package.json",
+    "exercises/practice/poker/.yarnrc.yml",
+    "exercises/practice/poker/tsconfig.json",
+    "exercises/practice/poker/jest.config.cjs",
+    "exercises/practice/poker/babel.config.cjs",
+    "exercises/practice/poker/eslint.config.mjs",
+    "exercises/practice/poker/poker.test.ts",
+    "exercises/practice/poker/.meta/proof.ci.ts",
+]
+copied_to = [
+    "instruction.md",
+    "environment/seed/poker.ts",
+    "environment/seed/package.json",
+    "environment/seed/.yarnrc.yml",
+    "environment/seed/tsconfig.json",
+    "environment/seed/jest.config.cjs",
+    "environment/seed/babel.config.cjs",
+    "environment/seed/eslint.config.mjs",
+    "tests/assay-reference.poker.test.ts",
+    "solution/proof.ci.ts",
+]
+mechanical_changes = [
+    "poker.test.ts: xit( -> it( (36 tests); the unused `xit` import is left as it is",
+    "poker.test.ts renamed to assay-reference.poker.test.ts",
+    "instruction.md: the fixed Assay footer appended after .docs/instructions.md",
+    "instruction.md: an Interface section, written from the reference tests only, inserted before the footer (the hand and card format, the returned hands and their order on a tie, the ace in a straight)",
+    "package.json: the `test` script `corepack yarn node test-runner.mjs` -> `corepack yarn lint:types && corepack yarn test:implementation`; test-runner.mjs is a track-level file that needs .meta/config.json, and these are the steps it runs for this exercise (tsc, then jest; tstyche is off)",
+    "package.json: name `@exercism/typescript-poker` -> `poker`; the description and repository URL removed",
+    "tsconfig.json: the `display` line and the `.meta/*.ts`, `.meta/*.tsx` includes removed",
+    "babel.config.cjs: the `@exercism/babel-preset-typescript` wrapper replaced by the presets it wraps, `@babel/preset-env` (targets node current, useBuiltIns usage, corejs 3.38) and `@babel/preset-typescript`; package.json gains them and `@babel/core` in place of the wrapper",
+    "eslint.config.mjs: the `@exercism/eslint-config-typescript` config and its maintainers config replaced by a plain `typescript-eslint` recommended config with the same ignores; package.json drops the package",
+    "yarn.lock: the source file is empty; the pack holds the split-second-stopwatch pack's lock with its workspace entry renamed to `poker@workspace:.` by `corepack yarn install --mode=update-lockfile` (yarn 4.5.1) in the base image; no other entry changed and no @exercism package remains",
+    "poker.ts: the boilerplate `'Remove this line and implement the function'` -> `'Not implemented'`; every exported name and signature unchanged",
+]
+seed_files = [
+    "poker.ts",
+    "package.json",
+    "yarn.lock",
+    ".yarnrc.yml",
+    "tsconfig.json",
+    "jest.config.cjs",
+    "babel.config.cjs",
+    "eslint.config.mjs",
+]
+# tests/test.sh: agent tests compile only if tsc passes and every Jest suite
+# loads. When agent test files (`*.test.ts`, `*.spec.ts`) exist but do not
+# compile, agent_tests_passed is 0 and agent_tests_total is max(counted tests,
+# agent test files), so replay labels the snapshot red-compile, not no-tests.
+red_compile_rule = "agent test files exist and do not compile: agent_tests_passed = 0, agent_tests_total = max(counted tests, agent test files)"
+base_image = "node:22.23.4-bookworm@sha256:63538dfe497cc29dfafdda25ada09b46db68a3f4cc205abf1f5d6bf0913f3384"
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 600.0
+
+[environment]
+cpus = 2
+memory_mb = 4096
+network_mode = "public"
