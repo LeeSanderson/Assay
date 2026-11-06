@@ -420,7 +420,7 @@ Harbor supports this through environment variables. For the `claude-code` adapte
 
 #### The reference setup
 
-The reference setup is guidance. Another local setup can be different from it. Each local setup must obey the requirements below, and it must write the record that L6 gives.
+The reference setup is guidance. Another local setup can be different from it. Each local setup must obey the requirements below.
 
 | Item | Reference setup |
 |---|---|
@@ -432,7 +432,7 @@ The reference setup is guidance. Another local setup can be different from it. E
 | Chat template | The template in the model file, without change. It accepts the system message that Claude Code sends in the middle of the conversation. |
 | Thinking | On. This is the default of the model. |
 | Address | `http://192.168.1.252:8080`. A DHCP reservation keeps this address fixed. |
-| Fallback model | Qwen3-Coder-30B-A3B, if the local trial time is too long (Risk P3). It is a different local setup with its own L6 record. A Qwen model needs a changed chat template, because its default template rejects a system message in the middle of the conversation. |
+| Fallback model | Qwen3-Coder-30B-A3B, if the local trial time is too long (Risk P3). It is a different local setup. A Qwen model needs a changed chat template, because its default template rejects a system message in the middle of the conversation. |
 
 *Source: Harbor v0.24.0, research in [issue #2](https://github.com/LeeSanderson/Assay/issues/2) and [issue #3](https://github.com/LeeSanderson/Assay/issues/3), and the decision in [issue #4](https://github.com/LeeSanderson/Assay/issues/4).*
 
@@ -445,7 +445,6 @@ The reference setup is guidance. Another local setup can be different from it. E
 | L3 | The local tier declares a `concurrency_group` with `n_concurrent = 1`. One local server answers one request at a time. The hosted tiers keep their parallel trials. |
 | L4 | The local tier runs with a higher `timeout_multiplier`. This key applies to the full job and not to one agent, so the local tier runs as a separate job. The summary gives the timeout rate for each model tier. A trial that reaches the timeout is not a failure of capability. |
 | L5 | The summary gives seconds for each solved task pack beside the figure in USD. The local model has a price of zero, so that Harbor can calculate the cost of its steps. The token counts stay correct. |
-| L6 | The results record the model file, the quantization, the chat template, the inference server with its version, the full server command line with its environment flags, the thinking setting, the hardware, and the operating system. The agent configuration rejects unknown keys, so this record goes in a file beside the job configuration (`jobs/<job>.L6.md`). A model name alone is not a stable identifier. A different quantization, build option, or thinking setting is a different model. |
 | L7 | The container reaches the server at its network address, and not through `host.docker.internal`. In WSL2, `host.docker.internal:host-gateway` goes to the WSL2 virtual machine and not to the Windows host. Thus the reference setup adds no `extra_hosts` overlay and changes no networking on the `main` service. This also keeps the egress sidecar correct. If the address cannot be reached, use WSL2 mirrored networking and `127.0.0.1`. |
 | L8 | The local tier is one model tier of the same experiment. It uses the same task packs, the same variants, and the same verifiers as the hosted tiers. Its job runs on its own host, and it is one job of the experiment. |
 | L9 | Every model tier sets `DISABLE_NON_ESSENTIAL_MODEL_CALLS=1` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` under `env:`. Background requests (titles and summaries) use the one server slot and remove the prefix cache. Every model tier sets them, so the harness stays the same (L1). |
@@ -802,7 +801,6 @@ assay/
     jq                           static binary that the recorder uses
   jobs/
     <job>.yaml                   committed Harbor job configurations
-    <job>.L6.md                  the local setup record of a local job
   experiments/<name>/
     experiment.toml              factors, jobs, evaluations, summary
     *.py                         experiment-local evaluations and summary
@@ -847,7 +845,7 @@ P1 comes first, because the paid Phase 0 jobs run through it.
 | # | Risk | Validation | Fallback |
 |---|---|---|---|
 | P1 | The hook route depends on behavior that the Harbor documents and the Claude Code documents do not describe: hooks from `--settings` fire, and a subclass of the agent can upload files in `setup()`. A new version of Harbor can change the agent class. | Every trial passes the validity check. The smoke trial confirms that the tool call ID in ATIF is the same as `tool_use_id`. | Pin the version of Harbor in `uv.lock`, and record it in each trial. If a new version breaks the subclass, change the subclass or keep the old version. |
-| P2 | The Anthropic-format route for the local tier is not tested. | Phase 0 runs one local trial against `/v1/messages` of the local server and inspects the trajectory. | Use opencode for every model tier. This needs the opencode recorder first (P6). |
+| P2 | The Anthropic-format route for the local tier is not tested. | Phase 0 runs two local trials against `/v1/messages` of the local server and inspects their trajectories. | Use opencode for every model tier. This needs the opencode recorder first (P6). |
 | P3 | The local tier is slow, and wall clock replaces money as the binding constraint. | Time one local trial in Phase 0, and multiply by the local trials of the experiment. | Cut the local tier to one language, or reduce its repetitions and widen its confidence intervals. |
 | P4 | A combination study multiplies the variants. Six bundle parts with two states each give 64 variants. Job files by hand become a burden. | Count the trials before each job, and compare the count against the budget. | Use a fractional design. Test each part against the control first, and test only the pairs that show an effect. Generate job files later, if necessary. |
 | P5 | Harbor resumes a job only when its configuration is exactly the same. | The resume acceptance test of P1. | Keep job files committed. Never pass options through to Harbor. |
@@ -1184,15 +1182,15 @@ The reward is not a criterion: the gate checks the setup, not the agent. Run the
 |---|---|---|
 | `phase0-cross-control` | `control` | 4: Haiku and Sonnet, TypeScript and Go |
 | `phase0-cross-tdd` | `instrument-tdd` | 4: Haiku and Sonnet, TypeScript and Go |
-| `phase0-local` | `instrument-tdd` | 1: the local tier, TypeScript |
+| `phase0-local` | `instrument-tdd` | 2: the local tier, TypeScript and Go |
 
-`phase0-local` is last. It runs on the host of the local server, with `--job phase0-local`. Before that job runs, the other jobs give a short cell for the local tier.
+`phase0-local` is last. It runs on the host of the local server, with `--job phase0-local`. Before that job runs, the other jobs give two short cells for the local tier, one for each language.
 
 The summary is experiment-local, `experiments/phase0-tdd/summary.py`. It writes `analysis/phase0-tdd/summary/phase0-summary.md` and `phase0-summary.json`. It gives each acceptance number of Phase 0, and also:
 
 - Each trial that is missing from a short cell, with the cause of its discard or halt, or that it has not run yet.
 - The cost of the hosted trials against the limit of £15. This cost includes the cost of each discarded trial.
-- Whether the tool arguments of the local trial are present in its trajectory. The values that come from the server log are recorded outside the summary.
+- Whether the tool arguments of each local trial are present in its trajectory. The values that come from the server log are recorded outside the summary.
 - One table of the trials: the cell and language, the process metrics, the reference and agent test counts from `reward.json`, the cross-check of each trial, the `Bash` file writes, web access, and the cost.
 
 There is no `paired-delta` in Phase 0, because each cell has one trial.
@@ -1204,13 +1202,13 @@ Over eight trials on the hosted model tiers:
 1. `trajectory` finds the test-first order, and a person who reads the same trajectory agrees every time (see "Test-first order").
 2. The summary gives the share of trials with a file-writing `Bash` call, and the share of trials in which a `Bash` call writes a test file or an implementation file.
 3. Every trial passes the validity check.
-4. Replay of the trace snapshots works on all nine trials. For each failure, find the cause, fix it, and replay all nine trials again.
+4. Replay of the trace snapshots works on all ten trials. For each failure, find the cause, fix it, and replay all ten trials again.
 5. The summary gives the coverage and the agreement of the test runs of the agent.
 6. `trajectory` finds the red-to-green order and the three counts of the TDD loop, and a person agrees every time.
 7. The hosted trials cost £15 or less, and this includes each trial that runs again.
-8. One more trial runs Claude Code against a local model server, and its trajectory holds verbatim tool arguments.
+8. Two more trials, one in each language, run Claude Code against a local model server, and each trajectory holds verbatim tool arguments.
 
-The local trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation.
+Each local trial also records its time, the prefix cache hits for each turn, the count of background requests, and the tool calls after a system message in the middle of the conversation.
 
 **Phase 0 blocks all other phases of this experiment.**
 
@@ -1242,7 +1240,7 @@ Phase 0 comes first because it tests the assumption under all later phases.
 
 | # | Risk | Validation | Fallback |
 |---|---|---|---|
-| 1 | Red-to-green state is not recoverable. Write order is visible in ATIF, but the test state between writes is not. | Phase 0 replays the trace snapshots of all nine trials. It also gives the coverage and the agreement of the test runs of the agent, and the share of trials where offline replay can work. | If the replay cannot give the environment of the trial, and the cause cannot be fixed, make the mutation score the primary process metric. |
+| 1 | Red-to-green state is not recoverable. Write order is visible in ATIF, but the test state between writes is not. | Phase 0 replays the trace snapshots of all ten trials. It also gives the coverage and the agreement of the test runs of the agent, and the share of trials where offline replay can work. | If the replay cannot give the environment of the trial, and the cause cannot be fixed, make the mutation score the primary process metric. |
 | 2 | Agents write code through `Bash` instead of `Write`, and offline replay fails | Phase 0 reports the share of trials with a file-writing `Bash` call, from the history | No fallback is necessary. Replay of the trace snapshots is the method for the whole matrix, and it does not use offline replay. |
 | 3 | Frontier models solve Exercism task packs too easily | Measure the control in Phase 1 | The withheld tests already make the task harder. Write one or two packs from unpublished work as a control for contamination. |
 | 4 | The agent never activates the artifact, and the result is a silent false null | The activation rate is a reported metric from Phase 2 | Gate the effect calculation on activation. Report the rate as a result. |

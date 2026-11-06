@@ -1,6 +1,6 @@
-# Phase 0, the local job: 1 trial in the instrument-tdd condition against a
-# local model server. A separate job, because timeout_multiplier applies to the
-# whole job (L4). Record the local setup in phase0-local.L6.md before the run.
+# Phase 0, the local job: 2 trials (TypeScript and Go) in the instrument-tdd
+# condition against a local model server. A separate job, because
+# timeout_multiplier applies to the whole job (L4).
 #
 # Launch from the repository root, with ASSAY_LOCAL_BASE_URL set on the host
 # (the server address lives in that one setting only, L10):
@@ -23,9 +23,8 @@ n_concurrent_trials: 1
 timeout_multiplier: 3.0             # job level; no agent has this key (L4)
 
 tasks:
-  # SET AFTER THE HOSTED TRIALS: the one task pack for the local trial
-  # (tasks/typescript/... or tasks/go/...). This is the only value to change.
   - path: tasks/typescript/split-second-stopwatch
+  - path: tasks/go/split-second-stopwatch
 
 agents:
   # instrument-tdd (parts from variants/instrument-tdd/): the skill, and the extra instruction above.

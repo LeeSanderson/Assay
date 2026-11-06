@@ -42,20 +42,20 @@ After the jobs, the evaluations (`replay`, `agent-runs`, `trajectory` for Phase 
 
 **The Phase 0 summary** is `experiments/phase0-tdd/summary.py`. It writes `analysis/phase0-tdd/summary/phase0-summary.md` (for a person) and `phase0-summary.json`:
 
-- For each cell (harness, model tier, condition, language): the expected trials and the kept, discarded and halted trials. A cell with fewer kept trials than expected is marked `short`, for example the local cell before `phase0-local` runs. A short cell is not a failure.
+- For each cell (harness, model tier, condition, language): the expected trials and the kept, discarded and halted trials. A cell with fewer kept trials than expected is marked `short`, for example the two local cells before `phase0-local` runs. A short cell is not a failure.
 - For each trial: the replay verdict, the process metrics, the coverage and agreement, the evaluation errors, and the cost.
 - The shares of trials with a file-writing `Bash` call (risk 2), and the pooled coverage and agreement, with and without the web-access trials.
 - The cost for each model tier, and the hosted cost against the £15 cap: the kept trials' cost plus the cost of each discarded trial from the experiment log. The rate `USD_PER_GBP` in the summary converts USD; set it to the rate on the day, or give `[summary] options = { usd_per_gbp = ... }` in `experiment.toml`.
-- The values of the local trial from its trial record (risks 9 and 10).
+- The values of each local trial from its trial record (risks 9 and 10).
 
 **Expected result:** `experiment phase0-tdd: complete` and exit code 0. Exit code 3 means a halt, 130 an interruption (run again to resume), and 2 an error. Phase 0 passes when the summary shows all of these:
 
 - No trial is missing (each kept trial passed the validity check).
 - Replay works on every trial.
 - The hosted trials are `within` the £15 cap.
-- The local trial's trajectory holds its tool arguments.
+- Each local trial's trajectory holds its tool arguments.
 
-The person check (`assay compare-labels`) is the other half of acceptance 1 and 6, and it is not in the summary. Record the local trial's tool calls after a mid-conversation system message, prefix cache hits and background requests by hand from the server log; the summary does not give them.
+The person check (`assay compare-labels`) is the other half of acceptance 1 and 6, and it is not in the summary. Record each local trial's tool calls after a mid-conversation system message, prefix cache hits and background requests by hand from the server log; the summary does not give them.
 
 ### `assay run`
 
@@ -63,7 +63,7 @@ Runs an Assay job in Harbor: it checks the job file, then runs `harbor run` with
 
 Every result must trace back to a committed job file, and every trial must run the pinned Claude Code version. `assay run` makes sure of both before Harbor starts. It refuses a job without `-c`, and a job whose Claude Code version is not `stable`, `latest` or `X.Y.Z` (for example the placeholder). Harbor cannot resume a job whose job file changed, and it cannot overwrite earlier results, so `assay run` looks at the job's results folder first. If that folder holds results of a different config, it stops and says to re-run with `--overwrite`.
 
-**Expected result:** Harbor's exit code, and one trial folder for each trial in `results/<job_name>/`. A `--dry-run` lists the trials and runs none: 4 each for `phase0-cross-control` and `phase0-cross-tdd`, and 1 for `phase0-local`. Exit code 2 means that `assay run` stopped before Harbor started, and the message says why.
+**Expected result:** Harbor's exit code, and one trial folder for each trial in `results/<job_name>/`. A `--dry-run` lists the trials and runs none: 4 each for `phase0-cross-control` and `phase0-cross-tdd`, and 2 for `phase0-local`. Exit code 2 means that `assay run` stopped before Harbor started, and the message says why.
 
 ### `assay trace-check`
 
@@ -104,7 +104,7 @@ Phase 0 replays each trial two times, to show that replay can rebuild the enviro
 - The replay of the last snapshot gives the same `reward.json`, field for field, as the trial's verifier.
 - The two runs give the same result for each snapshot.
 
-Phase 0 needs replay to work on all nine trials. A trial where it does not work prints `replay does not work` and the causes, and the command exits 1. For each failure, find the cause, fix it, and replay all the trials again. If replay cannot rebuild the trial's environment and the cause cannot be fixed, the PRD's fallback is to make the mutation score the primary process metric.
+Phase 0 needs replay to work on all ten trials. A trial where it does not work prints `replay does not work` and the causes, and the command exits 1. For each failure, find the cause, fix it, and replay all the trials again. If replay cannot rebuild the trial's environment and the cause cannot be fixed, the PRD's fallback is to make the mutation score the primary process metric.
 
 ### `assay agent-runs`
 
@@ -194,7 +194,7 @@ The Phase 0 job files are in `jobs/`. Each runs at `-k 1` with `instruments.agen
 |---|---|
 | `jobs/phase0-cross-control.yaml` | Haiku and Sonnet × control × TypeScript and Go: 4 |
 | `jobs/phase0-cross-tdd.yaml` | Haiku and Sonnet × `instrument-tdd` × TypeScript and Go: 4 |
-| `jobs/phase0-local.yaml` | the local model × `instrument-tdd` × one task pack: 1 |
+| `jobs/phase0-local.yaml` | the local model × `instrument-tdd` × 2 languages: 2 |
 | `jobs/phase0-smoke.yaml` | Haiku × `instrument-tdd` × TypeScript: 1. The smoke gate, outside the experiment. |
 
 The cross trials are two jobs because Harbor sets extra instructions per job, not per agent. Each `instrument-tdd` job passes `variants/instrument-tdd/extra-instruction.md`, which names the skill; the control job passes nothing. The experiment reads each agent's condition from the variant folder its parts come from: `phase0-cross-control` is the control, and the other three jobs are `instrument-tdd`. The web tools are off in every trial unless a job sets `kwargs.allow_web: true` (ADR 0003).
@@ -237,13 +237,9 @@ Run the hosted jobs. They read `ANTHROPIC_API_KEY` from `.env` (see [Setup](#set
 uv run assay experiment phase0-tdd --job phase0-cross-control --job phase0-cross-tdd --debug
 ```
 
-The evaluations and the summary run after the jobs, over every trial of the experiment. Until `phase0-local` runs, the summary shows the local cell as short. If the run stops (Ctrl-C, a halt or an error), fix the cause and run the same command again: finished trials are kept, discarded and halted trials run again, and unchanged evaluation results are reused. Add `--retries 1` to rerun an infrastructure failure at once. `--from-scratch` deletes `results/phase0-tdd` and `analysis/phase0-tdd` and starts again.
+The evaluations and the summary run after the jobs, over every trial of the experiment. Until `phase0-local` runs, the summary shows the local cells as short. If the run stops (Ctrl-C, a halt or an error), fix the cause and run the same command again: finished trials are kept, discarded and halted trials run again, and unchanged evaluation results are reused. Add `--retries 1` to rerun an infrastructure failure at once. `--from-scratch` deletes `results/phase0-tdd` and `analysis/phase0-tdd` and starts again.
 
-**The local job** runs last, on the host of the local server, and needs three more steps:
-
-1. Set the task pack. After the hosted trials, replace the marked `tasks:` path in `jobs/phase0-local.yaml` (`SET AFTER THE HOSTED TRIALS`) with the chosen pack.
-2. Fill in `jobs/phase0-local.L6.md`, the record of the local setup (L6).
-3. Set `ASSAY_LOCAL_BASE_URL` in `.env` to the server address (see [Setup](#setup)). This is the only place the address appears (L10). Without it, the plan stops before any job runs.
+**The local job** runs last, on the host of the local server. It runs the TypeScript and the Go task pack. Before it runs, set `ASSAY_LOCAL_BASE_URL` in `.env` to the server address (see [Setup](#setup)). This is the only place the address appears (L10). Without it, the plan stops before any job runs.
 
 ```powershell
 uv run assay experiment phase0-tdd --job phase0-local --debug
