@@ -1,0 +1,50 @@
+schema_version = "1.4"
+
+[metadata]
+language = "go"
+source_repo = "https://github.com/exercism/go"
+source_commit = "74f09b25dd12c14571cc684a7cb57149634037bd"
+source_dir = "exercises/practice/poker"
+# Source paths in the Exercism repository; `pack_paths` gives where each one is
+# in this pack, in the same order.
+copied_paths = [
+    "exercises/practice/poker/.docs/instructions.md",
+    "exercises/practice/poker/poker.go",
+    "exercises/practice/poker/go.mod",
+    "exercises/practice/poker/poker_test.go",
+    "exercises/practice/poker/cases_test.go",
+    "exercises/practice/poker/.meta/example.go",
+]
+pack_paths = [
+    "instruction.md",
+    "environment/seed/poker.go",
+    "environment/seed/go.mod",
+    "tests/reference/assay_reference_poker_test.go",
+    "tests/reference/assay_reference_cases_test.go",
+    "solution/example.go",
+]
+mechanical_changes = [
+    "renamed poker_test.go -> assay_reference_poker_test.go",
+    "renamed cases_test.go -> assay_reference_cases_test.go",
+    "instruction.md: appended the fixed Assay footer after .docs/instructions.md",
+    "instruction.md: added an Interface section between the source prose and the footer, derived from the reference tests only (the BestHand signature, the hand and card format with the suit symbols, the returned hands and their order on a tie, the ace in a straight, when an error is returned)",
+    "instruction.md: .docs/instructions.append.md is left out, as PRD section 15 takes .docs/instructions.md without change; the Interface section states the Go API that it described",
+    "environment/seed/poker.go: replaced the `panic(\"Please implement the BestHand function\")` body with `panic(\"not implemented\")`; exported names, signatures and the module name are unchanged",
+]
+seed_files = ["go.mod", "poker.go"]
+# tests/test.sh: when agent test files (`*_test.go`) exist but do not compile,
+# agent_tests_passed is 0 and agent_tests_total is max(counted tests, agent test
+# files), so replay labels the snapshot red-compile, not no-tests.
+red_compile_rule = "agent test files exist and do not compile: agent_tests_passed = 0, agent_tests_total = max(counted tests, agent test files)"
+base_image = "golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5"
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 600.0
+
+[environment]
+cpus = 2
+memory_mb = 4096
+network_mode = "public"
