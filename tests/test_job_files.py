@@ -6,43 +6,18 @@ Harbor accepts each file and expands it to the planned trials. The slow test
 also launches a job file through `assay run` (issue #31, ADR 0002).
 """
 
-import asyncio
 import json
 import os
 import subprocess
-import uuid
 from pathlib import Path
 
 import pytest
 import yaml
-from harbor.job_plan import JobPlan
-from harbor.models.job.config import JobConfig
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-JOBS_DIR = REPO_ROOT / "jobs"
+from tests.job_files import (INSTRUMENT_INSTRUCTION, JOBS_DIR, REPO_ROOT, expand_trials,
+                             load_job, trial_key)
 
-
-@pytest.fixture(autouse=True)
-def run_from_repo_root(monkeypatch):
-    # Harbor resolves task and skill paths against the current directory.
-    monkeypatch.chdir(REPO_ROOT)
-
-
-def load_job(name: str) -> JobConfig:
-    data = yaml.safe_load((JOBS_DIR / name).read_text(encoding="utf-8"))
-    return JobConfig.model_validate(data)
-
-
-def expand_trials(config: JobConfig):
-    tasks = asyncio.run(JobPlan.resolve_task_configs(config))
-    return JobPlan.build_trial_configs(config, tasks, job_id=uuid.uuid4())
-
-
-def trial_key(trial) -> tuple[str, str, str]:
-    """(model, condition, language) for one trial config."""
-    condition = "instrument-tdd" if trial.agent.skills else "control"
-    language = Path(trial.task.path).parts[-2]
-    return trial.agent.model_name, condition, language
+pytestmark = pytest.mark.usefixtures("run_from_repo_root")
 
 
 def test_the_two_cross_jobs_expand_to_the_eight_planned_trials():
@@ -117,9 +92,6 @@ def test_control_trials_pass_no_variant_flags():
         assert not agent.mcp_servers
     assert not config.extra_instruction_paths
     assert not config.extra_instructions
-
-
-INSTRUMENT_INSTRUCTION = "variants/instrument-tdd/extra-instruction.md"
 
 
 @pytest.mark.parametrize("name", [

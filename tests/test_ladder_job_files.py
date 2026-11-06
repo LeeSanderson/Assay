@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_job_files import (INSTRUMENT_INSTRUCTION, REPO_ROOT, expand_trials, load_job,
-                                  run_from_repo_root, trial_key)  # noqa: F401 (fixture)
+from tests.job_files import INSTRUMENT_INSTRUCTION, REPO_ROOT, expand_trials, load_job, trial_key
+
+pytestmark = pytest.mark.usefixtures("run_from_repo_root")
 
 HOSTED = ("anthropic/claude-haiku-5-5", "anthropic/claude-sonnet-5-5")
 LOCAL = ("laguna-s-2.1",)
@@ -17,26 +18,23 @@ JOBS = {  # in run order: job file -> (model tiers, condition)
     "ladder-local-control.yaml": (LOCAL, "control"),
     "ladder-local-tdd.yaml": (LOCAL, "instrument-tdd"),
 }
+# The planned ladder, easiest rung first (PRD section 19, "The rungs").
+RUNGS = ("split-second-stopwatch", "wordy", "poker", "bowling", "two-bucket", "alphametics")
 
 
-def ladder_rungs() -> list[str]:
-    """The rungs that the summary orders (RUNGS in the experiment's
-    summary.py) whose task packs exist in both languages. A rung ticket adds
-    its packs; this list follows."""
+def test_the_summary_orders_the_six_planned_rungs():
     spec = importlib.util.spec_from_file_location(
         "ladder_summary", REPO_ROOT / "experiments" / "difficulty-ladder" / "summary.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return [rung for rung in module.RUNGS
-            if all((REPO_ROOT / "tasks" / language / rung).is_dir()
-                   for language in ("typescript", "go"))]
+
+    assert module.RUNGS == RUNGS
 
 
-RUNGS = ladder_rungs()
-
-
-def test_rung_one_is_on_the_ladder():
-    assert RUNGS[0] == "split-second-stopwatch"
+@pytest.mark.parametrize("rung", RUNGS)
+@pytest.mark.parametrize("language", ("typescript", "go"))
+def test_every_rung_has_its_task_pack_in_both_languages(rung, language):
+    assert (REPO_ROOT / "tasks" / language / rung / "task.toml").is_file()
 
 
 def ladder_key(trial) -> tuple[str, str, str, str]:
@@ -55,10 +53,11 @@ def test_each_ladder_job_expands_to_its_tiers_and_condition_on_every_rung_and_la
         for tier in tiers for language in ("go", "typescript") for rung in RUNGS)
 
 
-def test_the_four_ladder_jobs_hold_twelve_trials_on_each_rung():
+def test_the_four_ladder_jobs_hold_the_72_planned_trials():
     trials = [t for name in JOBS for t in expand_trials(load_job(name))]
 
-    assert len(trials) == 12 * len(RUNGS)
+    assert len(trials) == 72  # 48 hosted and 24 local
+    assert sum(1 for t in trials if t.agent.model_name in LOCAL) == 24
     assert len({ladder_key(t) for t in trials}) == len(trials)
 
 
