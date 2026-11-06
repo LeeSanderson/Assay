@@ -149,7 +149,7 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
     haiku = cell(data, "anthropic/claude-haiku-5-5", "instrument-tdd", "typescript")
     assert (haiku["expected"], haiku["kept"], haiku["discarded"], haiku["halted"],
             haiku["short"]) == (1, 1, 0, 0, False)
-    assert data["expected_trials"] == 9 and data["kept_trials"] == 8
+    assert data["expected_trials"] == 10 and data["kept_trials"] == 8
     # Acceptance 7: eight hosted trials at 0.50 USD.
     cap = data["hosted_cost"]
     assert (cap["kept_usd"], cap["discarded_usd"]) == (pytest.approx(4.0), 0)
@@ -159,10 +159,10 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
     assert first["language"] == "go"
     assert first["reward"] == REWARD
     assert first["bash_writes"] == "no"
-    assert data["missing_trials"] == {"count": 1, "cells": [
+    assert data["missing_trials"] == {"count": 2, "cells": [
         {"harness": "claude-code", "model_tier": LOCAL_MODEL, "condition": "instrument-tdd",
-         "language": "typescript", "expected": 1, "kept": 0, "kept_trials": [], "trials": [],
-         "not_run": 1}],
+         "language": language, "expected": 1, "kept": 0, "kept_trials": [], "trials": [],
+         "not_run": 1} for language in ("go", "typescript")],
         "halted_without_cell": []}
     for text in ("## Phase 0 acceptance", "**4. Replay:** works on 8 of 8 trials.",
                  "- **1. Test-first order:** `trajectory` gives a verdict on 8 of 8 trials "
@@ -171,7 +171,7 @@ def test_the_hosted_jobs_give_every_acceptance_number_and_a_short_cell_for_the_l
                  "8 trials (not-observed 8), and the TDD loop on 8 of 8.",
                  "Check both against a person's labels with `assay compare-labels`",
                  "- **8. Local trial:** not run yet.",
-                 "of the £15 cap", "## Missing trials", "1 of 9 expected trials missing.",
+                 "of the £15 cap", "## Missing trials", "2 of 10 expected trials missing.",
                  f"- claude-code · {LOCAL_MODEL} · instrument-tdd · typescript: 0 of 1 kept\n"
                  "  - 1 trial not run yet","| Language | Score |", "| go | 29 of 29 ✓ |",
                  "| Tested after edit |", "| Read matches replay |", "no-implementation"):
@@ -199,9 +199,9 @@ def test_the_cap_counts_each_discarded_trial_and_the_cells_count_it(repo):
     assert cap["total_usd"] == pytest.approx(4.5)
     assert data["discard_causes"] == [{"cause": "ApiOverloadedError", "count": 1,
                                        "unlisted": False}]
-    # It was run again, so it is not a missing trial; only the local job's trial is.
+    # It was run again, so it is not a missing trial; only the local job's trials are.
     missing = data["missing_trials"]
-    assert missing["count"] == 1 and [c["trials"] for c in missing["cells"]] == [[]]
+    assert missing["count"] == 2 and [c["trials"] for c in missing["cells"]] == [[], []]
 
 
 def test_a_halted_trial_counts_once_as_halted_and_its_cost_once(repo):
@@ -217,7 +217,7 @@ def test_a_halted_trial_counts_once_as_halted_and_its_cost_once(repo):
     assert data["hosted_cost"]["discarded_usd"] == pytest.approx(0.5)
     # The halt was resolved: its trial ran again.
     missing = data["missing_trials"]
-    assert [c["trials"] for c in missing["cells"]] == [[]]
+    assert [c["trials"] for c in missing["cells"]] == [[], []]
     assert missing["halted_without_cell"] == []
 
 
@@ -232,7 +232,7 @@ def test_an_unresolved_discard_leaves_its_cell_short(repo):
             haiku_go["short"]) == (1, 0, 1, True)
     assert data["discard_causes"] == [{"cause": "SomethingNewError", "count": 1,
                                        "unlisted": True}]
-    [short] = [c for c in data["missing_trials"]["cells"] if c["language"] == "go"]
+    [short] = [c for c in data["missing_trials"]["cells"] if c["model_tier"] != LOCAL_MODEL]
     assert short["trials"] == [{"job": "phase0-cross-tdd", "trial": "go__00",
                                 "outcome": "discarded", "cause": "SomethingNewError",
                                 "unlisted": True}]
@@ -242,6 +242,26 @@ def test_an_unresolved_discard_leaves_its_cell_short(repo):
             "  - `phase0-cross-tdd/go__00` discarded, SomethingNewError (an unlisted exception "
             "type: classify it)" in markdown)
     assert "The next invocation runs these again." in markdown
+
+
+def test_the_local_go_cell_is_short_until_its_trial_runs(repo, monkeypatch):
+    monkeypatch.setenv("ASSAY_LOCAL_BASE_URL", "http://localhost:8080")
+    harbor = FakeHarbor()
+    assert experiment(harbor, *hosted()) == 0
+
+    data, markdown = summary(repo)
+    local_go = cell(data, LOCAL_MODEL, "instrument-tdd", "go")
+    assert (local_go["expected"], local_go["kept"], local_go["short"]) == (1, 0, True)
+    assert (f"- claude-code · {LOCAL_MODEL} · instrument-tdd · go: 0 of 1 kept\n"
+            "  - 1 trial not run yet" in markdown)
+
+    assert experiment(harbor) == 0
+
+    data, markdown = summary(repo)
+    local_go = cell(data, LOCAL_MODEL, "instrument-tdd", "go")
+    assert (local_go["expected"], local_go["kept"], local_go["short"]) == (1, 1, False)
+    assert "phase0-local/go__00" in harbor.ran
+    assert data["missing_trials"]["count"] == 0
 
 
 def local_trial(builder):
@@ -259,7 +279,7 @@ def test_the_local_trial_values_come_from_its_record_and_its_cost_is_not_hosted(
     assert experiment(harbor) == 0
 
     data, markdown = summary(repo)
-    [local] = data["local_trials"]
+    [local] = [t for t in data["local_trials"] if t["trial"] == "typescript__00"]
     assert local["job"] == "phase0-local"
     assert local["duration_sec"] == 300
     assert local["tool_calls_after_system_message"] == 1
