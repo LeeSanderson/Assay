@@ -13,7 +13,7 @@ The record is a view, built in memory; Assay writes no copy of it. It holds
 the steps with their tool calls, the history (the trace lines and trace.git)
 joined to the calls, the totals and the identity: the required core, which
 `Trial.missing_core()` checks. An optional part (a call's result, error flag,
-exit code and duration, and a step's cost) is given or is ABSENT, never
+exit code and duration, a step's cost, and the trial's agent time) is given or is ABSENT, never
 guessed.
 
 A missing file reads as None (or an empty list), so the validity check can
@@ -185,6 +185,9 @@ class Trial:
     local: bool  # the agent points at a local model server (L10)
     usage: Usage
     duration_sec: float | None  # result.json started_at to finished_at
+    # Agent time: result.json agent_execution started_at to finished_at;
+    # ABSENT when the span is missing or incomplete.
+    agent_time_sec: float | Absent
     identity: Identity
     reward: dict | None
     instruments: dict | None
@@ -297,6 +300,7 @@ def read_trial(path: Path | str) -> Trial:
         usage=Usage(usage.get("cost_usd"), usage.get("n_input_tokens"),
                     usage.get("n_cache_tokens"), usage.get("n_output_tokens")),
         duration_sec=_seconds(result.get("started_at"), result.get("finished_at")),
+        agent_time_sec=_agent_time(result.get("agent_execution") or {}),
         identity=Identity(
             harness=ran.get("name"),
             pinned_version=(agent.get("kwargs") or {}).get("version"),
@@ -353,6 +357,11 @@ def _seconds(start: str | None, end: str | None) -> float | None:
     if not start or not end:
         return None
     return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()
+
+
+def _agent_time(span: dict) -> float | Absent:
+    seconds = _seconds(span.get("started_at"), span.get("finished_at"))
+    return ABSENT if seconds is None else seconds
 
 
 def _variant_digest(lock: dict) -> str:

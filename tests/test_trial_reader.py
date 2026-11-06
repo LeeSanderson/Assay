@@ -79,6 +79,30 @@ def test_reader_gives_the_model_tier_usage_duration_and_turns(make_trial):
     assert t.system_step_ids == (3,)
 
 
+def test_reader_gives_agent_time_from_the_agent_execution_span(make_trial):
+    trial = make_trial("go")
+    trial.result.update(started_at="2026-01-01T00:00:00Z", finished_at="2026-01-01T00:10:00Z",
+                        agent_execution={"started_at": "2026-01-01T00:01:00Z",
+                                         "finished_at": "2026-01-01T00:08:30Z"})
+
+    t = read_trial(trial.build())
+
+    assert (t.agent_time_sec, t.duration_sec) == (450, 600)
+
+
+def test_agent_time_is_absent_when_the_span_is_missing_or_incomplete(make_trial):
+    missing = make_trial("go")
+    unfinished = make_trial("go")
+    unfinished.result["agent_execution"] = {"started_at": "2026-01-01T00:01:00Z",
+                                            "finished_at": None}
+    no_result = make_trial("go")
+    no_result.result = None
+
+    times = [read_trial(t.build()).agent_time_sec for t in (missing, unfinished, no_result)]
+
+    assert times == [ABSENT, ABSENT, ABSENT]
+
+
 def test_read_job_reads_each_trial_folder_in_name_order(tmp_path):
     for name in ("b__2", "a__1"):
         TrialBuilder(tmp_path / "job", name=name).build()
