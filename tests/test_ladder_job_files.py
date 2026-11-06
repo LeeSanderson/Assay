@@ -1,24 +1,42 @@
 """The four difficulty-ladder job files (PRD Part II, "The difficulty
 ladder"; issue #71), read through Harbor's own job model."""
 
+import importlib.util
 from pathlib import Path
 
 import pytest
 
-from tests.test_job_files import (INSTRUMENT_INSTRUCTION, expand_trials, load_job,
+from tests.test_job_files import (INSTRUMENT_INSTRUCTION, REPO_ROOT, expand_trials, load_job,
                                   run_from_repo_root, trial_key)  # noqa: F401 (fixture)
 
 HOSTED = ("anthropic/claude-haiku-5-5", "anthropic/claude-sonnet-5-5")
 LOCAL = ("laguna-s-2.1",)
-# The rungs whose task packs the jobs hold so far, in ladder order. A rung
-# ticket adds its slug here when it adds its packs to the four jobs.
-RUNGS = ("split-second-stopwatch",)
 JOBS = {  # in run order: job file -> (model tiers, condition)
     "ladder-hosted-control.yaml": (HOSTED, "control"),
     "ladder-hosted-tdd.yaml": (HOSTED, "instrument-tdd"),
     "ladder-local-control.yaml": (LOCAL, "control"),
     "ladder-local-tdd.yaml": (LOCAL, "instrument-tdd"),
 }
+
+
+def ladder_rungs() -> list[str]:
+    """The rungs that the summary orders (RUNGS in the experiment's
+    summary.py) whose task packs exist in both languages. A rung ticket adds
+    its packs; this list follows."""
+    spec = importlib.util.spec_from_file_location(
+        "ladder_summary", REPO_ROOT / "experiments" / "difficulty-ladder" / "summary.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return [rung for rung in module.RUNGS
+            if all((REPO_ROOT / "tasks" / language / rung).is_dir()
+                   for language in ("typescript", "go"))]
+
+
+RUNGS = ladder_rungs()
+
+
+def test_rung_one_is_on_the_ladder():
+    assert RUNGS[0] == "split-second-stopwatch"
 
 
 def ladder_key(trial) -> tuple[str, str, str, str]:

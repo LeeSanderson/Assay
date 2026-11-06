@@ -5,6 +5,7 @@ experiment, its job files, variants and task packs, with a fake Harbor and a
 fake `Containers`."""
 
 import json
+import re
 import shutil
 from datetime import datetime, timedelta, timezone
 
@@ -96,22 +97,32 @@ def repo(tmp_path, monkeypatch):
         shutil.copytree(REPO_ROOT / folder, tmp_path / folder,
                         ignore=shutil.ignore_patterns("node_modules", "__pycache__"))
     monkeypatch.chdir(tmp_path)
+    set_rungs(tmp_path, [RUNG])
     return tmp_path
 
 
-def add_rung(repo, rung):
-    """Adds a stand-in rung to the four jobs of the copy: the rung-1 task
-    packs under the rung's slug."""
-    for language in ("typescript", "go"):
-        shutil.copytree(repo / "tasks" / language / RUNG, repo / "tasks" / language / rung)
+def set_rungs(repo, rungs):
+    """Lists only these rungs' task packs in the four jobs of the copy, so
+    that the tests do not depend on how many rungs the committed jobs hold."""
     for job in HOSTED + LOCAL:
         path = repo / "jobs" / f"{job}.yaml"
-        text = path.read_text(encoding="utf-8")
-        line = f"  - path: tasks/go/{RUNG}\n"
-        assert line in text
-        path.write_text(text.replace(line, line + "".join(
-            f"  - path: tasks/{language}/{rung}\n" for language in ("typescript", "go"))),
-                        encoding="utf-8")
+        tasks = "tasks:\n" + "".join(f"  - path: tasks/{language}/{rung}\n"
+                                     for rung in rungs for language in ("typescript", "go"))
+        text, found = re.subn(r"^tasks:\n.*?(?=^agents:)", tasks + "\n",
+                              path.read_text(encoding="utf-8"), flags=re.M | re.S)
+        assert found == 1, path
+        path.write_text(text, encoding="utf-8")
+
+
+STAND_IN = "stand-in"  # a rung slug that no real task pack has
+
+
+def add_stand_in_rung(repo):
+    """Adds a stand-in rung to the four jobs of the copy, after rung 1: the
+    rung-1 task packs under the slug STAND_IN."""
+    for language in ("typescript", "go"):
+        shutil.copytree(repo / "tasks" / language / RUNG, repo / "tasks" / language / STAND_IN)
+    set_rungs(repo, [RUNG, STAND_IN])
 
 
 def experiment(fake, *args):
@@ -171,19 +182,22 @@ def test_the_pass_grid_shows_passed_failed_timeout_and_not_run_cells(repo):
 
 
 def test_the_rollup_totals_every_kept_trial_and_means_the_passed_ones_only(repo):
-    add_rung(repo, "wordy")
+    add_stand_in_rung(repo)
     fake = harbor({
         trial(HOSTED[0], HAIKU, "go"): [usage(0.30, 1000, 600, 50), agent_time(100)],
-        trial(HOSTED[0], HAIKU, "go", "wordy"): [usage(0.70, 3000, 1000, 150), agent_time(900),
-                                                 failed(20)],
+        trial(HOSTED[0], HAIKU, "go", STAND_IN): [usage(0.70, 3000, 1000, 150),
+                                                  agent_time(900), failed(20)],
         trial(HOSTED[0], HAIKU, "typescript"): [failed(3)],
-        trial(HOSTED[0], HAIKU, "typescript", "wordy"): [timed_out],
-    }, rungs=(RUNG, "wordy"))
+        trial(HOSTED[0], HAIKU, "typescript", STAND_IN): [timed_out],
+    }, rungs=(RUNG, STAND_IN))
 
     assert experiment(fake, *hosted()) == 0
 
     data, markdown = summary(repo)
-    assert row(markdown, f"{HAIKU} · control · go")[:3] == ["29/29 ✓", "20/29 ✗", "—"]
+    # A rung that is not in the ladder order goes after the six.
+    assert data["rungs"][-1] == STAND_IN
+    grid = row(markdown, f"{HAIKU} · control · go")
+    assert (grid[0], grid[1], grid[-1]) == ("29/29 ✓", "—", "20/29 ✗")
     assert row(markdown, "Model tier · condition · language", "Rollup") == [
         "Passed", "Input tokens", "Input tokens per passed trial", "Cached tokens",
         "Cached tokens per passed trial", "Output tokens", "Output tokens per passed trial",
