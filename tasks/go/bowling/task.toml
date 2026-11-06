@@ -1,0 +1,50 @@
+schema_version = "1.4"
+
+[metadata]
+language = "go"
+source_repo = "https://github.com/exercism/go"
+source_commit = "74f09b25dd12c14571cc684a7cb57149634037bd"
+source_dir = "exercises/practice/bowling"
+# Source paths in the Exercism repository; `pack_paths` gives where each one is
+# in this pack, in the same order.
+copied_paths = [
+    "exercises/practice/bowling/.docs/instructions.md",
+    "exercises/practice/bowling/bowling.go",
+    "exercises/practice/bowling/go.mod",
+    "exercises/practice/bowling/bowling_test.go",
+    "exercises/practice/bowling/cases_test.go",
+    "exercises/practice/bowling/.meta/example.go",
+]
+pack_paths = [
+    "instruction.md",
+    "environment/seed/bowling.go",
+    "environment/seed/go.mod",
+    "tests/reference/assay_reference_bowling_test.go",
+    "tests/reference/assay_reference_cases_test.go",
+    "solution/example.go",
+]
+mechanical_changes = [
+    "renamed bowling_test.go -> assay_reference_bowling_test.go",
+    "renamed cases_test.go -> assay_reference_cases_test.go",
+    "instruction.md: appended the fixed Assay footer after .docs/instructions.md",
+    "instruction.md: added an Interface section between the source prose and the footer, derived from the reference tests only (the constructor, the Roll and Score signatures, when each returns a non-nil error)",
+    "environment/seed/bowling.go: replaced each `panic(\"Please implement the X function\")` body with `panic(\"not implemented\")`; exported names, signatures and the module name are unchanged",
+    "environment/seed/bowling.go: the comment `// Define the Game type here.` replaced by `type Game struct{}`; the source stub leaves `Game` undefined, so it does not build and the reference tests could not compile against it",
+]
+seed_files = ["go.mod", "bowling.go"]
+# tests/test.sh: when agent test files (`*_test.go`) exist but do not compile,
+# agent_tests_passed is 0 and agent_tests_total is max(counted tests, agent test
+# files), so replay labels the snapshot red-compile, not no-tests.
+red_compile_rule = "agent test files exist and do not compile: agent_tests_passed = 0, agent_tests_total = max(counted tests, agent test files)"
+base_image = "golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5"
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 600.0
+
+[environment]
+cpus = 2
+memory_mb = 4096
+network_mode = "public"

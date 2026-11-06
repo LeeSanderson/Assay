@@ -23,6 +23,9 @@ tasks:
   # Rung 2: wordy (parsing and evaluation).
   - path: tasks/typescript/wordy
   - path: tasks/go/wordy
+  # Rung 4: bowling (rule-dense state with validation).
+  - path: tasks/typescript/bowling
+  - path: tasks/go/bowling
 
 agents:
   # Control: no variant flags (no skills, no settings, no extra instructions).
