@@ -96,11 +96,11 @@ A cell that holds fewer kept trials than its jobs promise, because a job has not
 _Avoid_: Missing cell, incomplete cell
 
 **Local setup**:
-The hardware, inference server, model file, and settings that together serve a local model tier, recorded in full beside its results.
+The hardware, inference server, model file, and settings that together serve a local model tier.
 _Avoid_: Local stack, local config
 
 **Reference setup**:
-The one local setup that Assay documents as guidance; any other local setup may differ from it, provided it is recorded in the same way.
+The one local setup that Assay documents as guidance; any other local setup may differ from it.
 _Avoid_: Required setup, default setup
 
 ### Telemetry and evaluation
@@ -108,6 +108,10 @@ _Avoid_: Required setup, default setup
 **Trial record**:
 The fixed, harness-neutral telemetry of one trial: every tool call in order, tokens, cost, time, and the repository's history through the trial; every supported harness produces its required core in full and states how finely it captured that history, while an optional part, such as each call's result or exit code, is either given or marked absent, never guessed.
 _Avoid_: Logs, trace, results
+
+**Agent time**:
+How long the agent worked in one trial, from the moment it received the task to the moment it stopped; it leaves out preparing the container, installing the harness, and the verifier.
+_Avoid_: Duration, trial time, wall-clock time
 
 **Recorder**:
 The measurement instrument of one harness that writes the shared trace folder in each trial: the repository history from seed to final, one line for each tool call, and what the trial had.
