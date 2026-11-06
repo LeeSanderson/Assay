@@ -1261,7 +1261,65 @@ Phase 0 comes first because it tests the assumption under all later phases.
 | 3 | The comparison between model tiers in the full matrix: against one baseline tier, or between each pair. | Phase 1 |
 | 4 | The Phase 1 items: a network allow-list, mutation testing and coverage, and the install route of Claude Code with no network. | Phase 1 |
 
-## 19. Sketches of the next experiments
+## 19. The difficulty ladder
+
+### Question
+
+On which task does each model tier start to fail, in each condition and each language? Phase 0 cannot answer this. Its one task pack per language is easy: every trial scored 29 of 29 reference tests. The difficulty ladder is a separate experiment, `difficulty-ladder`, so that the Phase 0 record and its acceptance numbers stay as they are.
+
+### The matrix
+
+The ladder runs the full matrix on each rung: the local tier, Haiku and Sonnet, × `control` and `instrument-tdd`, × TypeScript and Go. There is one repetition for each cell on each rung: 12 trials for each rung, 72 trials on six rungs (48 hosted and 24 local). More repetitions come later, and only on the rungs near the failure boundary. The ladder runs split-second-stopwatch again: it does not reuse the Phase 0 trials, because each trial belongs to one experiment.
+
+`experiments/difficulty-ladder/experiment.toml` has the same evaluations as `phase0-tdd` (`replay`, `agent-runs`, `trajectory`) and an experiment-local summary. It has four jobs, in run order:
+
+| Job | Model tiers | Condition |
+|---|---|---|
+| `ladder-hosted-control` | Haiku and Sonnet | `control` |
+| `ladder-hosted-tdd` | Haiku and Sonnet | `instrument-tdd` |
+| `ladder-local-control` | the local tier | `control` |
+| `ladder-local-tdd` | the local tier | `instrument-tdd` |
+
+Each job lists the task packs of every rung, in both languages, at one attempt. The extra instruction and the timeout multiplier apply to a whole job, so each condition and each kind of tier is a job of its own. Every agent pins the Phase 0 Claude Code version, with the same settings for non-essential traffic (L9). The local jobs use one server slot (L3) and `timeout_multiplier: 3.0` (L4). They run last, on the host of the local server, with `--job`, as `phase0-local` does. The agent timeout stays at 1800 seconds for every rung. A trial in which the agent runs out of time is kept as a failed trial. It is not an infrastructure failure (section 11).
+
+### The rungs
+
+Each rung is a different kind of task, so that the rungs are not near-duplicates. The order is a judgement of the difficulty for an LLM. It is not Exercism's difficulty rating: those ratings are for human learners, and they disagree between the tracks (poker is 4 in TypeScript and 7 in Go).
+
+| Rung | Task | Kind of task | Why it is harder than the rung below |
+|---|---|---|---|
+| 1 | split-second-stopwatch | A state machine | The base: few states, and each operation has one clear rule. |
+| 2 | wordy | Parsing and evaluation | The agent must parse free text and reject each kind of bad question with the exact error. |
+| 3 | poker | Parsing with ranking rules | Many ranking rules interact, with ties and special cases such as the low ace. |
+| 4 | bowling | Rule-dense state with validation | The state is spread over frames, with bonus rolls, and each invalid roll must be rejected at the right time. |
+| 5 | two-bucket | State-space search | The agent must find the search itself, and the rules of the start state are easy to miss. |
+| 6 | alphametics | Backtracking search with a time limit | A naive search is too slow: the agent must prune the search to finish inside the limit. |
+
+Each rung has a task pack in TypeScript and in Go, made by the TDD pack recipe (section 15). Split-second-stopwatch is the Phase 0 pack, without change. Two-bucket keeps the API of each track: a class in TypeScript, and one function in Go. The Interface section of each pack gives its own API. Rungs 5 and 6 have small reference suites (11 and 8 cases), so their pass counts are coarse. If a rung does not work, these exercises can replace it: connect, palindrome-products, change, say, word-search. Each has a gold solution in both tracks.
+
+The summary orders the rungs by `RUNGS` in `experiments/difficulty-ladder/summary.py`. A new rung adds its two task packs to the four job files.
+
+**The alphametics change.** The Go alphametics task pack drops the "ten letters and 199 addends" case from its reference tests, so that the top rung holds the same cases in both languages. The mechanical changes of the pack record this removal. Go also has a "two digits final carry" case that TypeScript does not have. The pack records whether it keeps that case as a small difference or drops it.
+
+### The summary
+
+The summary is experiment-local, `experiments/difficulty-ladder/summary.py`. It writes `analysis/difficulty-ladder/summary/ladder-summary.md` for a person and `ladder-summary.json` with every value. It does not give the Phase 0 acceptance numbers. It shares the trial values, the cells, the missing trials, the hosted cost and the trials table with the Phase 0 summary, through `assay/summary_parts.py`. Its sections, in order:
+
+1. **Pass grid.** One row for each model tier · condition · language, and one column for each rung, in ladder order. A cell shows `passed/total ✓` (reward 1), `passed/total ✗`, `timeout` (the agent ran out of time, from the trial's exception), or `—` (no kept trial yet).
+2. **Rollup.** One row for each model tier · condition · language. It gives the passed trials as "n of m". Then, for input tokens, cached tokens, output tokens, cost (USD) and agent time, it gives the total over all kept trials and the mean per passed trial. A note under the table says that failed trials count in the totals but not in the means.
+3. **Missing trials**, as in Phase 0: each short cell, with the cause of each discard or halt, or that a trial has not run yet.
+4. **Trials table.** The Phase 0 columns, the rung, and the model name and date of each local trial, so that results from different runs of the local server show.
+5. **Total hosted cost.** The kept trials plus the discarded trials, in USD and in GBP at the rate in the options. There is no cap.
+
+The definitions:
+
+- **Passed.** A kept trial with reward 1: all the reference tests compile and pass.
+- **Agent time.** The time of the agent's run, from the `agent_execution` span of Harbor's trial result. It leaves out the container setup, the harness installation and the verifier, so that they do not hide the difference between easy and hard rungs. When the span is missing, the value is absent; it is not guessed.
+- **Mean per passed trial.** The sum of a value over the passed trials of a row, divided by their count. Failed trials often stop early or run out of time, so a mean over all trials does not show what a success costs. A row with no passed trial shows `-`.
+
+The local tier's cost is `-`, not 0: the cost that Claude Code reports for a local model is no money cost (L5). Discarded trials are not in the rollup; they count only in the missing trials and in the total hosted cost.
+
+## 20. Sketches of the next experiments
 
 Each sketch fits the platform as it is. Each sketch gets its own map before it is built. The open items of each sketch are not decided.
 
