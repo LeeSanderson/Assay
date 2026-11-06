@@ -32,9 +32,10 @@ from pathlib import Path
 
 from analyze.trial import ABSENT
 from assay.summary import ExperimentView, PlanView, Summary, TrialView
-from assay.summary_parts import (CELL_KEYS, TRIAL_COLUMNS, TRIAL_KEY, Column, cells,
-                                 discard_causes, hosted_cost, missing_markdown, missing_trials,
-                                 num, trial_values, trials_markdown)
+from assay.summary_parts import (CELL_KEYS, TRIAL_COLUMNS, TRIAL_KEY, Column, cell_key, cells,
+                                 check_number_options, discard_causes, hosted_cost,
+                                 markdown_table, missing_markdown, missing_trials,
+                                 money_cost_usd, num, score, trial_values, trials_markdown)
 
 SUMMARY_NAME = "ladder-summary"
 USD_PER_GBP = 1.27
@@ -45,11 +46,7 @@ TIMEOUT = "AgentTimeoutError"  # Harbor's exception when the agent ran out of ti
 
 
 def check_options(options: dict, plan: PlanView) -> None:
-    if unknown := sorted(set(options) - {"usd_per_gbp"}):
-        raise ValueError(f"unknown option {', '.join(unknown)} (usd_per_gbp)")
-    value = options.get("usd_per_gbp", 1)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-        raise ValueError(f"usd_per_gbp must be a number above 0, not {value!r}")
+    check_number_options(options, ("usd_per_gbp",))
 
 
 def summarize(view: ExperimentView, options: dict, out: Path) -> None:
@@ -90,20 +87,20 @@ def _trial(t: TrialView) -> dict:
     record = t.record
     timeout = record.exception_type == TIMEOUT
     return {**trial_values(t),
-            "rung": Path(t.task_pack).parts[-1],
+            "rung": t.pack_slug,
             "timeout": timeout,
             "passed": not timeout and (record.reward or {}).get("reward") == 1,
             "agent_time_sec": None if record.agent_time_sec is ABSENT else record.agent_time_sec,
             "started_at": record.started_at}
 
 
-# The rollup's values of one trial. The local tier's cost is None, not 0: what
-# Claude Code reports for a local model is no money cost (L5).
+# The rollup's values of one trial. The cost is the money cost, which a local
+# trial does not have (L5).
 ROLLUP_VALUES = {
     "input_tokens": lambda t: t["cost"]["input_tokens"],
     "cache_tokens": lambda t: t["cost"]["cache_tokens"],
     "output_tokens": lambda t: t["cost"]["output_tokens"],
-    "cost_usd": lambda t: None if t["local"] else t["cost"]["cost_usd"],
+    "cost_usd": money_cost_usd,
     "agent_time_sec": lambda t: t["agent_time_sec"],
 }
 
@@ -124,7 +121,7 @@ def _rollup(view: ExperimentView, trials: list[dict]) -> list[dict]:
     only (None when there is none)."""
     out = []
     for row in _rows(view):
-        kept = [t for t in trials if _in_row(t, row)]
+        kept = [t for t in trials if cell_key(t["cell"]) == cell_key(row)]
         passed = [t for t in kept if t["passed"]]
         out.append({**row, "kept": len(kept), "passed": len(passed),
                     "totals": {k: _total([v(t) for t in kept])
@@ -141,10 +138,6 @@ def _rows(view: ExperimentView) -> list[dict]:
                                       ("model_tier", "condition", "language", "harness")))
 
 
-def _in_row(t: dict, row: dict) -> bool:
-    return tuple((t["cell"] or {}).get(k) for k in CELL_KEYS) == tuple(row[k] for k in CELL_KEYS)
-
-
 def _grid(view: ExperimentView, trials: list[dict], rungs: list[str]) -> list[dict]:
     """For each row and rung, each kept trial's score: the reference tests it
     passed of the total, its reward, and whether the agent ran out of time."""
@@ -152,7 +145,7 @@ def _grid(view: ExperimentView, trials: list[dict], rungs: list[str]) -> list[di
     for row in _rows(view):
         scores = {rung: [] for rung in rungs}
         for t in trials:
-            if _in_row(t, row):
+            if cell_key(t["cell"]) == cell_key(row):
                 reward = t["reward"] or {}
                 scores[t["rung"]].append({
                     "trial": f"{t['job']}/{t['trial']}",
@@ -170,17 +163,8 @@ def _label(row: dict) -> str:
     return f"{row['model_tier']} · {row['condition']} · {row['language']}"
 
 
-def _score(score: dict) -> str:
-    if score["timeout"]:
-        return "timeout"
-    passed, total = (("-" if v is None else v) for v in (score["reference_passed"],
-                                                           score["reference_total"]))
-    return f"{passed}/{total} {'✓' if score['reward'] == 1 else '✗'}"
-
-
-def _table(header: list[str], rows: list[list[str]]) -> list[str]:
-    return ["| " + " | ".join(header) + " |", "|" + "---|" * len(header),
-            *("| " + " | ".join(r) + " |" for r in rows)]
+def _grid_score(trial_score: dict) -> str:
+    return "timeout" if trial_score["timeout"] else score(trial_score, "/")
 
 
 def render_markdown(summary: dict) -> str:
@@ -231,27 +215,27 @@ LADDER_KEY = (
 )
 
 
-ROLLUP_COLUMNS = (  # the rollup value, its header, and its digits
-    ("input_tokens", "Input tokens", 0),
-    ("cache_tokens", "Cached tokens", 0),
-    ("output_tokens", "Output tokens", 0),
-    ("cost_usd", "USD", 2),
-    ("agent_time_sec", "Agent time (s)", 0),
+ROLLUP_COLUMNS = (  # the rollup value, the headers of its total and its mean, and its digits
+    ("input_tokens", "Input tokens", "Mean input tokens per passed trial", 0),
+    ("cache_tokens", "Cached tokens", "Mean cached tokens per passed trial", 0),
+    ("output_tokens", "Output tokens", "Mean output tokens per passed trial", 0),
+    ("cost_usd", "USD", "Mean USD per passed trial", 2),
+    ("agent_time_sec", "Agent time (s)", "Mean agent time (s) per passed trial", 0),
 )
 
 
 def _rollup_markdown(summary: dict) -> list[str]:
     header = ["Model tier · condition · language", "Passed"]
-    for _, name, _ in ROLLUP_COLUMNS:
-        header += [name, f"{name} per passed trial"]
+    for _, total, mean, _ in ROLLUP_COLUMNS:
+        header += [total, mean]
     rows = []
     for r in summary["rollup"]:
-        cells = [_label(r), f"{r['passed']} of {r['kept']}" if r["kept"] else "-"]
-        for key, _, digits in ROLLUP_COLUMNS:
-            cells += [num(r["totals"][key], digits),
+        texts = [_label(r), f"{r['passed']} of {r['kept']}" if r["kept"] else "-"]
+        for key, _, _, digits in ROLLUP_COLUMNS:
+            texts += [num(r["totals"][key], digits),
                       num(r["means_per_passed_trial"][key], digits)]
-        rows.append(cells)
-    return ["## Rollup", "", *_table(header, rows), "",
+        rows.append(texts)
+    return ["## Rollup", "", *markdown_table(header, rows), "",
             "Passed: the kept trials with reward 1, of all the kept trials of the row; "
             "discarded trials are not counted. The totals count every kept trial. Failed "
             "trials count in the totals but not in the means per passed trial. `-`: no passed "
@@ -261,11 +245,11 @@ def _rollup_markdown(summary: dict) -> list[str]:
 
 
 def _grid_markdown(summary: dict) -> list[str]:
-    rows = [[_label(row)] + [", ".join(_score(s) for s in row["rungs"][rung]) or "—"
+    rows = [[_label(row)] + [", ".join(_grid_score(s) for s in row["rungs"][rung]) or "—"
                              for rung in summary["rungs"]]
             for row in summary["grid"]]
     return ["## Pass grid", "",
-            *_table(["Model tier · condition · language", *summary["rungs"]], rows), "",
+            *markdown_table(["Model tier · condition · language", *summary["rungs"]], rows), "",
             "One column for each rung, easiest first. A cell gives the reference tests passed "
             "of the total, with ✓ when they all pass (reward 1) and ✗ otherwise; `timeout` "
             "when the agent ran out of time; `—` when the rung has no kept trial yet.", ""]

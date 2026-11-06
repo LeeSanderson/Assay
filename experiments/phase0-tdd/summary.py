@@ -34,8 +34,9 @@ from pathlib import Path
 
 from analyze.trial import share
 from assay.summary import ExperimentView, PlanView, Summary, TrialView
-from assay.summary_parts import (cells, discard_causes, hosted_cost, missing_markdown,
-                                 missing_trials, num, of, trial_values, trials_markdown)
+from assay.summary_parts import (cells, check_number_options, discard_causes, hosted_cost,
+                                 missing_markdown, missing_trials, num, of, trial_values,
+                                 trials_markdown)
 
 SUMMARY_NAME = "phase0-summary"
 CAP_GBP = 15
@@ -45,12 +46,7 @@ PERSON_CHECK = ("Check both against a person's labels with `assay compare-labels
 
 
 def check_options(options: dict, plan: PlanView) -> None:
-    if unknown := sorted(set(options) - {"usd_per_gbp", "cap_gbp"}):
-        raise ValueError(f"unknown option {', '.join(unknown)} (usd_per_gbp, cap_gbp)")
-    for key in ("usd_per_gbp", "cap_gbp"):
-        value = options.get(key, 1)
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-            raise ValueError(f"{key} must be a number above 0, not {value!r}")
+    check_number_options(options, ("usd_per_gbp", "cap_gbp"))
 
 
 def summarize(view: ExperimentView, options: dict, out: Path) -> None:

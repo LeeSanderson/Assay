@@ -199,9 +199,10 @@ def test_the_rollup_totals_every_kept_trial_and_means_the_passed_ones_only(repo)
     grid = row(markdown, f"{HAIKU} · control · go")
     assert (grid[0], grid[1], grid[-1]) == ("29/29 ✓", "—", "20/29 ✗")
     assert row(markdown, "Model tier · condition · language", "Rollup") == [
-        "Passed", "Input tokens", "Input tokens per passed trial", "Cached tokens",
-        "Cached tokens per passed trial", "Output tokens", "Output tokens per passed trial",
-        "USD", "USD per passed trial", "Agent time (s)", "Agent time (s) per passed trial"]
+        "Passed", "Input tokens", "Mean input tokens per passed trial", "Cached tokens",
+        "Mean cached tokens per passed trial", "Output tokens",
+        "Mean output tokens per passed trial", "USD", "Mean USD per passed trial",
+        "Agent time (s)", "Mean agent time (s) per passed trial"]
     # Totals over the passed and the failed trial; means over the passed one only.
     assert row(markdown, f"{HAIKU} · control · go", "Rollup") == [
         "1 of 2", "4,000", "1,000", "1,600", "600", "200", "50", "1.00", "0.30", "1,000", "100"]

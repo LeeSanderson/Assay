@@ -50,6 +50,16 @@ class TrialView:
     values: Mapping[str, Json]
     errors: Mapping[str, str | None]
 
+    @property
+    def pack_language(self) -> str:
+        """The language of the task pack, from its path."""
+        return self.task_pack.parts[-2]
+
+    @property
+    def pack_slug(self) -> str:
+        """The slug of the task pack (the ladder's rung), from its path."""
+        return self.task_pack.parts[-1]
+
 
 @dataclass(frozen=True)
 class ExperimentView:
