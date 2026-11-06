@@ -29,12 +29,15 @@ class FakeHarbor:
     agent's model and env in its lock.json. `cost` gives each trial's
     cost_usd; `outcomes` gives a <job>/<trial> a list of changes, one for each
     run of it; `bodies` gives a <job>/<trial> its own steps before the
-    test file is written."""
+    test file is written. `name` gives a trial's folder name from its task
+    pack's language and slug, its agent's index and its attempt."""
 
-    def __init__(self, cost=0.5, outcomes=None, bodies=None):
+    def __init__(self, cost=0.5, outcomes=None, bodies=None,
+                 name=lambda language, slug, agent, attempt: f"{language}__{agent}{attempt}"):
         self.cost = cost
         self.outcomes = {name: list(changes) for name, changes in (outcomes or {}).items()}
         self.bodies = bodies or {}
+        self.name = name
         self.ran = []
 
     def __call__(self, args):
@@ -47,7 +50,7 @@ class FakeHarbor:
             language, slug = Path(task.path).parts[-2:]
             for a, agent in enumerate(config.agents):
                 for attempt in range(config.n_attempts):
-                    name = f"{language}__{a}{attempt}"
+                    name = self.name(language, slug, a, attempt)
                     if (folder / name / "result.json").exists():
                         continue
                     if (folder / name).exists():

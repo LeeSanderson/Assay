@@ -103,6 +103,21 @@ def test_agent_time_is_absent_when_the_span_is_missing_or_incomplete(make_trial)
     assert times == [ABSENT, ABSENT, ABSENT]
 
 
+def test_reader_gives_the_start_time_and_harbor_exception_type(make_trial):
+    timed_out = make_trial("go")
+    timed_out.result.update(started_at="2026-03-04T05:06:07Z", exception_info={
+        "exception_type": "AgentTimeoutError", "exception_message": "boom"})
+    finished = make_trial("go")
+    no_result = make_trial("go")
+    no_result.result = None
+
+    t, f, n = (read_trial(b.build()) for b in (timed_out, finished, no_result))
+
+    assert (t.started_at, t.exception_type) == ("2026-03-04T05:06:07Z", "AgentTimeoutError")
+    assert f.exception_type is None
+    assert (n.started_at, n.exception_type) == (None, None)
+
+
 def test_read_job_reads_each_trial_folder_in_name_order(tmp_path):
     for name in ("b__2", "a__1"):
         TrialBuilder(tmp_path / "job", name=name).build()

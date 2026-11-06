@@ -5,6 +5,7 @@ ExperimentView. These are the values and the markdown that the Phase 0
 summary and the difficulty-ladder summary share, so neither copies them:
 
 - `trial_values`: the values of one kept trial, as a dict for the JSON;
+- `hosted_cost`: the cost of the hosted trials, kept plus discarded;
 - `cells`: each cell's expected, kept, discarded and halted trials, and
   whether it is short;
 - `discard_causes`: the causes of the discarded and halted trials;
@@ -71,6 +72,22 @@ def trial_values(t: TrialView) -> dict:
             "turns": record.turns,
         },
     }
+
+
+def hosted_cost(view: ExperimentView, trials: Sequence[dict], usd_per_gbp: float) -> dict:
+    """The cost of the hosted trials: the kept trials (`trial_values` dicts)
+    plus each discarded trial in the experiment log, in USD and GBP."""
+    local_tiers = {t["model_tier"] for t in trials if t["local"]}
+    discards = [e for e in view.log if e["event"] == "trial-discarded"]
+    # A halted trial is logged at the halt, and again as trial-discarded
+    # (after_halt) when the next invocation deletes it: its cost counts once,
+    # from the trial-discarded line.
+    discarded_usd = sum(e.get("cost_usd") or 0 for e in discards
+                        if (e.get("cell") or {}).get("model_tier") not in local_tiers)
+    kept_usd = sum(t["cost"]["cost_usd"] or 0 for t in trials if not t["local"])
+    total_usd = kept_usd + discarded_usd
+    return {"kept_usd": kept_usd, "discarded_usd": discarded_usd, "total_usd": total_usd,
+            "total_gbp": total_usd / usd_per_gbp, "usd_per_gbp": usd_per_gbp}
 
 
 def _cell_key(cell: dict | None) -> tuple:
@@ -295,12 +312,13 @@ def _trial_order(t: dict) -> tuple:
 
 
 def trials_markdown(trials: Sequence[dict], columns: Sequence[Column] = TRIAL_COLUMNS,
-                    key: Sequence[str] = TRIAL_KEY) -> list[str]:
-    """The Trials section: one row for each trial, by condition, then model
-    tier, then language, and the key under the table."""
+                    key: Sequence[str] = TRIAL_KEY,
+                    order: Callable[[dict], tuple] = _trial_order) -> list[str]:
+    """The Trials section: one row for each trial, in `order` (by default by
+    condition, then model tier, then language), and the key under the table."""
     lines = ["## Trials", "",
              "| " + " | ".join(c.header for c in columns) + " |",
              "|" + "---|" * len(columns)]
-    for t in sorted(trials, key=_trial_order):
+    for t in sorted(trials, key=order):
         lines.append("| " + " | ".join(c.text(t) for c in columns) + " |")
     return lines + ["", *key]

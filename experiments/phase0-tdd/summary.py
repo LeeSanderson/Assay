@@ -34,8 +34,8 @@ from pathlib import Path
 
 from analyze.trial import share
 from assay.summary import ExperimentView, PlanView, Summary, TrialView
-from assay.summary_parts import (cells, discard_causes, missing_markdown, missing_trials,
-                                 num, of, trial_values, trials_markdown)
+from assay.summary_parts import (cells, discard_causes, hosted_cost, missing_markdown,
+                                 missing_trials, num, of, trial_values, trials_markdown)
 
 SUMMARY_NAME = "phase0-summary"
 CAP_GBP = 15
@@ -76,15 +76,7 @@ def phase0_summary(view: ExperimentView, options: dict) -> dict:
         versions.setdefault(t.job, set())
         if t.record.identity.version:
             versions[t.job].add(t.record.identity.version)
-    local_tiers = {t["model_tier"] for t in trials if t["local"]}
-    discards = [e for e in view.log if e["event"] == "trial-discarded"]
-    # A halted trial is logged at the halt, and again as trial-discarded
-    # (after_halt) when the next invocation deletes it: its cost counts once,
-    # from the trial-discarded line.
-    discarded_usd = sum(e.get("cost_usd") or 0 for e in discards
-                        if (e.get("cell") or {}).get("model_tier") not in local_tiers)
-    kept_usd = sum(t["cost"]["cost_usd"] or 0 for t in trials if not t["local"])
-    total_usd = kept_usd + discarded_usd
+    cost = hosted_cost(view, trials, usd_per_gbp)
     replayed = [t for t in trials if t["replay"] is not None]
     return {
         "claude_code_versions": {job: sorted(v) for job, v in versions.items()},
@@ -101,11 +93,7 @@ def phase0_summary(view: ExperimentView, options: dict) -> dict:
         "kept_trials": len(trials),
         "discard_causes": discard_causes(view.log),
         "missing_trials": missing_trials(view),
-        "hosted_cost": {
-            "kept_usd": kept_usd, "discarded_usd": discarded_usd, "total_usd": total_usd,
-            "total_gbp": total_usd / usd_per_gbp, "usd_per_gbp": usd_per_gbp,
-            "cap_gbp": cap_gbp, "within_cap": total_usd / usd_per_gbp <= cap_gbp,
-        },
+        "hosted_cost": {**cost, "cap_gbp": cap_gbp, "within_cap": cost["total_gbp"] <= cap_gbp},
         "local_trials": [_local_trial(t) for t in view.trials if t.record.local],
     }
 

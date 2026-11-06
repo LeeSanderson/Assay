@@ -188,6 +188,11 @@ class Trial:
     # Agent time: result.json agent_execution started_at to finished_at;
     # ABSENT when the span is missing or incomplete.
     agent_time_sec: float | Absent
+    started_at: str | None  # result.json started_at, as Harbor wrote it
+    # result.json exception_info.exception_type: the Harbor exception of a
+    # trial that did not finish cleanly (AgentTimeoutError when the agent ran
+    # out of time); None when there is none.
+    exception_type: str | None
     identity: Identity
     reward: dict | None
     instruments: dict | None
@@ -301,6 +306,8 @@ def read_trial(path: Path | str) -> Trial:
                     usage.get("n_cache_tokens"), usage.get("n_output_tokens")),
         duration_sec=_seconds(result.get("started_at"), result.get("finished_at")),
         agent_time_sec=_agent_time(result.get("agent_execution") or {}),
+        started_at=result.get("started_at"),
+        exception_type=(result.get("exception_info") or {}).get("exception_type"),
         identity=Identity(
             harness=ran.get("name"),
             pinned_version=(agent.get("kwargs") or {}).get("version"),
