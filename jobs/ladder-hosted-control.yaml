@@ -16,6 +16,9 @@ tasks:
   # Rung 1: split-second-stopwatch (a state machine).
   - path: tasks/typescript/split-second-stopwatch
   - path: tasks/go/split-second-stopwatch
+  # Rung 2: wordy (parsing and evaluation).
+  - path: tasks/typescript/wordy
+  - path: tasks/go/wordy
 
 agents:
   # Control: no variant flags (no skills, no settings, no extra instructions).
