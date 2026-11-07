@@ -311,6 +311,8 @@ def run_evaluations(plan: Plan, planned: list[PlannedEvaluation], containers: Co
         started = time.monotonic()
         ran = reused = errors = 0
         guarded = GuardedContainers(containers, p.name, p.evaluation.online)
+        if not dry_run:
+            print(f"\nevaluation {p.name}: {len(trials)} trials", flush=True)
         for t in trials:
             if t.id not in records:
                 records[t.id] = record = read_trial(t.path)
@@ -353,6 +355,7 @@ def run_evaluations(plan: Plan, planned: list[PlannedEvaluation], containers: Co
             if dry_run:
                 outcomes[t.id][p.name] = _Unknown()
                 continue
+            print(f"  {p.name} {t.id.job}/{t.id.trial}", flush=True)
             outcomes[t.id][p.name] = outcome = _evaluate(p, inp, folder, digest, inputs,
                                                          pin_error)
             errors += outcome.error is not None

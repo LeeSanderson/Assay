@@ -7,6 +7,14 @@ from tests.trial_builder import TrialBuilder
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.fixture(autouse=True)
+def local_server_answers(request, monkeypatch):
+    """No test reaches a real local model server: the health check of a
+    local job answers, except in tests/test_local_server.py, which tests it."""
+    if request.node.path.name != "test_local_server.py":
+        monkeypatch.setattr("assay.experiment.check_server", lambda url: None)
+
+
 @pytest.fixture
 def make_trial(tmp_path: Path):
     """A factory for fake trial folders: make_trial(language="go") -> TrialBuilder."""

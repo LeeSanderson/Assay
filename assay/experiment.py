@@ -34,6 +34,12 @@ up to N times. A halt is logged as `halt` and kept; the invocation stops
 after that job as `halted`, and the next invocation deletes the trial (after
 a `trial-discarded` with `after_halt`) and runs it again. A job file must
 leave Harbor's own retry.max_retries at 0.
+
+Before each run of a job whose agents talk to a local model server (an
+`ANTHROPIC_BASE_URL` under `env:`), the server gets a health check
+(assay.local_server). A server that does not answer is logged as
+`server-unreachable` and stops the invocation as `error`, before Harbor
+starts a trial.
 """
 
 from __future__ import annotations
@@ -64,6 +70,7 @@ from assay.evaluations import (
     run_evaluations,
 )
 from assay.experiment_files import ExperimentLog, ExperimentPaths, TrialId
+from assay.local_server import check_server
 from assay.summary import (PlannedSummary, SummaryPlanError, plan_summary, plan_view,
                            run_summary)
 from assay.trial_outcomes import TrialOutcome, agent_index, classify, logged_digests
@@ -84,6 +91,8 @@ TOOLS_TARGET = "/opt/assay-tools"
 TOOLS_TAG = "assay-tools/"
 # Harbor's `${VAR}` and `${VAR:-default}` (harbor/utils/env.py).
 ENV_TEMPLATE = re.compile(r"\$\{([^}:]+)(?::-(.*))?\}")
+# An agent that sets this under `env:` talks to a local model server (L10).
+BASE_URL_KEY = "ANTHROPIC_BASE_URL"
 
 EXPERIMENT_KEYS = {"jobs", "evaluations", "evaluation-options", "summary"}
 SUMMARY_KEYS = {"use", "options"}
@@ -116,6 +125,9 @@ class JobPlan:
     selected: bool
     agents: list[AgentPlan]
     expected: Counter[Cell] = field(default_factory=Counter)
+    # The local model servers its agents talk to: each ANTHROPIC_BASE_URL,
+    # with its ${VAR} filled from the environment.
+    servers: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -179,6 +191,11 @@ def env_templates(value) -> list[tuple[str, str | None]]:
     if isinstance(value, list):
         return [t for v in value for t in env_templates(v)]
     return []
+
+
+def fill_env(value: str) -> str:
+    """The string with each `${VAR}` and `${VAR:-default}` filled, as Harbor fills it."""
+    return ENV_TEMPLATE.sub(lambda m: os.environ.get(m.group(1), m.group(2) or ""), value)
 
 
 def content_digest(paths: Sequence[Path], inline: Sequence[object]) -> str:
@@ -277,7 +294,9 @@ def plan_job(file: Path, experiment: str, selected: set[str] | None) -> JobPlan:
             raise PlanError(f"{name}: {', '.join('${' + v + '}' for v in unset)} in "
                             f"{file.as_posix()} is not set")
     agents = [plan_agent(config, agent, name) for agent in config.agents]
-    job = JobPlan(name, file, is_selected, agents)
+    servers = sorted({fill_env(url) for agent in config.agents
+                      if (url := agent.env.get(BASE_URL_KEY))})
+    job = JobPlan(name, file, is_selected, agents, servers=servers)
     for agent in agents:
         for task in config.tasks:
             language = Path(task.path).parts[-2] if task.path else "unknown"
@@ -459,6 +478,19 @@ def check_job(plan: Plan, job: JobPlan, log: ExperimentLog) -> list[TrialOutcome
     return outcomes
 
 
+def servers_answer(job: JobPlan, log: ExperimentLog) -> bool:
+    """The health check of each local server of the job, before each run of
+    it; a server that does not answer is logged and stops the invocation."""
+    for server in job.servers:
+        if (problem := check_server(server)) is not None:
+            log.write("server-unreachable", job=job.name, server=server, problem=problem)
+            print(f"error: assay experiment: job {job.name} needs the local model server, "
+                  f"and {problem}. Start the server (or fix ASSAY_LOCAL_BASE_URL) and run "
+                  f"again; finished trials are kept.", file=sys.stderr)
+            return False
+    return True
+
+
 def discard_trial(plan: Plan, fields: dict, cause: dict, log: ExperimentLog,
                   **extra) -> None:
     """Log the trial as discarded, then delete its results and analysis folders."""
@@ -533,6 +565,9 @@ def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
                 continue
             retry = 0
             while True:
+                if not servers_answer(job, log):
+                    exit_code = 2
+                    break
                 exit_code = run_job(plan, job, log, debug, run_harbor, retry)
                 if exit_code != 0:
                     break

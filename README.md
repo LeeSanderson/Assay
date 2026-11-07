@@ -239,7 +239,7 @@ uv run assay experiment phase0-tdd --job phase0-cross-control --job phase0-cross
 
 The evaluations and the summary run after the jobs, over every trial of the experiment. Until `phase0-local` runs, the summary shows the local cells as short. If the run stops (Ctrl-C, a halt or an error), fix the cause and run the same command again: finished trials are kept, discarded and halted trials run again, and unchanged evaluation results are reused. Add `--retries 1` to rerun an infrastructure failure at once. `--from-scratch` deletes `results/phase0-tdd` and `analysis/phase0-tdd` and starts again.
 
-**The local job** runs last, on the host of the local server. It runs the TypeScript and the Go task pack. Before it runs, set `ASSAY_LOCAL_BASE_URL` in `.env` to the server address (see [Setup](#setup)). This is the only place the address appears (L10). Without it, the plan stops before any job runs.
+**The local job** runs last, on the host of the local server. It runs the TypeScript and the Go task pack. Before it runs, set `ASSAY_LOCAL_BASE_URL` in `.env` to the server address (see [Setup](#setup)). This is the only place the address appears (L10). Without it, the plan stops before any job runs. Before each run of a local job (and each retry of it), `assay experiment` sends `GET <address>/health`. If the server cannot be reached, or answers with a 5xx status (`llama-server` answers 503 while it loads the model), the invocation stops before Harbor starts a trial and logs `server-unreachable`. Start the server and run the same command again.
 
 ```powershell
 uv run assay experiment phase0-tdd --job phase0-local --debug
