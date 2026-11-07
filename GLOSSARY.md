@@ -79,6 +79,18 @@ _Avoid_: Pack format, task template
 The files an agent starts from in a trial, committed as `seed`; what they hold is set by the experiment's pack recipe, such as a stub with no tests for test-driven development or a working codebase with its own tests for refactoring.
 _Avoid_: Starter code, scaffold, template
 
+**Rung**:
+One level of difficulty in a ladder experiment, held by one or more task packs in each language, and placed by the experiment's own judgement of how hard it is for a model.
+_Avoid_: Level, step, tier
+
+**Seed size**:
+How much working code the seed repository holds before the agent starts: a stub, a small codebase, or a medium codebase.
+_Avoid_: Codebase size, repo size
+
+**Feature size**:
+How much new behaviour the prompt asks the agent to add: one function, a module of interacting parts, or a cross-cutting feature that changes several existing modules.
+_Avoid_: Task size, scope
+
 **Trial**:
 One run of one agent, under one condition, on one task pack, at one model tier; it belongs to the one experiment that ran it, while its inputs, such as the task pack, may be shared by many experiments.
 _Avoid_: Run, episode
@@ -155,8 +167,16 @@ _Avoid_: Write call
 Whether the agent wrote a test file before it wrote an implementation file in one trial, judged from the order of file writes alone and not from whether the test failed.
 _Avoid_: Failing test first, test before implementation
 
+**Agent tests**:
+The tests that the agent added or changed in one trial, judged against the seed repository; a seed test that the agent edits becomes an agent test.
+_Avoid_: Own tests, visible tests
+
+**Seed suite**:
+The tests that the seed repository holds before the agent starts, which are never agent tests and which count toward the outcome in their seed form, whatever the agent did to them.
+_Avoid_: Existing tests, regression suite
+
 **Test state**:
-The result of the agent's own tests on one state of the repository: they pass, they fail, they do not compile, or there are none; a state with no tests is not green.
+The result of the agent tests on one state of the repository: they pass, they fail, they do not compile, or there are none; a state with no tests is not green.
 _Avoid_: Test result, red/green status
 
 **Run result**:

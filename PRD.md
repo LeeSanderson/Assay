@@ -765,6 +765,7 @@ The **experiment log** is `analysis/<experiment>/experiment-log.jsonl`. Assay ap
 | `job-finished` | The exit code, the trials, the duration, and the condition digest of each agent again |
 | `trial-discarded` | Job, trial, cell, task pack, the cause (`{exception}` or `{failed_checks}`), tokens, `cost_usd`, and duration |
 | `halt` | The fields of `trial-discarded`, and a message |
+| `server-unreachable` | Job, the local server address, and the problem. Before each run of a local job (and each retry of it), Assay sends `GET <address>/health`. No answer, a timeout, or a 5xx status stops the invocation as `error` before Harbor starts a trial |
 | `evaluation-finished` | The counts of results that ran, were reused, and are errors, and the duration |
 | `summary-written` | The files |
 | `invocation-finished` | The outcome: `complete`, `halted`, `interrupted`, or `error` |
@@ -1319,7 +1320,103 @@ The definitions:
 
 The local tier's cost is `-`, not 0: the cost that Claude Code reports for a local model is no money cost (L5). Discarded trials are not in the rollup; they count only in the missing trials and in the total hosted cost.
 
-## 20. Sketches of the next experiments
+## 20. The codebase ladder
+
+### Question
+
+On which rung does each model tier start to fail, in each condition and each language, when the tasks grow from one Exercism function to a feature in a medium codebase? The difficulty ladder (section 19) cannot answer this. The hosted tiers passed 47 of its 48 trials. The slowest trial used 137 of 1800 seconds. The effort of the agent did not increase with the rung: alphametics, the top rung, was the cheapest rung for both hosted tiers. A ladder that every tier passes cannot show the value of a skill. The codebase ladder finds the rungs where the control starts to fail. The TDD skill-transfer experiment (section 14) then uses those rungs.
+
+The codebase ladder is a separate experiment, `codebase-ladder`. The `difficulty-ladder` experiment and its trials do not change.
+
+### The rungs
+
+Two dials set each rung:
+
+- **Seed size.** A stub, a small codebase, or a medium codebase.
+- **Feature size.** One function, a module of interacting parts (M), or a cross-cutting feature that changes several existing modules (X).
+
+Each rung turns one dial by one step. Thus a failure between two rungs has one cause.
+
+| Rung | Seed | Feature | Task pack | The change from the rung below |
+|---|---|---|---|---|
+| A | A stub | One function | `poker` | — (the floor) |
+| B | A stub | M: the promotions engine | `shop-promotions-stub` | The feature size |
+| C | The small codebase | M: the promotions engine | `shop-promotions-small` | The seed size only. The feature is the same. |
+| D | The small codebase and the gold solution of M | X: partial returns and refunds | `shop-returns-small` | The feature size |
+| E | The medium codebase | X: partial returns and refunds | `shop-returns-medium` | The seed size only. The feature is the same. |
+
+Rung A is the existing poker task pack, without change. The ladder runs it again, because each trial belongs to one experiment. Rungs B to E are purpose-written ([ADR 0006](docs/adr/0006-codebase-ladder-uses-purpose-written-parallel-codebases.md)). Each rung has a task pack in TypeScript and in Go. The two packs of a rung hold the same seed design, the same prompt, and the same test cases.
+
+The seed of rung D is the seed of rung C with the gold solution of M added. Thus X has one specification, one Interface section, and one set of feature tests on rungs D and E. X includes the proportional reversal of a discount when a customer returns part of an order.
+
+### The domain
+
+All purpose-written rungs use one domain: an order and inventory service.
+
+| Seed | Size | Content |
+|---|---|---|
+| The small codebase (C, D) | 600 to 1,000 lines of production code in 6 to 10 files. A seed suite of 40 to 80 tests. | The catalogue, the inventory, the orders, and the checkout, with repositories in memory. |
+| The medium codebase (E) | 4,000 to 6,000 lines of production code in 30 to 50 files. A seed suite of 200 to 400 tests. | The small codebase, the promotions engine, the customers and accounts, the shipping, the invoices, an event log, and the reports. The code has layers (domain, services, adapters) and its own conventions for errors, identifiers, and money. |
+
+**M, the promotions engine.** Percentage and fixed discounts, buy-X-get-Y, bundles, and coupons with an expiry date and a usage limit. Rules for stacking, exclusivity, and precedence. On rung C, the engine must also connect to the checkout.
+
+**X, partial returns and refunds.** X changes the order lines, the inventory (the rules for restock), the prices (a refund reverses each discount in proportion, so a bundle that is returned in part gets a new price), and the payments (credit notes). On rung E, the event log, the reports, and the shipping are not in the specification of X. The seed suite of E covers them.
+
+The medium codebase is 6 times the small codebase. It does not fill the context of any model tier: the local tier has 262,144 tokens. It makes the agent choose what to read, because a read of all the code is slow and expensive.
+
+The codebases use only the toolchain images of the TDD pack recipe. TypeScript uses Node, TypeScript, and Jest, with no other package. Go uses the standard library only. There is no database, no HTTP server, and no network. Storage and input and output are behind interfaces, with adapters in memory. Each seed repository has one commit, `seed`.
+
+### The matrix
+
+The codebase ladder runs the full matrix of the difficulty ladder on each rung: the local tier, Haiku and Sonnet, × `control` and `instrument-tdd`, × TypeScript and Go. There is one repetition for each cell on each rung: 12 trials for each rung, 60 trials on five rungs (40 hosted and 20 local). More repetitions come later, and only on the rungs near the failure boundary of each tier. The ladder runs `instrument-tdd` and not the version 1 variants (section 16): it finds the rungs, and the skill-transfer experiment measures the value of the skill on them. If Sonnet passes rung E, the next step is a rung F with a larger seed or feature, not a stronger model tier.
+
+`experiments/codebase-ladder/experiment.toml` has the same evaluations as `difficulty-ladder` (`replay`, `agent-runs`, `trajectory`) and an experiment-local summary. It has four jobs, in the run order of the difficulty ladder: `codebase-ladder-hosted-control`, `codebase-ladder-hosted-tdd`, `codebase-ladder-local-control`, and `codebase-ladder-local-tdd`.
+
+The agent timeout is 3600 seconds on each rung. The local jobs keep `timeout_multiplier: 3.0` (L4). One timeout for all rungs keeps the rungs comparable. A trial in which the agent runs out of time is a failed trial, as in the difficulty ladder.
+
+### The pack recipe
+
+The codebase ladder uses the TDD pack recipe (section 15), with these changes for rungs B to E.
+
+**The seed repository.** On rungs C to E, the seed repository holds a working codebase and its **seed suite**: the tests of the seed. On rungs A and B, the seed suite is empty.
+
+**The agent tests.** The agent tests are the tests that the agent added or changed, compared with the seed. A seed test that the agent edits becomes an agent test. The test state of a snapshot comes from the agent tests only. Thus the TDD measurements (section 16) have the same meaning on each rung, and the green seed suite does not make each trial fail the red-to-green order.
+
+**The prompt.** `instruction.md` has the shape of section 15: the specification of the feature, then an Interface section, then one footer. The Interface section gives the entry points of the feature, the types, and each error message. The footer is the same in each pack of rungs B to E:
+
+> Add this feature to the repository. Keep the existing behavior, and the existing exported names and signatures, as they are. Tests that you cannot see will check your solution.
+
+The footer does not name the seed suite and does not tell the agent to run tests. The agent can find the seed suite itself, and the trial record shows if it did.
+
+**The verifier.** The outcome pass runs the feature tests and the seed suite. It restores each file of the seed suite to its seed form first, so a weakened seed test does not hide a regression. `reward.json` adds two metrics:
+
+| Metric | Value |
+|---|---|
+| `seed_suite_passed`, `seed_suite_total` | Counts from the seed suite in the outcome pass. 0 on rungs A and B. |
+
+The reward is 1 only if each feature test and each test of the seed suite passes. `reference_passed` and `reference_total` count the feature tests only.
+
+### The checks of a purpose-written pack
+
+A bad hidden test looks the same as a failure of the model. Thus each purpose-written task pack must pass five checks before the ladder runs it, in both languages:
+
+1. **The gold solution passes.** The gold solution passes each feature test and the seed suite.
+2. **The seed fails.** The seed without change fails each feature test.
+3. **The blind solve.** An agent on a model that is not a tier under test (Opus) gets only the prompt and the seed. Each hidden test that it fails must point to a sentence of the Interface section that states the behavior. If no sentence does, change the test or the specification.
+4. **Parity.** The two languages hold the same list of test cases with the same names, and the same seed design, file for file, as far as the languages permit.
+5. **The review.** The owner reviews the domain, the specification, and the codebases.
+
+Checks 1, 2, and 4 are scripts, with the shared checks of the task packs. Check 3 runs once for each pack.
+
+### The summary
+
+The summary is experiment-local, `experiments/codebase-ladder/summary.py`. It has the sections of the difficulty-ladder summary (section 19), through `assay/summary_parts.py`, with three changes:
+
+1. **The pass grid.** A failed trial that broke the seed suite shows the seed-suite count, for example `24/30 ✗ seed 38/40`. Thus "the feature is not complete" and "the agent broke the existing code" are different marks.
+2. **Rung A.** The column of rung A names its task, poker.
+3. **The boundary.** A note says that each failure boundary is provisional while each cell has one repetition.
+
+## 21. Sketches of the next experiments
 
 Each sketch fits the platform as it is. Each sketch gets its own map before it is built. The open items of each sketch are not decided.
 
