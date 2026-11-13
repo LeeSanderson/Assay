@@ -7,7 +7,8 @@
 #    If agent test files exist but do not compile, agent_tests_passed is 0 and
 #    agent_tests_total is at least the number of agent test files.
 #
-# Both passes go into one /logs/verifier/reward.json with seven numeric fields.
+# Both passes go into one /logs/verifier/reward.json with nine numeric fields.
+# The pack has no seed suite, so seed_suite_passed and seed_suite_total are 0.
 # The script always writes that file, whatever happens to the passes.
 set -u
 
@@ -26,13 +27,15 @@ for pattern in "${TEST_FILE_PATTERNS[@]}"; do name_tests+=(-o -name "$pattern");
 name_tests=("${name_tests[@]:1}")
 
 write_reward() {
-  printf '{"reward": %d, "reference_compiles": %d, "reference_passed": %d, "reference_total": %d, "agent_tests_compile": %d, "agent_tests_passed": %d, "agent_tests_total": %d}\n' \
+  printf '{"reward": %d, "reference_compiles": %d, "reference_passed": %d, "reference_total": %d, "agent_tests_compile": %d, "agent_tests_passed": %d, "agent_tests_total": %d, "seed_suite_passed": %d, "seed_suite_total": %d}\n' \
     "$reward" "$reference_compiles" "$reference_passed" "$reference_total" \
-    "$agent_tests_compile" "$agent_tests_passed" "$agent_tests_total" > "$OUT/reward.json"
+    "$agent_tests_compile" "$agent_tests_passed" "$agent_tests_total" \
+    "$seed_suite_passed" "$seed_suite_total" > "$OUT/reward.json"
 }
 
 reward=0 reference_compiles=0 reference_passed=0 reference_total=0
 agent_tests_compile=0 agent_tests_passed=0 agent_tests_total=0
+seed_suite_passed=0 seed_suite_total=0
 write_reward
 
 # run_go_tests <dir> <package pattern> <json file>

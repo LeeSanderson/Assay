@@ -44,6 +44,7 @@ mechanical_changes = [
     "two-bucket.ts: the boilerplate `'Remove this line and implement the function'` -> `'Not implemented'`",
     "two-bucket.ts: the stub's `constructor()` took no parameter, so the reference tests, which pass four arguments, did not type-check against it; it becomes `constructor(buckOne: unknown, buckTwo: unknown, goal: unknown, starterBuck: unknown)` (the names the reference tests use); every other exported name and signature unchanged",
     "proof.ci.ts: `private moves(): number` -> `public moves(): number`; the reference tests call moves(), so the gold solution did not type-check against them",
+    "tests/test.sh: reports seed_suite_passed and seed_suite_total, both 0, in reward.json; no Exercism pack has a seed suite, and the shared task-pack checks expect the two keys of the codebase ladder (PRD section 20) in every pack",
 ]
 seed_files = [
     "two-bucket.ts",

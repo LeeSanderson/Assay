@@ -12,7 +12,8 @@
 #      compile only if tsc passes and every suite loads; if they do not,
 #      agent_tests_passed is 0 and agent_tests_total is at least the number
 #      of agent test files.
-# It always writes one reward.json with seven numeric fields. It uses no
+# It always writes one reward.json with nine numeric fields. The pack has no
+# seed suite, so seed_suite_passed and seed_suite_total are 0. It uses no
 # network, so replay runs it without change on each trace snapshot.
 
 set -u
@@ -122,6 +123,6 @@ else
 fi
 
 cat >"$OUT_DIR/reward.json" <<EOF
-{"reward": $reward, "reference_compiles": $reference_compiles, "reference_passed": $reference_passed, "reference_total": $reference_total, "agent_tests_compile": $agent_tests_compile, "agent_tests_passed": $agent_tests_passed, "agent_tests_total": $agent_tests_total}
+{"reward": $reward, "reference_compiles": $reference_compiles, "reference_passed": $reference_passed, "reference_total": $reference_total, "agent_tests_compile": $agent_tests_compile, "agent_tests_passed": $agent_tests_passed, "agent_tests_total": $agent_tests_total, "seed_suite_passed": 0, "seed_suite_total": 0}
 EOF
 cat "$OUT_DIR/reward.json"

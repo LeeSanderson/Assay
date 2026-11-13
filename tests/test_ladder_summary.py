@@ -181,6 +181,22 @@ def test_the_pass_grid_shows_passed_failed_timeout_and_not_run_cells(repo):
         for condition in ("control", "instrument-tdd") for language in ("go", "typescript")]
 
 
+def test_the_seed_suite_counts_of_an_exercism_pack_leave_the_pass_grid_unchanged(repo):
+    def with_seed_suite(builder):
+        builder.reward = {**builder.reward, "seed_suite_passed": 0, "seed_suite_total": 0}
+    every = [trial(job, model, language) for job in HOSTED for model in (HAIKU, SONNET)
+             for language in ("go", "typescript")]
+    fake = harbor({t: [failed(20) if t == trial(HOSTED[0], HAIKU, "go") else (lambda b: None),
+                       with_seed_suite] for t in every})
+
+    assert experiment(fake, *hosted()) == 0
+
+    _, markdown = summary(repo)
+    assert row(markdown, f"{HAIKU} · control · go") == ["20/29 ✗"] + ["—"] * 5
+    assert row(markdown, f"{HAIKU} · control · typescript")[0] == "29/29 ✓"
+    assert "seed" not in section(markdown, "Pass grid")
+
+
 def test_the_rollup_totals_every_kept_trial_and_means_the_passed_ones_only(repo):
     add_stand_in_rung(repo)
     fake = harbor({

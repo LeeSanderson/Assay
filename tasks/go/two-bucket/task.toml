@@ -30,6 +30,7 @@ mechanical_changes = [
     "instruction.md: added an Interface section between the source prose and the footer, derived from the reference tests only (the Solve parameters, the order and meaning of its return values, and when it returns an error; the reference tests check only that the error is non-nil, not its text)",
     "instruction.md: .docs/instructions.append.md (the Go signature of Solve) is not copied; the prompt is .docs/instructions.md without change, as in the TypeScript pack, and the Interface section states the Go API",
     "environment/seed/two_bucket.go: replaced the `panic(\"Please implement the Solve function\")` body with `panic(\"not implemented\")`; the exported name, signature and the module name are unchanged",
+    "tests/test.sh: reports seed_suite_passed and seed_suite_total, both 0, in reward.json; no Exercism pack has a seed suite, and the shared task-pack checks expect the two keys of the codebase ladder (PRD section 20) in every pack",
 ]
 seed_files = ["go.mod", "two_bucket.go"]
 # tests/test.sh: when agent test files (`*_test.go`) exist but do not compile,

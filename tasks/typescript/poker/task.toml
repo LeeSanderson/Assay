@@ -42,6 +42,7 @@ mechanical_changes = [
     "eslint.config.mjs: the `@exercism/eslint-config-typescript` config and its maintainers config replaced by a plain `typescript-eslint` recommended config with the same ignores; package.json drops the package",
     "yarn.lock: the source file is empty; the pack holds the split-second-stopwatch pack's lock with its workspace entry renamed to `poker@workspace:.` by `corepack yarn install --mode=update-lockfile` (yarn 4.5.1) in the base image; no other entry changed and no @exercism package remains",
     "poker.ts: the boilerplate `'Remove this line and implement the function'` -> `'Not implemented'`; every exported name and signature unchanged",
+    "tests/test.sh: reports seed_suite_passed and seed_suite_total, both 0, in reward.json; no Exercism pack has a seed suite, and the shared task-pack checks expect the two keys of the codebase ladder (PRD section 20) in every pack",
 ]
 seed_files = [
     "poker.ts",

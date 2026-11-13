@@ -43,6 +43,7 @@ mechanical_changes = [
     "yarn.lock: the source file is empty; the pack holds the split-second-stopwatch pack's lock with its workspace entry renamed to `wordy` by `corepack yarn install --mode=update-lockfile` (yarn 4.5.1) in the base image; no version changed and no @exercism package remains",
     "wordy.ts: the boilerplate `'Remove this line and implement the function'` -> `'Not implemented'`",
     "wordy.ts: the stub's `answer` took no parameter (`export const answer = () => {`), so the reference tests, which call `answer(question)`, did not type-check against it; it gains `question: unknown` and returns `unknown`; the exported name is unchanged",
+    "tests/test.sh: reports seed_suite_passed and seed_suite_total, both 0, in reward.json; no Exercism pack has a seed suite, and the shared task-pack checks expect the two keys of the codebase ladder (PRD section 20) in every pack",
 ]
 seed_files = [
     "wordy.ts",

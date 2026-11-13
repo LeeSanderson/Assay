@@ -30,6 +30,7 @@ mechanical_changes = [
     "instruction.md: added an Interface section between the source prose and the footer, derived from the reference tests only (the BestHand signature, the hand and card format with the suit symbols, the returned hands and their order on a tie, the ace in a straight, when an error is returned)",
     "instruction.md: .docs/instructions.append.md is left out, as PRD section 15 takes .docs/instructions.md without change; the Interface section states the Go API that it described",
     "environment/seed/poker.go: replaced the `panic(\"Please implement the BestHand function\")` body with `panic(\"not implemented\")`; exported names, signatures and the module name are unchanged",
+    "tests/test.sh: reports seed_suite_passed and seed_suite_total, both 0, in reward.json; no Exercism pack has a seed suite, and the shared task-pack checks expect the two keys of the codebase ladder (PRD section 20) in every pack",
 ]
 seed_files = ["go.mod", "poker.go"]
 # tests/test.sh: when agent test files (`*_test.go`) exist but do not compile,

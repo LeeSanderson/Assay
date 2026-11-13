@@ -43,6 +43,7 @@ mechanical_changes = [
     "package.json, tsconfig.json, babel.config.cjs, eslint.config.mjs, .yarnrc.yml, jest.config.cjs: after these edits, byte-identical to the split-second-stopwatch pack's seed files apart from the package.json name (the source toolchain files of the two exercises are identical apart from the name)",
     "yarn.lock: the source file is empty; the pack holds the split-second-stopwatch pack's lock with the workspace entry renamed to `alphametics` by `corepack yarn install` (yarn 4.5.1) in the base image; no @exercism package remains",
     "alphametics.ts: the boilerplate `'Remove this line and implement the function'` -> `'Not implemented'`; every exported name and signature unchanged",
+    "tests/test.sh: reports seed_suite_passed and seed_suite_total, both 0, in reward.json; no Exercism pack has a seed suite, and the shared task-pack checks expect the two keys of the codebase ladder (PRD section 20) in every pack",
 ]
 seed_files = [
     "alphametics.ts",

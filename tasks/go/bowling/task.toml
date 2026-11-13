@@ -30,6 +30,7 @@ mechanical_changes = [
     "instruction.md: added an Interface section between the source prose and the footer, derived from the reference tests only (the constructor, the Roll and Score signatures, when each returns a non-nil error)",
     "environment/seed/bowling.go: replaced each `panic(\"Please implement the X function\")` body with `panic(\"not implemented\")`; exported names, signatures and the module name are unchanged",
     "environment/seed/bowling.go: the comment `// Define the Game type here.` replaced by `type Game struct{}`; the source stub leaves `Game` undefined, so it does not build and the reference tests could not compile against it",
+    "tests/test.sh: reports seed_suite_passed and seed_suite_total, both 0, in reward.json; no Exercism pack has a seed suite, and the shared task-pack checks expect the two keys of the codebase ladder (PRD section 20) in every pack",
 ]
 seed_files = ["go.mod", "bowling.go"]
 # tests/test.sh: when agent test files (`*_test.go`) exist but do not compile,

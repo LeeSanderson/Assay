@@ -29,6 +29,7 @@ mechanical_changes = [
     "instruction.md: appended the fixed Assay footer after .docs/instructions.md",
     "instruction.md: added an Interface section between the source prose and the footer, derived from the reference tests only (time format, getter return values, AdvanceTime input, exact error messages)",
     "environment/seed/split_second_stopwatch.go: replaced each `panic(\"Please implement the X function\")` body with `panic(\"not implemented\")`; exported names, signatures and the module name are unchanged",
+    "tests/test.sh: reports seed_suite_passed and seed_suite_total, both 0, in reward.json; no Exercism pack has a seed suite, and the shared task-pack checks expect the two keys of the codebase ladder (PRD section 20) in every pack",
 ]
 seed_files = ["go.mod", "split_second_stopwatch.go"]
 # tests/test.sh: when agent test files (`*_test.go`) exist but do not compile,

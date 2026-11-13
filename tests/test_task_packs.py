@@ -127,6 +127,8 @@ def test_metadata_records_the_provenance_and_the_mechanical_changes(pack):
     changes = pack.changes()
     assert "Interface section" in changes
     assert pack.stub in changes
+    # No Exercism pack has a seed suite, so its verifier reports both counts as 0.
+    assert "tests/test.sh: reports seed_suite_passed and seed_suite_total, both 0" in changes
     if pack.language == "typescript":
         assert set(meta["copied_paths"]) >= {
             pack.exercise + pack.stub, pack.exercise + f"{pack.slug}.test.ts",
@@ -176,6 +178,7 @@ def test_gold_solution_gives_reward_1(pack, pack_images, tmp_path):
     assert reward["reference_compiles"] == 1
     assert reward["reference_passed"] == reward["reference_total"] == pack.reference_count
     assert reward["agent_tests_total"] == 0
+    assert reward["seed_suite_passed"] == reward["seed_suite_total"] == 0
 
 
 @pytest.mark.slow
@@ -186,6 +189,7 @@ def test_untouched_stub_gives_reward_0_and_the_reference_tests_compile(pack, pac
     assert reward["reward"] == 0
     assert reward["reference_compiles"] == 1
     assert reward["agent_tests_total"] == 0
+    assert reward["seed_suite_passed"] == reward["seed_suite_total"] == 0
 
 
 @pytest.mark.slow

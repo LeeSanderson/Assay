@@ -29,6 +29,7 @@ mechanical_changes = [
     "instruction.md: appended the fixed Assay footer after .docs/instructions.md",
     "instruction.md: added an Interface section between the source prose and the footer, derived from the reference tests only (the question format, the integer and negative operands, the four operations, when Answer returns true and when false)",
     "environment/seed/wordy.go: replaced the `panic(\"Please implement the Answer function\")` body with `panic(\"not implemented\")`; the exported name, signature and the module name are unchanged",
+    "tests/test.sh: reports seed_suite_passed and seed_suite_total, both 0, in reward.json; no Exercism pack has a seed suite, and the shared task-pack checks expect the two keys of the codebase ladder (PRD section 20) in every pack",
 ]
 seed_files = ["go.mod", "wordy.go"]
 # tests/test.sh: when agent test files (`*_test.go`) exist but do not compile,

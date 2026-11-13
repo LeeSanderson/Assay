@@ -114,6 +114,21 @@ def test_reward_fields_beyond_the_seven_are_kept(make_trial):
     assert line["extra_field"] == 7
 
 
+def test_the_seed_suite_counts_are_kept_and_replay_works_on_them(make_trial):
+    # Every pack reports the codebase ladder's seed-suite counts; an
+    # Exercism pack reports both as 0.
+    seed_suite = {"seed_suite_passed": 0, "seed_suite_total": 0}
+    b = make_trial()
+    b.seed(gives(reward(**seed_suite)))
+    b.step().call("Write", files=gives({**FINAL, **seed_suite}))
+    b.reward = {**FINAL, **seed_suite}
+    trial = read_trial(b.build())
+    first, second = _twice(trial)
+    assert [{k: l[k] for k in seed_suite} for l in first] == [seed_suite] * 2
+    assert states(first) == ["no-tests", "pass"]
+    assert replay_works(trial, first, second).works
+
+
 def test_a_runner_timeout_or_container_error_is_a_failed_line_and_replay_goes_on(make_trial):
     b = make_trial()
     b.seed(times_out())

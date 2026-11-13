@@ -21,6 +21,7 @@ MODEL_SLUG = "split-second-stopwatch"  # rung 1: the pack the others follow
 REWARD_KEYS = {
     "reward", "reference_compiles", "reference_passed", "reference_total",
     "agent_tests_compile", "agent_tests_passed", "agent_tests_total",
+    "seed_suite_passed", "seed_suite_total",  # the codebase ladder's; 0 with no seed suite
 }
 TS_TOOLCHAIN = ("package.json", "yarn.lock", ".yarnrc.yml", "tsconfig.json", "jest.config.cjs",
                 "babel.config.cjs", "eslint.config.mjs")
