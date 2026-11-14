@@ -402,6 +402,14 @@ CODEBASE_PACKS: list[Pack] = [
          stubbed=False),
 ]
 PACKS += CODEBASE_PACKS
+# The medium codebase (issue #85; PRD section 20, "The domain"): the seed of
+# rung E, built ahead of its pack. Only its seed (environment/seed and the
+# Dockerfile) exists, so it is not in CODEBASE_PACKS yet; the pack of rung E
+# (issue #87) moves it there. tests/test_medium_codebase.py checks it.
+MEDIUM_CODEBASES: list[Pack] = [
+    Pack("typescript", "shop-returns-medium", 38, (), _RETURNS, feature_stub="returns",
+         module="shop", stubbed=False),
+]
 EXERCISM_PACKS = [p for p in PACKS if not p.purpose_written]
 STUBBED_PACKS = [p for p in PACKS if p.stubbed]
 RUNGS = sorted({p.slug for p in CODEBASE_PACKS})  # the purpose-written rungs, by slug
