@@ -3,7 +3,10 @@ tests share: building a pack's image, running its `tests/test.sh` on a
 prepared repository, and running it through Harbor.
 
 tests/test_task_packs.py gives every pack in PACKS the same checks; each
-rung's own module states only what is specific to its packs.
+rung's own module states only what is specific to its packs. PACKS holds the
+Exercism packs of the difficulty ladder and the purpose-written packs of the
+codebase ladder (CODEBASE_PACKS; ADR 0006), whose two languages the parity
+helpers below compare.
 """
 
 from __future__ import annotations
@@ -32,6 +35,13 @@ BASE_IMAGE = {"typescript": r"node:\d+[\d.]*-bookworm@sha256:[0-9a-f]{64}",
               "go": r"golang:[\d.]+-bookworm@sha256:[0-9a-f]{64}"}
 SOURCE_REPO = {"typescript": "https://github.com/exercism/typescript",
                "go": "https://github.com/exercism/go"}
+# The footer of every purpose-written pack (PRD section 20, "The pack recipe").
+CODEBASE_FOOTER = ("Add this feature to the repository. Keep the existing behavior, and the "
+                   "existing exported names and signatures, as they are. Tests that you cannot "
+                   "see will check your solution.\n")
+# The two dials of the codebase ladder (PRD section 20, "The rungs").
+SEED_SIZES = ("stub", "small", "medium")
+FEATURE_SIZES = ("one function", "M", "X")
 
 
 @dataclass(frozen=True)
@@ -44,6 +54,15 @@ class Pack:
     signatures: tuple[str, ...]  # the exported signatures of the source stub
     opening: str  # the first line of the source instructions
     root: Path = REPO_ROOT / "tasks"  # the test-fixture packs are in tests/fixtures/packs
+    # A purpose-written pack of the codebase ladder (ADR 0006) names its stub
+    # file (without the extension) and its Go module; an Exercism pack takes
+    # both from its slug.
+    feature_stub: str = ""
+    module: str = ""
+
+    @property
+    def purpose_written(self) -> bool:
+        return bool(self.feature_stub)
 
     def __str__(self) -> str:
         return f"{self.language}-{self.slug}"
@@ -63,15 +82,17 @@ class Pack:
 
     @property
     def stub(self) -> str:
-        return f"{self.slug}.ts" if self.language == "typescript" \
-            else f"{self.slug.replace('-', '_')}.go"
+        base = self.feature_stub or self.slug
+        return f"{base}.ts" if self.language == "typescript" else f"{base.replace('-', '_')}.go"
 
     @property
     def go_package(self) -> str:
-        return self.slug.replace("-", "")
+        return self.module or self.slug.replace("-", "")
 
     @property
     def footer(self) -> str:
+        if self.purpose_written:
+            return CODEBASE_FOOTER
         return (f"Implement the solution in `{self.stub}`. Keep the exported names and "
                 "signatures as they are. Tests that you cannot see will check your solution.\n")
 
@@ -92,6 +113,10 @@ class Pack:
 
     def instruction(self) -> str:
         return (self.path / "instruction.md").read_text(encoding="utf-8")
+
+    def specification(self) -> str:
+        """The instruction before its Interface section."""
+        return self.instruction().partition("\n## Interface\n")[0]
 
     def interface_section(self) -> str:
         """The instruction's Interface section: after the source instructions,
@@ -126,8 +151,24 @@ class Pack:
         return (self.seed / self.stub).read_text(encoding="utf-8")
 
     def gold(self) -> str:
+        """The gold solution of an Exercism pack's stub."""
         name = "proof.ci.ts" if self.language == "typescript" else "example.go"
         return (self.path / "solution" / name).read_text(encoding="utf-8")
+
+    def gold_files(self) -> dict[str, str]:
+        """The gold solution, as the files (relative to /app) that it writes.
+        A purpose-written pack's solution/ holds them at their seed paths,
+        beside solve.sh."""
+        if not self.purpose_written:
+            return {self.stub: self.gold()}
+        solution = self.path / "solution"
+        return {p.relative_to(solution).as_posix(): p.read_text(encoding="utf-8")
+                for p in sorted(solution.rglob("*")) if p.is_file() and p.name != "solve.sh"}
+
+    def reference_test_texts(self) -> list[str]:
+        folder = self.path / "tests" if self.language == "typescript" \
+            else self.path / "tests" / "reference"
+        return [(folder / name).read_text(encoding="utf-8") for name in self.reference_tests()]
 
     def reference_tests(self) -> list[str]:
         """The names of the reference test files."""
@@ -149,6 +190,84 @@ class Pack:
         return f"{self.stub[:-3]}_test.go", (
             f"package {self.go_package}\n\nimport \"testing\"\n\n"
             "func TestAgentDoesNotCompile(t *testing.T) {\n\tundefinedHelper()\n}\n")
+
+
+# --- The codebase ladder: parity between the two languages of a rung ----------
+
+# A test case of a purpose-written pack is an `it` or `describe` in TypeScript
+# and a `t.Run` in Go: the Go tests nest t.Run as the TypeScript tests nest
+# describe and it, with the same names (PRD section 20, check 4).
+_CASE_NAME = {"typescript": re.compile(r"\b(?:describe|it)\(\s*'([^']*)'"),
+              "go": re.compile(r"\bt\.Run\(\s*\"([^\"]*)\"")}
+
+
+def case_names(language: str, texts: list[str]) -> list[str]:
+    """The test-case names in the given test files, in order."""
+    return [name for text in texts for name in _CASE_NAME[language].findall(text)]
+
+
+def reference_case_names(pack: Pack) -> list[str]:
+    return case_names(pack.language, pack.reference_test_texts())
+
+
+def seed_suite_case_names(pack: Pack) -> list[str]:
+    return case_names(pack.language, [(pack.seed / name).read_text(encoding="utf-8")
+                                      for name in pack.seed_test_files()])
+
+
+def _design_file(language: str, name: str) -> str:
+    """A seed file's path with the language taken out: `a/b-c.test.ts` and
+    `a/b_c_test.go` are both `a/b_c test`."""
+    suffix, test = (".ts", ".test") if language == "typescript" else (".go", "_test")
+    name = name.removesuffix(suffix)
+    if name.endswith(test):
+        name = name.removesuffix(test) + " test"
+    return name.replace("-", "_")
+
+
+def _exported_names(language: str, text: str) -> set[str]:
+    """The exported types, functions, methods and fields of a source file,
+    lower-cased so that `unitPrice` and `UnitPrice` match. A Go `New<Type>`
+    function is the constructor of the TypeScript class <Type>, so it is
+    left out."""
+    names: set[str] = set()
+    block = ""  # the type whose body the line is in
+    for line in text.splitlines():
+        if line.startswith("}"):
+            block = ""
+        elif language == "typescript":
+            if m := re.match(r"export (?:class|interface|type|function|const|enum) (\w+)", line):
+                names.add(m.group(1))
+                block = m.group(1) if line.rstrip().endswith("{") else ""
+            elif block and (m := re.match(r"\s+(?:public |readonly |static )*(\w+)\??[:(<]",
+                                          line)):
+                if m.group(1) != "constructor" and not line.lstrip().startswith("private"):
+                    names.add(f"{block}.{m.group(1)}")
+        elif m := re.match(r"type ([A-Z]\w*) ", line):
+            names.add(m.group(1))
+            block = m.group(1) if line.rstrip().endswith("{") else ""
+        elif m := re.match(r"func \(\w+ \*?(\w+)\) ([A-Z]\w*)\(", line):
+            names.add(f"{m.group(1)}.{m.group(2)}")
+        elif m := re.match(r"func ([A-Z]\w*)\(", line):
+            names.add(m.group(1))
+        elif block and (m := re.match(r"\t([A-Z]\w*)\s", line)):
+            names.add(f"{block}.{m.group(1)}")
+    types = {n for n in names if "." not in n}
+    return {n.lower() for n in names if not (n.startswith("New") and n[3:] in types)}
+
+
+def seed_design(pack: Pack) -> dict:
+    """The seed's design with the language taken out: its files (but the
+    toolchain files) and the exported names of its source files."""
+    toolchain = TS_TOOLCHAIN if pack.language == "typescript" else ("go.mod",)
+    files = [f for f in pack.seed_files() if f not in toolchain]
+    tests = set(pack.seed_test_files())
+    names: set[str] = set()
+    for f in files:
+        if f not in tests:
+            names |= _exported_names(pack.language, (pack.seed / f).read_text(encoding="utf-8"))
+    return {"files": sorted(_design_file(pack.language, f) for f in files),
+            "exported": sorted(names)}
 
 
 def base_image(pack_path: Path) -> str:
@@ -213,6 +332,35 @@ PACKS: list[Pack] = [
            ("export function solve(puzzle: unknown): unknown {",),
            ("func Solve(puzzle string) (map[string]int, error)",)),
 ]
+
+
+# The purpose-written packs of the codebase ladder (PRD section 20; ADR 0006).
+# The signatures are those of the stub, which the pack authors.
+_PROMOTIONS = "Build the promotions engine of a shop."
+CODEBASE_PACKS: list[Pack] = [
+    Pack("typescript", "shop-promotions-stub", 48, (
+        "export type PromotionKind = 'percentage' | 'fixed' | 'buy-x-get-y' | 'bundle'",
+        "export interface Line {", "export interface Promotion {", "export interface Coupon {",
+        "export interface Discount {", "export interface Quote {",
+        "export class PromotionEngine {",
+        "public addPromotion(promotion: Promotion): void {",
+        "public addCoupon(coupon: Coupon): void {",
+        "public quote(lines: Line[], coupons: string[], today: string): Quote {",
+        "public redeem(lines: Line[], coupons: string[], today: string): Quote {"),
+        _PROMOTIONS, feature_stub="promotions", module="shop"),
+    Pack("go", "shop-promotions-stub", 48, (
+        "func NewPromotionEngine() *PromotionEngine",
+        "func (e *PromotionEngine) AddPromotion(promotion Promotion) error",
+        "func (e *PromotionEngine) AddCoupon(coupon Coupon) error",
+        "func (e *PromotionEngine) Quote(lines []Line, coupons []string, today string) "
+        "(Quote, error)",
+        "func (e *PromotionEngine) Redeem(lines []Line, coupons []string, today string) "
+        "(Quote, error)"),
+        _PROMOTIONS, feature_stub="promotions", module="shop"),
+]
+PACKS += CODEBASE_PACKS
+EXERCISM_PACKS = [p for p in PACKS if not p.purpose_written]
+RUNGS = sorted({p.slug for p in CODEBASE_PACKS})  # the purpose-written rungs, by slug
 
 
 def packs(slug: str) -> dict[str, Pack]:

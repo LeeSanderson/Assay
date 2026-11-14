@@ -1,0 +1,29 @@
+# The codebase ladder, the blind solve (PRD section 20, check 3): Opus, which
+# is not a tier under test, x control, on each purpose-written pack, at -k 1.
+# The agent gets only the prompt and the seed. Each hidden test that it fails
+# must trace to a sentence of the pack's Interface section; the result goes in
+# the pack's task.toml, `[metadata.blind_solve]`. A new rung adds its two packs
+# here, and the check runs once for each pack.
+#
+# Launch from the repository root:  uv run assay run -c jobs/codebase-ladder-blind-solve.yaml -y --debug
+
+job_name: codebase-ladder-blind-solve
+jobs_dir: results
+n_attempts: 1
+n_concurrent_trials: 1  # one container at a time on a small Docker host
+
+tasks:
+  # Rung B: shop-promotions-stub (the promotions engine from a stub; issue #81).
+  - path: tasks/typescript/shop-promotions-stub
+  - path: tasks/go/shop-promotions-stub
+
+agents:
+  # Control: no variant flags (no skills, no settings, no extra instructions).
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-opus-5-5
+    kwargs:
+      # Claude Code version: the same value in all the job files (PRD "Version pins").
+      version: "2.1.308"
+    env:
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"   # every model tier (L9)
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"

@@ -1,9 +1,16 @@
 """The checks that every committed task pack shares (PRD section 6, "Task
-packs", and section 15, "The TDD pack recipe"): the twelve packs of the six
-ladder rungs, in TypeScript and Go, listed in tests/task_packs.py. Each rung's
-own module (tests/test_<rung>_task_packs.py, and for rung 1
-tests/test_typescript_task_pack.py and tests/test_go_task_pack.py) checks
-only what is specific to its packs.
+packs", section 15, "The TDD pack recipe", and section 20, "The checks of a
+purpose-written pack"): the twelve Exercism packs of the six difficulty-ladder
+rungs and the purpose-written packs of the codebase ladder, in TypeScript and
+Go, listed in tests/task_packs.py. Each rung's own module
+(tests/test_<rung>_task_packs.py, and for rung 1
+tests/test_typescript_task_pack.py and tests/test_go_task_pack.py) checks only
+what is specific to its packs.
+
+A purpose-written pack (ADR 0006) has no Exercism source: its metadata records
+the rung, the two dials, the counts and its blind solve, and its instruction
+ends with the codebase footer. The two packs of a purpose-written rung must
+hold the same test cases and the same seed design (check 4, parity).
 
 The fast tests read the packs' files. The slow tests need Docker: they run
 each pack's `tests/test.sh` on prepared repositories in its image with no
@@ -16,10 +23,15 @@ import re
 
 import pytest
 
-from tests.task_packs import (BASE_IMAGE, PACKS, SOURCE_REPO, TS_TOOLCHAIN, base_image,
-                              harbor_rewards, run_in_image, stub_signatures, verify)
+from tests.task_packs import (BASE_IMAGE, CODEBASE_PACKS, EXERCISM_PACKS, FEATURE_SIZES, PACKS,
+                              RUNGS, SEED_SIZES, SOURCE_REPO, TS_TOOLCHAIN, base_image,
+                              harbor_rewards, packs, reference_case_names, run_in_image,
+                              seed_design, seed_suite_case_names, stub_signatures, verify)
 
 each_pack = pytest.mark.parametrize("pack", PACKS, ids=str)
+each_exercism_pack = pytest.mark.parametrize("pack", EXERCISM_PACKS, ids=str)
+each_codebase_pack = pytest.mark.parametrize("pack", CODEBASE_PACKS, ids=str)
+each_rung = pytest.mark.parametrize("slug", RUNGS)
 TS_PACKS = [p for p in PACKS if p.language == "typescript"]
 GO_PACKS = [p for p in PACKS if p.language == "go"]
 
@@ -30,7 +42,11 @@ GO_PACKS = [p for p in PACKS if p.language == "go"]
 @each_pack
 def test_seed_repository_holds_only_the_stub_and_the_toolchain_files(pack):
     toolchain = TS_TOOLCHAIN if pack.language == "typescript" else ("go.mod",)
-    assert pack.seed_files() == sorted([pack.stub, *toolchain])
+    if pack.purpose_written:
+        # A codebase seed holds more than a stub; the stub and the toolchain are in it.
+        assert set(pack.seed_files()) >= {pack.stub, *toolchain}
+    else:
+        assert pack.seed_files() == sorted([pack.stub, *toolchain])
     assert sorted(pack.task_toml()["metadata"]["seed_files"]) == pack.seed_files()
 
 
@@ -81,7 +97,11 @@ def test_stub_keeps_the_source_signatures_with_a_not_implemented_body(pack):
         assert pack.stub_text().startswith(f"package {pack.go_package}\n")
         go_mod = (pack.seed / "go.mod").read_text(encoding="utf-8")
         assert go_mod.startswith(f"module {pack.go_package}\n")
-        assert 'panic("not implemented")' in pack.stub_text()
+        # A purpose-written stub returns its error, so that each feature test
+        # fails on its own and none ends the run (PRD section 20, check 2).
+        body = 'errors.New("not implemented")' if pack.purpose_written \
+            else 'panic("not implemented")'
+        assert body in pack.stub_text()
 
 
 @each_pack
@@ -92,6 +112,8 @@ def test_reference_tests_carry_the_prefix(pack):
         text = (pack.path / "tests" / name).read_text(encoding="utf-8")
         assert not re.search(r"\bx(it|describe)\(", text)
         assert len(re.findall(r"^\s*it\(", text, re.MULTILINE)) == pack.reference_count
+    elif pack.purpose_written:
+        assert pack.reference_tests() == [f"assay_reference_{pack.stub[:-3]}_test.go"]
     else:
         assert pack.reference_tests() == sorted([
             "assay_reference_cases_test.go", f"assay_reference_{pack.stub[:-3]}_test.go"])
@@ -100,7 +122,8 @@ def test_reference_tests_carry_the_prefix(pack):
 @each_pack
 def test_task_toml_sets_the_prd_limits(pack):
     config = pack.task_toml()
-    assert config["agent"]["timeout_sec"] == 1800
+    # The codebase ladder gives each rung 3600 s (PRD section 20, "The matrix").
+    assert config["agent"]["timeout_sec"] == (3600 if pack.purpose_written else 1800)
     assert config["verifier"]["timeout_sec"] == 600
     assert config["environment"]["cpus"] == 2
     assert config["environment"]["memory_mb"] == 4096
@@ -115,7 +138,7 @@ def test_image_is_pinned_by_digest_at_the_model_pack_toolchain(pack):
     assert pack.task_toml()["metadata"]["base_image"] == base
 
 
-@each_pack
+@each_exercism_pack
 def test_metadata_records_the_provenance_and_the_mechanical_changes(pack):
     meta = pack.task_toml()["metadata"]
     model = pack.model_task_toml()["metadata"]
@@ -143,6 +166,79 @@ def test_metadata_records_the_provenance_and_the_mechanical_changes(pack):
         assert "not implemented" in changes
 
 
+@each_codebase_pack
+def test_metadata_records_the_rung_the_dials_and_the_counts_and_no_source(pack):
+    meta = pack.task_toml()["metadata"]
+    for key in ("source_repo", "source_commit", "source_dir", "copied_paths", "exercise"):
+        assert key not in meta, key
+    assert "exercism" not in (pack.path / "task.toml").read_text(encoding="utf-8").lower()
+    assert re.fullmatch(r"[B-Z]", meta["rung"])
+    assert meta["seed_size"] in SEED_SIZES
+    assert meta["feature_size"] in FEATURE_SIZES
+    # The slow checks prove that the verifier counts this many feature tests.
+    assert meta["feature_tests"] == pack.reference_count
+    assert meta["seed_suite_tests"] == len(seed_suite_case_names(pack))
+    assert meta["red_compile_rule"] == pack.model_task_toml()["metadata"]["red_compile_rule"]
+
+
+@each_codebase_pack
+def test_metadata_records_a_blind_solve_whose_failures_each_trace_to_the_interface(pack):
+    # PRD section 20, check 3: an Opus agent in control, from the prompt and
+    # the seed only. Each failed hidden test names the sentence that states it.
+    solve = pack.task_toml()["metadata"]["blind_solve"]
+    assert solve["model"].startswith("claude-opus")
+    assert solve["condition"] == "control"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", solve["date"])
+    assert solve["reference_total"] == pack.reference_count
+    failed = solve["failed"]
+    assert solve["reference_passed"] == solve["reference_total"] - len(failed)
+    cases = set(reference_case_names(pack))
+    section = " ".join(pack.interface_section().split())
+    for failure in failed:
+        assert failure["test"] in cases, failure["test"]
+        assert " ".join(failure["sentence"].split()) in section, failure["sentence"]
+
+
+@each_codebase_pack
+def test_pack_adds_no_package_or_import_to_the_toolchain(pack):
+    if pack.language == "typescript":
+        package = json.loads((pack.seed / "package.json").read_text(encoding="utf-8"))
+        model = json.loads((pack.model / "environment" / "seed" / "package.json")
+                           .read_text(encoding="utf-8"))
+        assert {**package, "name": ""} == {**model, "name": ""}
+        lock = (pack.seed / "yarn.lock").read_text(encoding="utf-8")
+        model_lock = (pack.model / "environment" / "seed" / "yarn.lock").read_text(
+            encoding="utf-8")
+        assert sorted(lock.replace(pack.slug, "split-second-stopwatch").splitlines()) \
+            == sorted(model_lock.splitlines())
+        for path in pack.path.rglob("*.ts"):
+            for source in re.findall(r"from '([^']+)'", path.read_text(encoding="utf-8")):
+                assert source.startswith(".") or source == "@jest/globals", (path, source)
+    else:
+        go_mod = (pack.seed / "go.mod").read_text(encoding="utf-8")
+        assert "require" not in go_mod
+        for path in pack.path.rglob("*.go"):
+            text = path.read_text(encoding="utf-8")
+            imports = re.findall(r'^\s*(?:import\s+)?(?:\w+\s+)?"([^"]+)"$', text, re.MULTILINE)
+            for name in imports:
+                first = name.split("/")[0]
+                assert "." not in first or name.startswith(pack.go_package + "/"), (path, name)
+
+
+@each_rung
+def test_the_two_languages_of_a_rung_hold_the_same_test_cases_and_seed_design(slug):
+    ts, go = packs(slug)["typescript"], packs(slug)["go"]
+    assert reference_case_names(ts) == reference_case_names(go)
+    # Unique names, so that a failed test traces to one case in each language.
+    assert len(set(reference_case_names(ts))) == len(reference_case_names(ts))
+    assert seed_suite_case_names(ts) == seed_suite_case_names(go)
+    assert seed_design(ts) == seed_design(go)
+    assert ts.specification() == go.specification()
+    ts_meta, go_meta = ts.task_toml()["metadata"], go.task_toml()["metadata"]
+    for key in ("rung", "seed_size", "feature_size", "feature_tests", "seed_suite_tests"):
+        assert ts_meta[key] == go_meta[key], key
+
+
 @pytest.mark.parametrize("pack", TS_PACKS, ids=str)
 def test_typescript_toolchain_files_are_the_model_packs(pack):
     for name in (".yarnrc.yml", "tsconfig.json", "jest.config.cjs", "babel.config.cjs",
@@ -154,6 +250,10 @@ def test_typescript_toolchain_files_are_the_model_packs(pack):
 
 
 # --- Slow: the pack images and tests/test.sh ----------------------------------
+
+
+def _seed_suite_tests(pack) -> int:
+    return pack.task_toml()["metadata"]["seed_suite_tests"] if pack.purpose_written else 0
 
 
 @pytest.mark.slow
@@ -173,12 +273,12 @@ def test_image_holds_only_the_seed_commit_and_no_claude_config(pack, pack_images
 @pytest.mark.slow
 @each_pack
 def test_gold_solution_gives_reward_1(pack, pack_images, tmp_path):
-    reward = verify(pack, pack_images(pack), tmp_path, {pack.stub: pack.gold()})
+    reward = verify(pack, pack_images(pack), tmp_path, pack.gold_files())
     assert reward["reward"] == 1
     assert reward["reference_compiles"] == 1
     assert reward["reference_passed"] == reward["reference_total"] == pack.reference_count
     assert reward["agent_tests_total"] == 0
-    assert reward["seed_suite_passed"] == reward["seed_suite_total"] == 0
+    assert reward["seed_suite_passed"] == reward["seed_suite_total"] == _seed_suite_tests(pack)
 
 
 @pytest.mark.slow
@@ -189,7 +289,11 @@ def test_untouched_stub_gives_reward_0_and_the_reference_tests_compile(pack, pac
     assert reward["reward"] == 0
     assert reward["reference_compiles"] == 1
     assert reward["agent_tests_total"] == 0
-    assert reward["seed_suite_passed"] == reward["seed_suite_total"] == 0
+    assert reward["seed_suite_passed"] == reward["seed_suite_total"] == _seed_suite_tests(pack)
+    if pack.purpose_written:
+        # PRD section 20, check 2: the seed fails each feature test, and each one runs.
+        assert reward["reference_passed"] == 0
+        assert reward["reference_total"] == pack.reference_count
 
 
 @pytest.mark.slow
@@ -197,7 +301,7 @@ def test_untouched_stub_gives_reward_0_and_the_reference_tests_compile(pack, pac
 def test_agent_test_that_does_not_compile_leaves_the_outcome_pass_unaffected(pack, pack_images,
                                                                              tmp_path):
     name, content = pack.agent_test_not_compiling()
-    reward = verify(pack, pack_images(pack), tmp_path, {pack.stub: pack.gold(), name: content})
+    reward = verify(pack, pack_images(pack), tmp_path, {**pack.gold_files(), name: content})
     assert reward["reward"] == 1
     assert reward["reference_compiles"] == 1
     assert reward["reference_passed"] == reward["reference_total"] == pack.reference_count

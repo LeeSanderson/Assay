@@ -1,0 +1,32 @@
+# The codebase ladder, the smoke job: Haiku x instrument-tdd, one trial on
+# each purpose-written pack, at -k 1 (PRD section 20; issue #78, story 37). It
+# applies the PRD section 17 smoke gate (the trace check, replay, agent-runs
+# and the trajectory) to the codebase packs before the ladder runs. A new rung
+# adds its two packs here.
+#
+# Launch from the repository root:  uv run assay run -c jobs/codebase-ladder-smoke.yaml -y --debug
+
+job_name: codebase-ladder-smoke
+jobs_dir: results
+n_attempts: 1
+n_concurrent_trials: 1  # one container at a time on a small Docker host
+# instrument-tdd: the skill's description alone did not load it on the smoke
+# trial, so the prompt names it (PRD "The phase 0 instrument").
+extra_instruction_paths: [variants/instrument-tdd/extra-instruction.md]
+
+tasks:
+  # Rung B: shop-promotions-stub (the promotions engine from a stub; issue #81).
+  - path: tasks/typescript/shop-promotions-stub
+  - path: tasks/go/shop-promotions-stub
+
+agents:
+  # instrument-tdd (parts from variants/instrument-tdd/): the skill, and the extra instruction above.
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-haiku-5-5
+    skills: [variants/instrument-tdd/tdd]
+    kwargs:
+      # Claude Code version: the same value in all the job files (PRD "Version pins").
+      version: "2.1.308"
+    env:
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"   # every model tier (L9)
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
