@@ -1,0 +1,138 @@
+schema_version = "1.4"
+
+# Rung E of the codebase ladder (PRD section 20; issue #87): partial returns
+# and refunds (X) in the medium codebase of the order and inventory service
+# (issues #85 and #86; docs/codebase-ladder/medium-codebase.md). Rung E turns
+# only the seed-size dial from rung D: instruction.md and the feature tests
+# are rung D's, byte for byte. A purpose-written pack (ADR 0006), the same as
+# tasks/typescript/shop-returns-medium but for the language. Its tests/test.sh
+# is the model pack's with the slug swapped. The seed has no stub: the feature
+# adds returns.go, so the unchanged seed fails the feature tests at
+# the build. The event log, the reports and the shipping are not in the
+# specification of X; the seed suite covers them. tests/seed-suite holds the
+# seed suite (the seed's *_test.go files) in its seed form.
+[metadata]
+language = "go"
+rung = "E"
+seed_size = "medium"
+feature_size = "X"
+feature_tests = 38
+seed_suite_tests = 291
+seed_files = [
+    "adapters/clock.go",
+    "adapters/clock_test.go",
+    "adapters/csv.go",
+    "adapters/csv_test.go",
+    "adapters/memory.go",
+    "adapters/memory_test.go",
+    "adapters/recording.go",
+    "adapters/recording_test.go",
+    "adapters/text.go",
+    "adapters/text_test.go",
+    "cart.go",
+    "catalogue.go",
+    "checkout.go",
+    "clock.go",
+    "customers.go",
+    "domain/cart.go",
+    "domain/cart_test.go",
+    "domain/customer.go",
+    "domain/customer_test.go",
+    "domain/dates.go",
+    "domain/dates_test.go",
+    "domain/errors.go",
+    "domain/errors_test.go",
+    "domain/event.go",
+    "domain/event_test.go",
+    "domain/ids.go",
+    "domain/ids_test.go",
+    "domain/invoice.go",
+    "domain/invoice_test.go",
+    "domain/money.go",
+    "domain/money_test.go",
+    "domain/order.go",
+    "domain/order_test.go",
+    "domain/payment.go",
+    "domain/product.go",
+    "domain/product_test.go",
+    "domain/promotion.go",
+    "domain/promotion_test.go",
+    "domain/purchase.go",
+    "domain/purchase_test.go",
+    "domain/report.go",
+    "domain/report_test.go",
+    "domain/shipment.go",
+    "domain/shipment_test.go",
+    "domain/stock.go",
+    "domain/stock_test.go",
+    "events.go",
+    "go.mod",
+    "inventory.go",
+    "invoices.go",
+    "orders.go",
+    "payments.go",
+    "promotions.go",
+    "purchasing.go",
+    "receipt.go",
+    "reports.go",
+    "services/accounts.go",
+    "services/accounts_test.go",
+    "services/catalogue.go",
+    "services/catalogue_test.go",
+    "services/checkout.go",
+    "services/checkout_test.go",
+    "services/customers.go",
+    "services/customers_test.go",
+    "services/event_log.go",
+    "services/event_log_test.go",
+    "services/inventory.go",
+    "services/inventory_test.go",
+    "services/invoicing.go",
+    "services/invoicing_test.go",
+    "services/orders.go",
+    "services/orders_test.go",
+    "services/promotion_engine.go",
+    "services/promotion_engine_test.go",
+    "services/purchasing.go",
+    "services/purchasing_test.go",
+    "services/reports.go",
+    "services/reports_test.go",
+    "services/shipping.go",
+    "services/shipping_test.go",
+    "shipping.go",
+    "shop.go",
+    "shop_test.go",
+]
+# tests/test.sh: when agent test files (`*_test.go`) exist but do not compile,
+# agent_tests_passed is 0 and agent_tests_total is max(counted tests, agent test
+# files), so replay labels the snapshot red-compile, not no-tests.
+red_compile_rule = "agent test files exist and do not compile: agent_tests_passed = 0, agent_tests_total = max(counted tests, agent test files)"
+base_image = "golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5"
+# The verifier's run time on the gold solution, both passes (tests/test.sh in
+# the pack image, 2 CPUs, issue #87): far inside the 600 s timeout, so the
+# seed suite needs no more and the timeout stays at 600.
+verifier_gold_seconds = 6
+
+# PRD section 20, check 3: the blind solve, run by jobs/codebase-ladder-blind-solve.yaml.
+# Each failed hidden test names the sentence of the Interface section that states it.
+# The seed suite passed too (291 of 291).
+[metadata.blind_solve]
+model = "claude-opus-5-5"
+condition = "control"
+date = "2026-11-14"
+reward = 1
+reference_passed = 38
+reference_total = 38
+cost_usd = 1.15
+failed = []
+
+[agent]
+timeout_sec = 3600.0
+
+[verifier]
+timeout_sec = 600.0
+
+[environment]
+cpus = 2
+memory_mb = 4096
+network_mode = "public"

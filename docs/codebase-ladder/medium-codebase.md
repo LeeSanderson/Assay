@@ -4,7 +4,8 @@ The medium codebase is the seed of rung E of the codebase ladder (PRD section 20
 
 - The TypeScript codebase: `tasks/typescript/shop-returns-medium/environment/seed/`, with its `Dockerfile` beside it (the same as rung D's).
 - The Go port (issue #86): `tasks/go/shop-returns-medium/environment/seed/`, with rung D's Go `Dockerfile`. It is described in "The Go port" below.
-- `tests/test_medium_codebase.py` checks the codebase: the size ranges, the layers, the root entry points, the seed suite in the pinned image, the feature tests of M (they pass) and the feature tests of X (they fail). `tests/task_packs.py` lists it in `MEDIUM_CODEBASES` until the pack of rung E moves it into `CODEBASE_PACKS`.
+- `tests/test_medium_codebase.py` checks the codebase: the size ranges, the layers, the root entry points, the seed suite in the pinned image, the feature tests of M (they pass) and the feature tests of X (they fail).
+- The pack of rung E (issue #87), `tasks/<language>/shop-returns-medium`, is listed in `CODEBASE_PACKS` in `tests/task_packs.py`, so the shared checks cover it; `tests/test_shop_returns_medium_task_packs.py` checks what it adds. Its gold solution is described in "The gold solution of X" below.
 
 ## What it holds
 
@@ -154,3 +155,13 @@ The Go codebase is 4,352 lines of production code in 49 files (1.06 times the Ty
 - **Events.** `ChangeSink.Record` returns the event and an error, so that `EventLog` implements it. A `Subscriber` returns nothing; `CreateShop` drops the errors of the accounts and shipping handlers, which cannot fail on the shop's own events, and a recording store drops the error of the sink.
 - **Checks that Go makes for you.** A count, an amount or a rate is an `int`, so the checks for whole numbers have no Go form; the seed suite drops those assertions (and tests a negative tax rate and parcel limit), and keeps every case.
 - **Tests.** Each seed test file stands alone, with its own helpers under a prefix of its own, because the verifier drops each unchanged seed test file in the agent pass (issue #83). No helper panics.
+
+## The gold solution of X
+
+Rung E's gold solution (`tasks/<language>/shop-returns-medium/solution/`) adds X in the layers and conventions of the codebase, the same in both languages, file for file:
+
+- **Domain.** `domain/return.ts` holds the types of X and its rules as pure functions: `checkReturn` (the errors, in the order of rung D), `creditFor` (each part of a discount on a line reversed to `floor(part * r / q)`, through `shareOf`) and `withCreditNote` (the order with the note, `returned` once every unit is back). `domain/order.ts` adds the status `returned`, the part of each discount on each order line, the credit notes of an order, `returnedUnits` and `refunded`. `domain/promotion.ts` works out the part of each discount on each line (`discountsByLine`) in the same pass as the explanations. `PaymentGateway` gains `refundPart`, `PREFIX` the prefix `credit`, and the stock movements the reason `returned`.
+- **Services.** `services/returns.ts` is the `Returns` service. The engine gives the parts by line, the checkout keeps them on the order lines, the inventory restocks, and the orders count only what the customers kept in the revenue and the best sellers.
+- **Adapters and root.** The gateway in memory refunds part of a payment; `returns.ts` is the entry point; `shop.ts` builds a `Returns` over the recording order store, so a return that returns the whole order gives the event `order-returned` through the existing rule.
+
+The event log, the reports, the shipping and the invoices do not change. The gold solution passes the 38 feature tests and the whole seed suite (291 tests), and the verifier runs it in about 9 seconds (TypeScript) and 6 seconds (Go) with 2 CPUs.

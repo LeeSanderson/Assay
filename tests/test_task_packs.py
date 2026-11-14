@@ -27,7 +27,8 @@ from tests.task_packs import (BASE_IMAGE, CODEBASE_PACKS, EXERCISM_PACKS, FEATUR
                               RUNGS, SEED_SIZE_RANGES, SEED_SIZES, SOURCE_REPO, STUBBED_PACKS,
                               TS_TOOLCHAIN, base_image,
                               harbor_rewards, packs, reference_case_names, run_in_image,
-                              seed_design, seed_suite_case_names, stub_signatures, verify)
+                              seed_design, seed_suite_case_names, seed_suite_tests, stub_signatures,
+                              verify)
 
 each_pack = pytest.mark.parametrize("pack", PACKS, ids=str)
 each_exercism_pack = pytest.mark.parametrize("pack", EXERCISM_PACKS, ids=str)
@@ -182,7 +183,8 @@ def test_metadata_records_the_rung_the_dials_and_the_counts_and_no_source(pack):
     assert meta["feature_size"] in FEATURE_SIZES
     # The slow checks prove that the verifier counts this many feature tests.
     assert meta["feature_tests"] == pack.reference_count
-    assert meta["seed_suite_tests"] == len(seed_suite_case_names(pack))
+    # The tests that the verifier counts: the leaf cases, not the describe groups.
+    assert meta["seed_suite_tests"] == seed_suite_tests(pack)
     assert meta["red_compile_rule"] == pack.model_task_toml()["metadata"]["red_compile_rule"]
 
 
@@ -321,14 +323,18 @@ def test_untouched_seed_gives_reward_0_and_passes_no_feature_test(pack, pack_ima
     assert reward["agent_tests_total"] == 0
     if not pack.stubbed:
         # A seed with no stub lacks the feature's entry points, so no feature
-        # test compiles, and none passes. In Go the seed suite compiles in one
-        # package with the feature tests, so it does not run either: each of its
-        # files counts as a failed test. The next test runs it on its own.
+        # test compiles, and none passes. In Go the feature tests compile in the
+        # root package with the seed tests there, so the outcome pass does not
+        # compile and the seed suite passes no test: each of its files counts
+        # as a failed test, or each test of the packages that did run (the
+        # medium codebase's layers), when that is more. The next test runs it
+        # on its own.
         assert reward["reference_compiles"] == 0
         assert reward["reference_passed"] == 0
         if pack.language == "go":
             assert reward["seed_suite_passed"] == 0
-            assert reward["seed_suite_total"] == len(pack.seed_test_files())
+            assert len(pack.seed_test_files()) <= reward["seed_suite_total"] \
+                <= _seed_suite_tests(pack)
         else:
             assert reward["seed_suite_passed"] == reward["seed_suite_total"]                 == _seed_suite_tests(pack)
         return

@@ -237,6 +237,31 @@ def seed_suite_case_names(pack: Pack) -> list[str]:
                                       for name in pack.seed_test_files()])
 
 
+def _leaf_cases(language: str, text: str) -> int:
+    """The test cases of a test file that hold no case: the tests that the
+    verifier counts. A TypeScript `it`; a Go `t.Run` whose function holds no
+    `t.Run` (a `describe` group is a t.Run that holds others)."""
+    if language == "typescript":
+        return len(re.findall(r"\bit\(\s*'", text))
+    leaves = 0
+    for match in _CASE_NAME["go"].finditer(text):
+        start = text.index("{", match.end())
+        depth, end = 0, start
+        for end in range(start, len(text)):
+            depth += {"{": 1, "}": -1}.get(text[end], 0)
+            if depth == 0:
+                break
+        leaves += not _CASE_NAME["go"].search(text[start:end])
+    return leaves
+
+
+def seed_suite_tests(pack: Pack) -> int:
+    """The tests of the seed suite, as the verifier counts them: its leaf
+    cases (seed_suite_total of the gold solution)."""
+    return sum(_leaf_cases(pack.language, (pack.seed / name).read_text(encoding="utf-8"))
+               for name in pack.seed_test_files())
+
+
 def _design_file(language: str, name: str) -> str:
     """A seed file's path with the language taken out: `a/b-c.test.ts` and
     `a/b_c_test.go` are both `a/b_c test`."""
@@ -428,19 +453,15 @@ CODEBASE_PACKS: list[Pack] = [
          module="shop", stubbed=False),
     Pack("go", "shop-returns-small", 38, (), _RETURNS, feature_stub="returns", module="shop",
          stubbed=False),
-]
-PACKS += CODEBASE_PACKS
-# The medium codebase (issue #85; PRD section 20, "The domain"): the seed of
-# rung E, built ahead of its pack. Only its seed (environment/seed and the
-# Dockerfile) exists, so it is not in CODEBASE_PACKS yet; the pack of rung E
-# (issue #87) moves it there. tests/test_medium_codebase.py checks it, and
-# the parity of its two languages (the Go port is issue #86).
-MEDIUM_CODEBASES: list[Pack] = [
+    # Rung E: X again, with rung D's specification, Interface section and
+    # feature tests, in the medium codebase (issues #85 and #86).
+    # tests/test_medium_codebase.py checks the seed.
     Pack("typescript", "shop-returns-medium", 38, (), _RETURNS, feature_stub="returns",
          module="shop", stubbed=False),
     Pack("go", "shop-returns-medium", 38, (), _RETURNS, feature_stub="returns", module="shop",
          stubbed=False),
 ]
+PACKS += CODEBASE_PACKS
 EXERCISM_PACKS = [p for p in PACKS if not p.purpose_written]
 STUBBED_PACKS = [p for p in PACKS if p.stubbed]
 RUNGS = sorted({p.slug for p in CODEBASE_PACKS})  # the purpose-written rungs, by slug

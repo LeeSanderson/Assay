@@ -29,6 +29,9 @@ tasks:
   # Rung D: shop-returns-small (partial returns and refunds, X, in the small codebase).
   - path: tasks/typescript/shop-returns-small
   - path: tasks/go/shop-returns-small
+  # Rung E: shop-returns-medium (partial returns and refunds, X, in the medium codebase).
+  - path: tasks/typescript/shop-returns-medium
+  - path: tasks/go/shop-returns-medium
 
 agents:
   # Control: no variant flags (no skills, no settings, no extra instructions).

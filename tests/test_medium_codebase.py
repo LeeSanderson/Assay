@@ -3,8 +3,8 @@ in Go (issue #86; PRD section 20, "The domain"): the small codebase of rung
 D grown into the order and inventory service in layers (domain, services,
 adapters), with the promotions engine (M), the customers and accounts, the
 shipping, the invoices, an event log and the reports. It is the seed of rung
-E (issue #87), built ahead of that pack, so only its seed and Dockerfile
-exist yet: tasks/<language>/shop-returns-medium/environment/.
+E, the pack tasks/<language>/shop-returns-medium (issue #87), which
+tests/test_shop_returns_medium_task_packs.py and the shared checks cover.
 
 The feature tests of X (rung D's) must later run unchanged on it, so the root
 modules keep the entry points of the small codebase. The design note, which
@@ -25,10 +25,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.task_packs import (MEDIUM_CODEBASES, REPO_ROOT, SEED_SIZE_RANGES, TS_TOOLCHAIN,
+from tests.task_packs import (REPO_ROOT, SEED_SIZE_RANGES, TS_TOOLCHAIN,
                               docker, packs, seed_design, seed_suite_case_names)
 
-TS, GO = MEDIUM_CODEBASES
+TS, GO = packs("shop-returns-medium")["typescript"], packs("shop-returns-medium")["go"]
+MEDIUM_CODEBASES = (TS, GO)
 RUNG_C = packs("shop-promotions-small")
 RUNG_D = packs("shop-returns-small")
 DESIGN_NOTE = REPO_ROOT / "docs" / "codebase-ladder" / "medium-codebase.md"
