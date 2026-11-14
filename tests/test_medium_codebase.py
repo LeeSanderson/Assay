@@ -25,8 +25,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.task_packs import (REPO_ROOT, SEED_SIZE_RANGES, TS_TOOLCHAIN,
-                              docker, packs, seed_design, seed_suite_case_names)
+from tests.task_packs import (GO_DECLARATION, GO_FUNC, REPO_ROOT, SEED_SIZE_RANGES, TS_EXPORT,
+                              TS_TOOLCHAIN, Pack, docker, packs, seed_design,
+                              seed_suite_case_names)
 
 TS, GO = packs("shop-returns-medium")["typescript"], packs("shop-returns-medium")["go"]
 MEDIUM_CODEBASES = (TS, GO)
@@ -53,7 +54,7 @@ def _go_imports(text: str) -> list[str]:
     return found
 
 
-def _imports(pack, name: str) -> list[str]:
+def _imports(pack: Pack, name: str) -> list[str]:
     """The layers or seed files that a seed file imports: seed paths in
     TypeScript, package folders in Go."""
     text = (pack.seed / name).read_text(encoding="utf-8")
@@ -83,8 +84,7 @@ def _exports(name: str) -> set[str]:
     """The names that a TypeScript root module exports, by declaration or
     re-export."""
     text = (TS.seed / name).read_text(encoding="utf-8")
-    names = set(re.findall(r"^export (?:class|interface|type|function|const) (\w+)", text,
-                           re.MULTILINE))
+    names = {m.group(2) for m in TS_EXPORT.finditer(text)}
     for block in re.findall(r"^export (?:type )?\{([^}]*)\}", text, re.MULTILINE):
         names |= {n.strip().split(" as ")[-1] for n in block.split(",") if n.strip()}
     return names
@@ -94,13 +94,13 @@ def _go_declared(path: Path) -> set[str]:
     """The exported names that a Go file declares at its top level, in
     declarations or in grouped `type`, `const` and `var` blocks."""
     text = path.read_text(encoding="utf-8")
-    names = set(re.findall(r"^(?:type|const|var|func) ([A-Z]\w*)", text, re.MULTILINE))
+    names = {m.group(1) for pattern in (GO_DECLARATION, GO_FUNC) for m in pattern.finditer(text)}
     for block in re.findall(r"^(?:type|const|var) \(\n(.*?)^\)", text, re.MULTILINE | re.DOTALL):
         names |= set(re.findall(r"^\t([A-Z]\w*)", block, re.MULTILINE))
     return names
 
 
-def _feature_test_imports(pack) -> dict[str, set[str]]:
+def _feature_test_imports(pack: Pack) -> dict[str, set[str]]:
     """The names that a TypeScript pack's feature tests import, by module."""
     (text,) = pack.reference_test_texts()
     wanted: dict[str, set[str]] = {}
@@ -110,14 +110,6 @@ def _feature_test_imports(pack) -> dict[str, set[str]]:
             if n.strip():
                 wanted.setdefault(source, set()).add(n.strip().removeprefix("type ").strip())
     return wanted
-
-
-def _source_suffix(pack) -> str:
-    return ".ts" if pack.language == "typescript" else ".go"
-
-
-def _test_suffix(pack) -> str:
-    return ".test.ts" if pack.language == "typescript" else "_test.go"
 
 
 # --- The seed's files -----------------------------------------------------------
@@ -189,7 +181,7 @@ def test_each_layer_imports_only_the_layers_below_it(pack):
 @each_language
 def test_each_seed_test_sits_beside_the_module_that_it_tests(pack):
     for name in pack.seed_test_files():
-        module = name.removesuffix(_test_suffix(pack)) + _source_suffix(pack)
+        module = name.removesuffix(pack.lang.test_suffix) + pack.lang.source_suffix
         assert (pack.seed / module).is_file(), name
 
 
@@ -216,7 +208,7 @@ def test_go_root_files_declare_every_name_that_rung_ds_files_of_the_same_name_de
 
 @each_language
 def test_seed_has_no_returns_and_no_credit_notes(pack):
-    assert "returns" + _source_suffix(pack) not in pack.seed_files()
+    assert pack.feature_file not in pack.seed_files()
     returned = "'returned'" if pack.language == "typescript" else '"returned"'
     for name in pack.production_files():
         text = (pack.seed / name).read_text(encoding="utf-8")

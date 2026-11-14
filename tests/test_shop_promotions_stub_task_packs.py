@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.task_packs import MODEL_SLUG, packs, verify
+from tests.task_packs import packs, verify
 
 SLUG = "shop-promotions-stub"
 TS, GO = packs(SLUG)["typescript"], packs(SLUG)["go"]
@@ -41,14 +41,6 @@ def test_metadata_puts_the_pack_on_rung_b_a_stub_and_the_feature_m_with_no_seed_
         assert meta["seed_suite_tests"] == 0
         assert pack.seed_test_files() == []
         assert not pack.seed_suite.exists()
-
-
-def test_verifier_is_the_model_packs_but_for_its_name():
-    for pack in (TS, GO):
-        script = (pack.path / "tests" / "test.sh").read_text(encoding="utf-8")
-        model_script = (pack.model / "tests" / "test.sh").read_text(encoding="utf-8")
-        assert SLUG in script.splitlines()[1]
-        assert script.replace(SLUG, MODEL_SLUG) == model_script
 
 
 def test_seed_is_the_stub_and_the_toolchain():

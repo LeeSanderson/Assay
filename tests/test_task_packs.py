@@ -20,12 +20,13 @@ and do-nothing (`nop`) agents.
 
 import json
 import re
+import subprocess
 
 import pytest
 
-from tests.task_packs import (BASE_IMAGE, CODEBASE_PACKS, EXERCISM_PACKS, FEATURE_SIZES, PACKS,
-                              RUNGS, SEED_SIZE_RANGES, SEED_SIZES, SOURCE_REPO, STUBBED_PACKS,
-                              TS_TOOLCHAIN, base_image,
+from tests.task_packs import (BASE_IMAGE, CODEBASE_PACKS, CODEBASE_SLUGS, EXERCISM_PACKS,
+                              FEATURE_SIZES, FIXTURE_PACKS, MODEL_SLUG, PACKS, PACKS_WITH_A_STUB,
+                              REPO_ROOT, SEED_SIZE_RANGES, SEED_SIZES, SOURCE_REPO, base_image,
                               harbor_rewards, packs, reference_case_names, run_in_image,
                               seed_design, seed_suite_case_names, seed_suite_tests, stub_signatures,
                               verify)
@@ -33,7 +34,7 @@ from tests.task_packs import (BASE_IMAGE, CODEBASE_PACKS, EXERCISM_PACKS, FEATUR
 each_pack = pytest.mark.parametrize("pack", PACKS, ids=str)
 each_exercism_pack = pytest.mark.parametrize("pack", EXERCISM_PACKS, ids=str)
 each_codebase_pack = pytest.mark.parametrize("pack", CODEBASE_PACKS, ids=str)
-each_rung = pytest.mark.parametrize("slug", RUNGS)
+each_rung = pytest.mark.parametrize("slug", CODEBASE_SLUGS)
 TS_PACKS = [p for p in PACKS if p.language == "typescript"]
 GO_PACKS = [p for p in PACKS if p.language == "go"]
 
@@ -43,17 +44,40 @@ GO_PACKS = [p for p in PACKS if p.language == "go"]
 
 @each_pack
 def test_seed_repository_holds_only_the_stub_and_the_toolchain_files(pack):
-    toolchain = TS_TOOLCHAIN if pack.language == "typescript" else ("go.mod",)
-    if pack.purpose_written and not pack.stubbed:
-        # Rung D's seed has no stub: the feature adds its file.
+    toolchain = pack.lang.toolchain
+    if not pack.has_stub:
+        # The seed of rungs D and E has no stub: the feature adds its file.
         assert set(pack.seed_files()) >= set(toolchain)
-        assert pack.stub not in pack.seed_files()
+        assert pack.feature_file not in pack.seed_files()
     elif pack.purpose_written:
         # A codebase seed holds more than a stub; the stub and the toolchain are in it.
         assert set(pack.seed_files()) >= {pack.stub, *toolchain}
     else:
         assert pack.seed_files() == sorted([pack.stub, *toolchain])
     assert sorted(pack.task_toml()["metadata"]["seed_files"]) == pack.seed_files()
+
+
+@pytest.mark.parametrize("pack", PACKS + FIXTURE_PACKS, ids=str)
+def test_verifier_is_the_model_packs_but_for_its_name(pack):
+    # One verifier for each language: every pack, and the test-fixture packs
+    # that test it (tests/test_seed_suite_verifier.py), run the model pack's
+    # tests/test.sh with the slug swapped.
+    script = (pack.path / "tests" / "test.sh").read_text(encoding="utf-8")
+    model = (pack.model / "tests" / "test.sh").read_text(encoding="utf-8")
+    assert pack.slug in script.splitlines()[1]
+    assert script.replace(pack.slug, MODEL_SLUG) == model
+    # The header cites the PRD as the rest of the script does.
+    assert "§" not in script
+    assert "PRD section 20" in script
+
+
+def test_every_verifier_has_the_same_file_mode_in_git():
+    scripts = [str((p.path / "tests" / "test.sh").relative_to(REPO_ROOT).as_posix())
+               for p in PACKS + FIXTURE_PACKS]
+    listed = subprocess.run(["git", "ls-files", "-s", "--", *scripts], cwd=REPO_ROOT,
+                            capture_output=True, text=True, check=True).stdout.splitlines()
+    assert len(listed) == len(scripts)
+    assert {line.split()[0] for line in listed} == {"100755"}
 
 
 @each_pack
@@ -94,7 +118,7 @@ def test_instruction_names_no_test_command_before_the_footer(pack):
         assert "test" not in before_footer
 
 
-@pytest.mark.parametrize("pack", STUBBED_PACKS, ids=str)
+@pytest.mark.parametrize("pack", PACKS_WITH_A_STUB, ids=str)
 def test_stub_keeps_the_source_signatures_with_a_not_implemented_body(pack):
     assert stub_signatures(pack) == list(pack.signatures)
     if pack.language == "typescript":
@@ -119,7 +143,7 @@ def test_reference_tests_carry_the_prefix(pack):
         assert not re.search(r"\bx(it|describe)\(", text)
         assert len(re.findall(r"^\s*it\(", text, re.MULTILINE)) == pack.reference_count
     elif pack.purpose_written:
-        assert pack.reference_tests() == [f"assay_reference_{pack.stub[:-3]}_test.go"]
+        assert pack.reference_tests() == [f"assay_reference_{pack.feature_file[:-3]}_test.go"]
     else:
         assert pack.reference_tests() == sorted([
             "assay_reference_cases_test.go", f"assay_reference_{pack.stub[:-3]}_test.go"])
@@ -321,7 +345,7 @@ def test_untouched_seed_gives_reward_0_and_passes_no_feature_test(pack, pack_ima
     reward = verify(pack, pack_images(pack), tmp_path)
     assert reward["reward"] == 0
     assert reward["agent_tests_total"] == 0
-    if not pack.stubbed:
+    if not pack.has_stub:
         # A seed with no stub lacks the feature's entry points, so no feature
         # test compiles, and none passes. In Go the feature tests compile in the
         # root package with the seed tests there, so the outcome pass does not
@@ -387,5 +411,5 @@ def test_harbor_oracle_agent_gets_reward_1(pack, tmp_path):
 def test_harbor_do_nothing_agent_gets_reward_0(pack, tmp_path):
     rewards = harbor_rewards(pack, "nop", tmp_path)
     assert rewards["reward"] == 0
-    assert rewards["reference_compiles"] == int(pack.stubbed)
+    assert rewards["reference_compiles"] == int(pack.has_stub)
     assert rewards["agent_tests_total"] == 0

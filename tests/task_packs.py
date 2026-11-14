@@ -16,9 +16,11 @@ import re
 import subprocess
 import tomllib
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Literal
 
 from analyze.languages import LANGUAGES
 
@@ -51,6 +53,142 @@ SEED_SIZE_RANGES = {
 FEATURE_SIZES = ("one function", "M", "X")
 
 
+# --- The two languages of the task packs ---------------------------------------
+
+# A TypeScript export, and a Go type, constant or variable and a Go function, at
+# the start of a line: the exported declarations of a source file.
+TS_EXPORT = re.compile(r"^export (class|interface|type|function|const|enum) (\w+)", re.MULTILINE)
+GO_DECLARATION = re.compile(r"^(?:type|var|const) ([A-Z]\w*)[\s\[]", re.MULTILINE)
+GO_FUNC = re.compile(r"^func ([A-Z]\w*)[\[(]", re.MULTILINE)
+_GO_METHOD = re.compile(r"^func \(\w+ \*?(\w+)\) ([A-Z]\w*)\(")
+# A member of a TypeScript class, interface or object constant, at the first
+# indent (two spaces; a deeper line is in a method body); a Go field, or a
+# method of an interface, at one tab.
+_TS_MEMBER = re.compile(r"  (?:public |readonly |static )*(\w+)\??[:(<]")
+_GO_MEMBER = re.compile(r"\t([A-Z]\w*)[\s(]")
+
+
+def _ts_exported_names(text: str) -> set[str]:
+    names: set[str] = set()
+    block = ""  # the class, interface or object constant whose body the line is in
+    for line in text.splitlines():
+        if line.startswith("}"):
+            block = ""
+        elif m := TS_EXPORT.match(line):
+            names.add(m.group(2))
+            # A function's body holds no members.
+            opens = line.rstrip().endswith("{") and m.group(1) != "function"
+            block = m.group(2) if opens else ""
+        elif block and (m := _TS_MEMBER.match(line)):
+            if m.group(1) != "constructor" and not line.lstrip().startswith("private"):
+                names.add(f"{block}.{m.group(1)}")
+    return names
+
+
+def _go_exported_names(text: str) -> set[str]:
+    names: set[str] = set()
+    block = ""  # the type (or variable) whose body the line is in
+    for line in text.splitlines():
+        if line.startswith("}"):
+            block = ""
+        elif m := GO_DECLARATION.match(line):
+            names.add(m.group(1))
+            block = m.group(1) if line.rstrip().endswith("{") else ""
+        elif m := _GO_METHOD.match(line):
+            names.add(f"{m.group(1)}.{m.group(2)}")
+        elif m := GO_FUNC.match(line):
+            names.add(m.group(1))
+        elif block and (m := _GO_MEMBER.match(line)):
+            names.add(f"{block}.{m.group(1)}")
+    return names
+
+
+# A test case of a purpose-written pack is an `it` or `describe` in TypeScript
+# and a `t.Run` in Go: the Go tests nest t.Run as the TypeScript tests nest
+# describe and it, with the same names (PRD section 20, check 4).
+_TS_CASE = re.compile(r"\b(?:describe|it)\(\s*'([^']*)'")
+_GO_CASE = re.compile(r"\bt\.Run\(\s*\"([^\"]*)\"")
+
+
+def _ts_leaf_cases(text: str) -> int:
+    """A TypeScript test file's `it` cases."""
+    return len(re.findall(r"\bit\(\s*'", text))
+
+
+def _go_leaf_cases(text: str) -> int:
+    """A Go test file's `t.Run` cases whose function holds no `t.Run` (a
+    `describe` group is a t.Run that holds others)."""
+    leaves = 0
+    for match in _GO_CASE.finditer(text):
+        start = text.index("{", match.end())
+        depth, end = 0, start
+        for end in range(start, len(text)):
+            depth += {"{": 1, "}": -1}.get(text[end], 0)
+            if depth == 0:
+                break
+        leaves += not _GO_CASE.search(text[start:end])
+    return leaves
+
+
+def _ts_signatures(text: str) -> list[str]:
+    return [line.strip() for line in text.splitlines()
+            if re.match(r"\s*(export |public |constructor\(|get |\w+\([^)]*\)\s*\{$)", line)]
+
+
+def _go_signatures(text: str) -> list[str]:
+    return re.findall(r"^(func .*?)\s*\{", text, re.MULTILINE)
+
+
+def _ts_not_compiling(slug: str, stem: str, package: str) -> tuple[str, str]:
+    return f"{slug}.test.ts", (
+        "import { expect, it } from '@jest/globals'\n\n"
+        "it('does not type-check', () => {\n"
+        "  const count: number = 'one'\n"
+        "  expect(count).toBe('one')\n"
+        "})\n")
+
+
+def _go_not_compiling(slug: str, stem: str, package: str) -> tuple[str, str]:
+    return f"{stem}_test.go", (
+        f"package {package}\n\nimport \"testing\"\n\n"
+        "func TestAgentDoesNotCompile(t *testing.T) {\n\tundefinedHelper()\n}\n")
+
+
+@dataclass(frozen=True)
+class PackLanguage:
+    """How the task packs of one language lay out and read their files."""
+
+    source_suffix: str
+    test_suffix: str
+    word_separator: str  # between the words of a file name that comes from a slug
+    toolchain: tuple[str, ...]  # the seed's toolchain files
+    gold: str  # the gold solution of an Exercism pack, in solution/
+    reference_folder: str  # the folder of the reference tests, in tests/
+    case: re.Pattern[str]  # a test case, with its name
+    leaf_cases: Callable[[str], int]  # a test file's cases that the verifier counts
+    exported_names: Callable[[str], set[str]]  # as written, before _exported_names
+    signatures: Callable[[str], list[str]]  # the declarations of a stub
+    # (slug, stem of the feature file, Go package) -> (name, content) of an
+    # agent test file that the test runner runs but the verifier cannot compile.
+    not_compiling: Callable[[str, str, str], tuple[str, str]]
+
+    def file_name(self, base: str) -> str:
+        """The source file for a base name, such as a slug."""
+        return base.replace("-", self.word_separator) + self.source_suffix
+
+
+PACK_LANGUAGES: dict[str, PackLanguage] = {
+    "typescript": PackLanguage(
+        ".ts", ".test.ts", "-", TS_TOOLCHAIN, "proof.ci.ts", "", _TS_CASE, _ts_leaf_cases,
+        _ts_exported_names, _ts_signatures, _ts_not_compiling),
+    "go": PackLanguage(
+        ".go", "_test.go", "_", ("go.mod",), "example.go", "reference", _GO_CASE,
+        _go_leaf_cases, _go_exported_names, _go_signatures, _go_not_compiling),
+}
+# How the seed holds the feature of a pack (Pack.feature_in_seed).
+FeatureInSeed = Literal["stub", "absent"]
+
+
 @dataclass(frozen=True)
 class Pack:
     """One task pack: tasks/<language>/<slug>."""
@@ -61,18 +199,27 @@ class Pack:
     signatures: tuple[str, ...]  # the exported signatures of the source stub
     opening: str  # the first line of the source instructions
     root: Path = REPO_ROOT / "tasks"  # the test-fixture packs are in tests/fixtures/packs
-    # A purpose-written pack of the codebase ladder (ADR 0006) names its stub
-    # file (without the extension) and its Go module; an Exercism pack takes
-    # both from its slug.
-    feature_stub: str = ""
+    # A purpose-written pack of the codebase ladder (ADR 0006) names the file
+    # of its feature (without the extension) and its Go module; an Exercism
+    # pack takes both from its slug.
+    feature: str = ""
     module: str = ""
-    # A seed with no stub (rung D): the feature adds its file, so the seed
-    # holds no file of the feature, and the feature tests do not compile on it.
-    stubbed: bool = True
+    # How the seed holds the feature: as a stub that keeps its signatures, or
+    # not at all (rungs D and E), when the feature adds its file and the
+    # feature tests do not compile on the seed.
+    feature_in_seed: FeatureInSeed = "stub"
 
     @property
     def purpose_written(self) -> bool:
-        return bool(self.feature_stub)
+        return bool(self.feature)
+
+    @property
+    def has_stub(self) -> bool:
+        return self.feature_in_seed == "stub"
+
+    @property
+    def lang(self) -> PackLanguage:
+        return PACK_LANGUAGES[self.language]
 
     def __str__(self) -> str:
         return f"{self.language}-{self.slug}"
@@ -91,9 +238,14 @@ class Pack:
         return REPO_ROOT / "tasks" / self.language / MODEL_SLUG
 
     @property
+    def feature_file(self) -> str:
+        """The file of the feature: the stub, or the file that the feature adds."""
+        return self.lang.file_name(self.feature or self.slug)
+
+    @property
     def stub(self) -> str:
-        base = self.feature_stub or self.slug
-        return f"{base}.ts" if self.language == "typescript" else f"{base.replace('-', '_')}.go"
+        assert self.has_stub, f"{self} has no stub"
+        return self.feature_file
 
     @property
     def go_package(self) -> str:
@@ -149,9 +301,8 @@ class Pack:
 
     def production_files(self) -> list[str]:
         """The seed's production code: its files but the tests and the toolchain."""
-        toolchain = TS_TOOLCHAIN if self.language == "typescript" else ("go.mod",)
         tests = set(self.seed_test_files())
-        return [f for f in self.seed_files() if f not in tests and f not in toolchain]
+        return [f for f in self.seed_files() if f not in tests and f not in self.lang.toolchain]
 
     def production_lines(self) -> int:
         """The non-blank lines of the seed's production code."""
@@ -174,8 +325,7 @@ class Pack:
 
     def gold(self) -> str:
         """The gold solution of an Exercism pack's stub."""
-        name = "proof.ci.ts" if self.language == "typescript" else "example.go"
-        return (self.path / "solution" / name).read_text(encoding="utf-8")
+        return (self.path / "solution" / self.lang.gold).read_text(encoding="utf-8")
 
     def gold_files(self) -> dict[str, str]:
         """The gold solution, as the files (relative to /app) that it writes.
@@ -187,45 +337,31 @@ class Pack:
         return {p.relative_to(solution).as_posix(): p.read_text(encoding="utf-8")
                 for p in sorted(solution.rglob("*")) if p.is_file() and p.name != "solve.sh"}
 
+    @property
+    def reference_folder(self) -> Path:
+        return self.path / "tests" / self.lang.reference_folder
+
     def reference_test_texts(self) -> list[str]:
-        folder = self.path / "tests" if self.language == "typescript" \
-            else self.path / "tests" / "reference"
-        return [(folder / name).read_text(encoding="utf-8") for name in self.reference_tests()]
+        return [(self.reference_folder / name).read_text(encoding="utf-8")
+                for name in self.reference_tests()]
 
     def reference_tests(self) -> list[str]:
         """The names of the reference test files."""
-        if self.language == "typescript":
-            return sorted(p.name for p in (self.path / "tests").iterdir()
-                          if p.name.endswith(".test.ts"))
-        return sorted(p.name for p in (self.path / "tests" / "reference").iterdir())
+        return sorted(p.name for p in self.reference_folder.iterdir()
+                      if p.name.endswith(self.lang.test_suffix))
 
     def agent_test_not_compiling(self) -> tuple[str, str]:
         """(name, content) of an agent test file that runs under the
         language's test runner, but does not compile under the verifier."""
-        if self.language == "typescript":
-            return f"{self.slug}.test.ts", (
-                "import { expect, it } from '@jest/globals'\n\n"
-                "it('does not type-check', () => {\n"
-                "  const count: number = 'one'\n"
-                "  expect(count).toBe('one')\n"
-                "})\n")
-        return f"{self.stub[:-3]}_test.go", (
-            f"package {self.go_package}\n\nimport \"testing\"\n\n"
-            "func TestAgentDoesNotCompile(t *testing.T) {\n\tundefinedHelper()\n}\n")
+        stem = self.feature_file.removesuffix(self.lang.source_suffix)
+        return self.lang.not_compiling(self.slug, stem, self.go_package)
 
 
 # --- The codebase ladder: parity between the two languages of a rung ----------
 
-# A test case of a purpose-written pack is an `it` or `describe` in TypeScript
-# and a `t.Run` in Go: the Go tests nest t.Run as the TypeScript tests nest
-# describe and it, with the same names (PRD section 20, check 4).
-_CASE_NAME = {"typescript": re.compile(r"\b(?:describe|it)\(\s*'([^']*)'"),
-              "go": re.compile(r"\bt\.Run\(\s*\"([^\"]*)\"")}
-
-
 def case_names(language: str, texts: list[str]) -> list[str]:
     """The test-case names in the given test files, in order."""
-    return [name for text in texts for name in _CASE_NAME[language].findall(text)]
+    return [name for text in texts for name in PACK_LANGUAGES[language].case.findall(text)]
 
 
 def reference_case_names(pack: Pack) -> list[str]:
@@ -237,36 +373,19 @@ def seed_suite_case_names(pack: Pack) -> list[str]:
                                       for name in pack.seed_test_files()])
 
 
-def _leaf_cases(language: str, text: str) -> int:
-    """The test cases of a test file that hold no case: the tests that the
-    verifier counts. A TypeScript `it`; a Go `t.Run` whose function holds no
-    `t.Run` (a `describe` group is a t.Run that holds others)."""
-    if language == "typescript":
-        return len(re.findall(r"\bit\(\s*'", text))
-    leaves = 0
-    for match in _CASE_NAME["go"].finditer(text):
-        start = text.index("{", match.end())
-        depth, end = 0, start
-        for end in range(start, len(text)):
-            depth += {"{": 1, "}": -1}.get(text[end], 0)
-            if depth == 0:
-                break
-        leaves += not _CASE_NAME["go"].search(text[start:end])
-    return leaves
-
-
 def seed_suite_tests(pack: Pack) -> int:
     """The tests of the seed suite, as the verifier counts them: its leaf
     cases (seed_suite_total of the gold solution)."""
-    return sum(_leaf_cases(pack.language, (pack.seed / name).read_text(encoding="utf-8"))
+    return sum(pack.lang.leaf_cases((pack.seed / name).read_text(encoding="utf-8"))
                for name in pack.seed_test_files())
 
 
 def _design_file(language: str, name: str) -> str:
     """A seed file's path with the language taken out: `a/b-c.test.ts` and
     `a/b_c_test.go` are both `a/b_c test`."""
-    suffix, test = (".ts", ".test") if language == "typescript" else (".go", "_test")
-    name = name.removesuffix(suffix)
+    lang = PACK_LANGUAGES[language]
+    name = name.removesuffix(lang.source_suffix)
+    test = lang.test_suffix.removesuffix(lang.source_suffix)
     if name.endswith(test):
         name = name.removesuffix(test) + " test"
     return name.replace("-", "_")
@@ -279,32 +398,7 @@ def _exported_names(language: str, text: str) -> set[str]:
     `New<Type>` function is the constructor of the TypeScript class <Type>,
     and a TypeScript `new<Type>` function the Go `New<Type>`, so both are left
     out."""
-    names: set[str] = set()
-    block = ""  # the type (or object constant) whose body the line is in
-    for line in text.splitlines():
-        if line.startswith("}"):
-            block = ""
-        elif language == "typescript":
-            if m := re.match(r"export (class|interface|type|function|const|enum) (\w+)", line):
-                names.add(m.group(2))
-                # A function's body holds no members.
-                opens = line.rstrip().endswith("{") and m.group(1) != "function"
-                block = m.group(2) if opens else ""
-            # A member is at the first indent (two spaces); a deeper line is
-            # in a method body.
-            elif block and (m := re.match(r"  (?:public |readonly |static )*(\w+)\??[:(<]",
-                                          line)):
-                if m.group(1) != "constructor" and not line.lstrip().startswith("private"):
-                    names.add(f"{block}.{m.group(1)}")
-        elif m := re.match(r"(?:type|var|const) ([A-Z]\w*)[\s\[]", line):
-            names.add(m.group(1))
-            block = m.group(1) if line.rstrip().endswith("{") else ""
-        elif m := re.match(r"func \(\w+ \*?(\w+)\) ([A-Z]\w*)\(", line):
-            names.add(f"{m.group(1)}.{m.group(2)}")
-        elif m := re.match(r"func ([A-Z]\w*)[\[(]", line):
-            names.add(m.group(1))
-        elif block and (m := re.match(r"\t([A-Z]\w*)[\s(]", line)):  # field or method
-            names.add(f"{block}.{m.group(1)}")
+    names = PACK_LANGUAGES[language].exported_names(text)
     types = {n for n in names if "." not in n}
     return {n.lower().replace("_", "") for n in names
             if not (n[:3].lower() == "new" and n[3:] in types)}
@@ -336,8 +430,7 @@ LANGUAGE_ONLY_NAMES = {
 def seed_design(pack: Pack) -> dict:
     """The seed's design with the language taken out: its files (but the
     toolchain files) and the exported names of its source files."""
-    toolchain = TS_TOOLCHAIN if pack.language == "typescript" else ("go.mod",)
-    files = [f for f in pack.seed_files() if f not in toolchain]
+    files = [f for f in pack.seed_files() if f not in pack.lang.toolchain]
     tests = set(pack.seed_test_files())
     names: set[str] = set()
     for f in files:
@@ -436,35 +529,44 @@ _PROMOTIONS_GO = (
     "(Quote, error)",
     "func (e *PromotionEngine) Redeem(lines []Line, coupons []string, today string) "
     "(Quote, error)")
+
+
+def _codebase_rung(slug: str, feature_tests: int, opening: str, feature: str,
+                   signatures: tuple[tuple[str, ...], tuple[str, ...]] = ((), ()),
+                   feature_in_seed: FeatureInSeed = "stub") -> list[Pack]:
+    """The two purpose-written packs of one rung, in the Go module `shop`.
+    `signatures` are the TypeScript stub's, then the Go stub's."""
+    return [Pack(language, slug, feature_tests, sigs, opening, feature=feature, module="shop",
+                 feature_in_seed=feature_in_seed)
+            for language, sigs in zip(("typescript", "go"), signatures)]
+
+
 CODEBASE_PACKS: list[Pack] = [
-    Pack("typescript", "shop-promotions-stub", 48, _PROMOTIONS_TS, _PROMOTIONS,
-         feature_stub="promotions", module="shop"),
-    Pack("go", "shop-promotions-stub", 48, _PROMOTIONS_GO, _PROMOTIONS,
-         feature_stub="promotions", module="shop"),
+    *_codebase_rung("shop-promotions-stub", 48, _PROMOTIONS, "promotions",
+                    (_PROMOTIONS_TS, _PROMOTIONS_GO)),
     # Rung C: rung B's 48 feature tests and 13 of the checkout integration.
-    Pack("typescript", "shop-promotions-small", 61, _PROMOTIONS_TS, _PROMOTIONS_IN_CODEBASE,
-         feature_stub="promotions", module="shop"),
-    Pack("go", "shop-promotions-small", 61, _PROMOTIONS_GO, _PROMOTIONS_IN_CODEBASE,
-         feature_stub="promotions", module="shop"),
+    *_codebase_rung("shop-promotions-small", 61, _PROMOTIONS_IN_CODEBASE, "promotions",
+                    (_PROMOTIONS_TS, _PROMOTIONS_GO)),
     # Rung D: partial returns and refunds (X), whose file `returns` the feature
     # adds to rung C's seed with rung C's gold solution. Rung E reuses its
     # feature tests.
-    Pack("typescript", "shop-returns-small", 38, (), _RETURNS, feature_stub="returns",
-         module="shop", stubbed=False),
-    Pack("go", "shop-returns-small", 38, (), _RETURNS, feature_stub="returns", module="shop",
-         stubbed=False),
+    *_codebase_rung("shop-returns-small", 38, _RETURNS, "returns", feature_in_seed="absent"),
     # Rung E: X again, with rung D's specification, Interface section and
     # feature tests, in the medium codebase (issues #85 and #86).
     # tests/test_medium_codebase.py checks the seed.
-    Pack("typescript", "shop-returns-medium", 38, (), _RETURNS, feature_stub="returns",
-         module="shop", stubbed=False),
-    Pack("go", "shop-returns-medium", 38, (), _RETURNS, feature_stub="returns", module="shop",
-         stubbed=False),
+    *_codebase_rung("shop-returns-medium", 38, _RETURNS, "returns", feature_in_seed="absent"),
 ]
 PACKS += CODEBASE_PACKS
 EXERCISM_PACKS = [p for p in PACKS if not p.purpose_written]
-STUBBED_PACKS = [p for p in PACKS if p.stubbed]
-RUNGS = sorted({p.slug for p in CODEBASE_PACKS})  # the purpose-written rungs, by slug
+PACKS_WITH_A_STUB = [p for p in PACKS if p.has_stub]
+# The slugs of the purpose-written rungs, sorted by name; the codebase-ladder
+# summary (experiments/codebase-ladder/summary.py, RUNGS) holds their ladder order.
+CODEBASE_SLUGS = sorted({p.slug for p in CODEBASE_PACKS})
+# The test-fixture packs of the verifier (issue #80; tests/test_seed_suite_verifier.py):
+# `tally`, a tiny codebase with a seed suite and 3 feature tests.
+FIXTURES = REPO_ROOT / "tests" / "fixtures" / "packs"
+FIXTURE_PACKS = [Pack(language, "tally", 3, (), "", root=FIXTURES)
+                 for language in ("typescript", "go")]
 
 
 def packs(slug: str) -> dict[str, Pack]:
@@ -474,11 +576,7 @@ def packs(slug: str) -> dict[str, Pack]:
 
 def stub_signatures(pack: Pack) -> list[str]:
     """The declarations of the pack's seed stub, in order."""
-    text = pack.stub_text()
-    if pack.language == "go":
-        return re.findall(r"^(func .*?)\s*\{", text, re.MULTILINE)
-    return [line.strip() for line in text.splitlines()
-            if re.match(r"\s*(export |public |constructor\(|get |\w+\([^)]*\)\s*\{$)", line)]
+    return pack.lang.signatures(pack.stub_text())
 
 
 # --- Docker and Harbor ----------------------------------------------------------

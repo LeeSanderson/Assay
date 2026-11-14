@@ -1,5 +1,5 @@
 #!/bin/bash
-# Assay verifier for the Go shop-promotions-stub task pack (PRD §5 "Task packs").
+# Assay verifier for the Go shop-promotions-stub task pack (PRD section 6, "Task packs").
 #
 # The seed suite is the tests that the seed holds before the agent starts.
 # tests/seed-suite/ holds a copy of it in its seed form, at the same paths; a

@@ -7,8 +7,8 @@ The proof is a small test-fixture pack in each language, `tally`, in
 tests/fixtures/packs/<language>/tally. Its seed is a tiny working codebase with
 a seed suite of 5 tests in two folders (3 at the top, 2 in a subfolder), and a
 stub for the feature, `top`, which 3 feature tests check. Its tests/test.sh is
-the model pack's with the slug swapped, so this module tests the verifier that
-every pack runs.
+the model pack's with the slug swapped (tests/test_task_packs.py checks it), so
+this module tests the verifier that every pack runs.
 
 Fast tests read the fixture's files. Slow tests build the fixture's image and
 run its tests/test.sh, then replay and the trajectory, on prepared trials.
@@ -27,16 +27,13 @@ from analyze.agent_runs import agent_runs
 from analyze.replay import read_replay, replay_job
 from analyze.trajectory import analyze_trial
 from analyze.trial import read_trial
-from tests.task_packs import MODEL_SLUG, PACKS, REPO_ROOT, Pack, verify
+from tests.task_packs import FIXTURE_PACKS, PACKS, REPO_ROOT, Pack, verify
 from tests.trial_builder import TrialBuilder
 
-FIXTURES = REPO_ROOT / "tests" / "fixtures" / "packs"
-SLUG = "tally"
-FEATURE_TESTS = 3
+TS, GO = FIXTURE_PACKS
+SLUG = TS.slug
+FEATURE_TESTS = TS.reference_count
 SEED_SUITE_TESTS = 5
-TS = Pack("typescript", SLUG, FEATURE_TESTS, (), "", root=FIXTURES)
-GO = Pack("go", SLUG, FEATURE_TESTS, (), "", root=FIXTURES)
-FIXTURE_PACKS = [TS, GO]
 each_fixture = pytest.mark.parametrize("pack", FIXTURE_PACKS, ids=str)
 
 GOLD = {"typescript": "solution/tally.ts", "go": "solution/tally.go"}
@@ -126,14 +123,6 @@ def changed(text: str, old_new: tuple[str, str]) -> str:
 
 
 # --- Fast: the fixture's files ----------------------------------------------------
-
-
-@each_fixture
-def test_fixture_verifier_is_the_model_packs_but_for_its_name(pack):
-    script = (pack.path / "tests" / "test.sh").read_text(encoding="utf-8")
-    model = (REPO_ROOT / "tasks" / pack.language / MODEL_SLUG / "tests" / "test.sh")
-    assert SLUG in script.splitlines()[1]
-    assert script.replace(SLUG, MODEL_SLUG) == model.read_text(encoding="utf-8")
 
 
 @each_fixture

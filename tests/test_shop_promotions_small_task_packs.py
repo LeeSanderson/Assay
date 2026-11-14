@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.task_packs import MODEL_SLUG, packs, reference_case_names, verify
+from tests.task_packs import packs, reference_case_names, verify
 
 SLUG = "shop-promotions-small"
 TS, GO = packs(SLUG)["typescript"], packs(SLUG)["go"]
@@ -55,14 +55,6 @@ def test_metadata_puts_the_pack_on_rung_c_the_small_codebase_and_the_feature_m()
         meta = pack.task_toml()["metadata"]
         assert (meta["rung"], meta["seed_size"], meta["feature_size"]) == ("C", "small", "M")
         assert meta["feature_tests"] == 61
-
-
-def test_verifier_is_the_model_packs_but_for_its_name():
-    for pack in (TS, GO):
-        script = (pack.path / "tests" / "test.sh").read_text(encoding="utf-8")
-        model_script = (pack.model / "tests" / "test.sh").read_text(encoding="utf-8")
-        assert SLUG in script.splitlines()[1]
-        assert script.replace(SLUG, MODEL_SLUG) == model_script
 
 
 @pytest.mark.parametrize("pack", [TS, GO], ids=str)

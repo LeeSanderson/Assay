@@ -18,14 +18,6 @@ def test_the_source_instructions_are_the_short_poker_text():
             "\n## Interface\n"), pack
 
 
-def test_verifier_is_the_model_packs_but_for_its_name():
-    for pack in (TS, GO):
-        script = (pack.path / "tests" / "test.sh").read_text(encoding="utf-8")
-        model_script = (pack.model / "tests" / "test.sh").read_text(encoding="utf-8")
-        assert "poker" in script.splitlines()[1]
-        assert script.replace("poker", "split-second-stopwatch") == model_script
-
-
 def test_typescript_interface_states_the_card_format_and_the_tie_order():
     section = TS.interface_section()
     assert "`bestHands(hands)`" in section

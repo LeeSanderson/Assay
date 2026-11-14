@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.task_packs import MODEL_SLUG, packs, verify
+from tests.task_packs import packs, verify
 
 SLUG = "shop-returns-medium"
 TS, GO = packs(SLUG)["typescript"], packs(SLUG)["go"]
@@ -50,14 +50,6 @@ def test_specification_interface_and_feature_tests_are_rung_ds_byte_for_byte(pac
     assert pack.interface_section() == rung_d.interface_section()
     assert pack.reference_test_texts() == rung_d.reference_test_texts()
     assert pack.reference_count == rung_d.reference_count
-
-
-def test_verifier_is_the_model_packs_but_for_its_name():
-    for pack in (TS, GO):
-        script = (pack.path / "tests" / "test.sh").read_text(encoding="utf-8")
-        model_script = (pack.model / "tests" / "test.sh").read_text(encoding="utf-8")
-        assert SLUG in script.splitlines()[1]
-        assert script.replace(SLUG, MODEL_SLUG) == model_script
 
 
 def test_gold_solution_adds_the_returns_service_and_its_root_entry_point():
