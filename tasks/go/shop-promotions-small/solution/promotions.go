@@ -1,9 +1,11 @@
 package shop
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
-	"sort"
+	"math"
+	"slices"
 )
 
 type PromotionKind string
@@ -55,47 +57,6 @@ func NewPromotionEngine() *PromotionEngine {
 	return &PromotionEngine{coupons: map[string]Coupon{}, uses: map[string]int{}}
 }
 
-func validate(p Promotion) error {
-	switch p.Kind {
-	case "percentage":
-		if p.Percent < 1 || p.Percent > 100 {
-			return errors.New("percent must be between 1 and 100")
-		}
-	case "fixed":
-		if p.Amount <= 0 {
-			return errors.New("amount must be positive")
-		}
-	case "buy-x-get-y":
-		if p.Buy < 1 || p.Get < 1 {
-			return errors.New("buy and get must be at least 1")
-		}
-	case "bundle":
-		if len(p.SKUs) < 2 {
-			return errors.New("a bundle needs at least two SKUs")
-		}
-		if p.Price < 0 {
-			return errors.New("bundle price must not be negative")
-		}
-	default:
-		return fmt.Errorf("unknown promotion kind %s", p.Kind)
-	}
-	return nil
-}
-
-func (e *PromotionEngine) checkNewPromotion(p Promotion) error {
-	for _, existing := range e.promotions {
-		if existing.ID == p.ID {
-			return fmt.Errorf("promotion %s already exists", p.ID)
-		}
-	}
-	for _, coupon := range e.coupons {
-		if coupon.Promotion.ID == p.ID {
-			return fmt.Errorf("promotion %s already exists", p.ID)
-		}
-	}
-	return validate(p)
-}
-
 func (e *PromotionEngine) AddPromotion(promotion Promotion) error {
 	if err := e.checkNewPromotion(promotion); err != nil {
 		return err
@@ -124,17 +85,39 @@ func (e *PromotionEngine) Quote(lines []Line, coupons []string, today string) (Q
 
 func (e *PromotionEngine) Redeem(lines []Line, coupons []string, today string) (Quote, error) {
 	quote, err := e.price(lines, coupons, today)
-	if err != nil {
-		return Quote{}, err
+	if err == nil {
+		for _, code := range coupons {
+			e.uses[code]++
+		}
 	}
-	for _, code := range coupons {
-		e.uses[code]++
-	}
-	return quote, nil
+	return quote, err
 }
 
-// takeInOrder takes up to amount from the remaining amounts of the given
-// lines, in cart order, and returns what it took.
+func (e *PromotionEngine) checkNewPromotion(p Promotion) error {
+	taken := slices.ContainsFunc(e.promotions, func(q Promotion) bool { return q.ID == p.ID })
+	for _, coupon := range e.coupons {
+		taken = taken || coupon.Promotion.ID == p.ID
+	}
+	switch {
+	case taken:
+		return fmt.Errorf("promotion %s already exists", p.ID)
+	case p.Kind == "percentage" && (p.Percent < 1 || p.Percent > 100):
+		return errors.New("percent must be between 1 and 100")
+	case p.Kind == "fixed" && p.Amount <= 0:
+		return errors.New("amount must be positive")
+	case p.Kind == "buy-x-get-y" && (p.Buy < 1 || p.Get < 1):
+		return errors.New("buy and get must be at least 1")
+	case p.Kind == "bundle" && len(p.SKUs) < 2:
+		return errors.New("a bundle needs at least two SKUs")
+	case p.Kind == "bundle" && p.Price < 0:
+		return errors.New("bundle price must not be negative")
+	case !slices.Contains([]PromotionKind{"percentage", "fixed", "buy-x-get-y", "bundle"}, p.Kind):
+		return fmt.Errorf("unknown promotion kind %s", p.Kind)
+	}
+	return nil
+}
+
+// takeInOrder takes up to amount from the remaining amounts of the lines, in order.
 func takeInOrder(remaining []int, indexes []int, amount int) int {
 	left := amount
 	for _, i := range indexes {
@@ -145,125 +128,86 @@ func takeInOrder(remaining []int, indexes []int, amount int) int {
 	return amount - left
 }
 
-func contains(list []string, s string) bool {
-	for _, item := range list {
-		if item == s {
-			return true
-		}
-	}
-	return false
-}
-
 func apply(p Promotion, lines []Line, remaining []int) int {
 	var eligible []int
 	for i, line := range lines {
-		if len(p.SKUs) == 0 || contains(p.SKUs, line.SKU) {
+		if len(p.SKUs) == 0 || slices.Contains(p.SKUs, line.SKU) {
 			eligible = append(eligible, i)
 		}
 	}
 	total := 0
 	switch p.Kind {
-	case "percentage":
+	case "percentage", "buy-x-get-y":
 		for _, i := range eligible {
 			discount := remaining[i] * p.Percent / 100
+			if p.Kind == "buy-x-get-y" {
+				free := lines[i].Quantity / (p.Buy + p.Get) * p.Get
+				discount = min(free*lines[i].UnitPrice, remaining[i])
+			}
 			remaining[i] -= discount
 			total += discount
 		}
 	case "fixed":
 		total = takeInOrder(remaining, eligible, p.Amount)
-	case "buy-x-get-y":
-		for _, i := range eligible {
-			free := lines[i].Quantity / (p.Buy + p.Get) * p.Get
-			discount := min(free*lines[i].UnitPrice, remaining[i])
-			remaining[i] -= discount
-			total += discount
-		}
 	case "bundle":
-		var members []int
-		sets, full := -1, 0
+		sets, saving := math.MaxInt, -p.Price
 		for _, sku := range p.SKUs {
-			found := -1
-			for i, line := range lines {
-				if line.SKU == sku {
-					found = i
-				}
-			}
-			if found < 0 {
+			i := slices.IndexFunc(lines, func(line Line) bool { return line.SKU == sku })
+			if i < 0 {
 				return 0
 			}
-			members = append(members, found)
-			if sets < 0 || lines[found].Quantity < sets {
-				sets = lines[found].Quantity
-			}
-			full += lines[found].UnitPrice
+			sets = min(sets, lines[i].Quantity)
+			saving += lines[i].UnitPrice
 		}
-		saving := full - p.Price
-		if sets <= 0 || saving <= 0 {
-			return 0
+		if saving > 0 {
+			total = takeInOrder(remaining, eligible, sets*saving)
 		}
-		sort.Ints(members)
-		total = takeInOrder(remaining, members, sets*saving)
 	}
 	return total
 }
 
 func (e *PromotionEngine) price(lines []Line, codes []string, today string) (Quote, error) {
-	skus := map[string]bool{}
-	for _, line := range lines {
+	quote, remaining := Quote{}, make([]int, len(lines))
+	for i, line := range lines {
 		if line.Quantity < 1 {
 			return Quote{}, errors.New("quantity must be at least 1")
 		}
-		if skus[line.SKU] {
+		if slices.ContainsFunc(lines[:i], func(l Line) bool { return l.SKU == line.SKU }) {
 			return Quote{}, fmt.Errorf("SKU %s is in more than one line", line.SKU)
 		}
-		skus[line.SKU] = true
+		remaining[i] = line.UnitPrice * line.Quantity
+		quote.Subtotal += remaining[i]
 	}
-	considered := append([]Promotion(nil), e.promotions...)
-	given := map[string]bool{}
-	for _, code := range codes {
-		if given[code] {
-			return Quote{}, fmt.Errorf("coupon %s given more than once", code)
-		}
-		given[code] = true
+	considered := slices.Clone(e.promotions)
+	for i, code := range codes {
 		coupon, ok := e.coupons[code]
-		if !ok {
+		switch {
+		case slices.Contains(codes[:i], code):
+			return Quote{}, fmt.Errorf("coupon %s given more than once", code)
+		case !ok:
 			return Quote{}, fmt.Errorf("unknown coupon %s", code)
-		}
-		if today > coupon.ExpiresOn {
+		case today > coupon.ExpiresOn:
 			return Quote{}, fmt.Errorf("coupon %s has expired", code)
-		}
-		if e.uses[code] >= coupon.UsageLimit {
+		case e.uses[code] >= coupon.UsageLimit:
 			return Quote{}, fmt.Errorf("coupon %s has reached its usage limit", code)
 		}
 		considered = append(considered, coupon.Promotion)
 	}
 	// The highest priority first, then by id.
-	sort.SliceStable(considered, func(a, b int) bool {
-		if considered[a].Priority != considered[b].Priority {
-			return considered[a].Priority > considered[b].Priority
-		}
-		return considered[a].ID < considered[b].ID
+	slices.SortStableFunc(considered, func(a, b Promotion) int {
+		return cmp.Or(cmp.Compare(b.Priority, a.Priority), cmp.Compare(a.ID, b.ID))
 	})
-
-	remaining := make([]int, len(lines))
-	subtotal := 0
-	for i, line := range lines {
-		remaining[i] = line.UnitPrice * line.Quantity
-		subtotal += remaining[i]
-	}
-	quote := Quote{Subtotal: subtotal, Total: subtotal}
+	quote.Total = quote.Subtotal
 	for _, p := range considered {
 		if p.Exclusive && len(quote.Discounts) > 0 {
 			continue
 		}
-		amount := apply(p, lines, remaining)
-		if amount == 0 {
-			continue
-		}
-		quote.Discounts = append(quote.Discounts, Discount{PromotionID: p.ID, Amount: amount})
-		quote.Total -= amount
-		if p.Exclusive {
-			break
+		if amount := apply(p, lines, remaining); amount > 0 {
+			quote.Discounts = append(quote.Discounts, Discount{PromotionID: p.ID, Amount: amount})
+			quote.Total -= amount
+			if p.Exclusive {
+				break
+			}
 		}
 	}
 	return quote, nil

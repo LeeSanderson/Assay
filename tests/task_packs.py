@@ -66,6 +66,9 @@ class Pack:
     # both from its slug.
     feature_stub: str = ""
     module: str = ""
+    # A seed with no stub (rung D): the feature adds its file, so the seed
+    # holds no file of the feature, and the feature tests do not compile on it.
+    stubbed: bool = True
 
     @property
     def purpose_written(self) -> bool:
@@ -362,6 +365,7 @@ PACKS: list[Pack] = [
 _PROMOTIONS = "Build the promotions engine of a shop."
 _PROMOTIONS_IN_CODEBASE = ("Build the promotions engine of the shop in this repository, and "
                            "connect it to the checkout.")
+_RETURNS = "Add partial returns and refunds to the shop in this repository."
 _PROMOTIONS_TS = (
     "export type PromotionKind = 'percentage' | 'fixed' | 'buy-x-get-y' | 'bundle'",
     "export interface Line {", "export interface Promotion {", "export interface Coupon {",
@@ -389,9 +393,17 @@ CODEBASE_PACKS: list[Pack] = [
          feature_stub="promotions", module="shop"),
     Pack("go", "shop-promotions-small", 61, _PROMOTIONS_GO, _PROMOTIONS_IN_CODEBASE,
          feature_stub="promotions", module="shop"),
+    # Rung D: partial returns and refunds (X), whose file `returns` the feature
+    # adds to rung C's seed with rung C's gold solution. Rung E reuses its
+    # feature tests.
+    Pack("typescript", "shop-returns-small", 38, (), _RETURNS, feature_stub="returns",
+         module="shop", stubbed=False),
+    Pack("go", "shop-returns-small", 38, (), _RETURNS, feature_stub="returns", module="shop",
+         stubbed=False),
 ]
 PACKS += CODEBASE_PACKS
 EXERCISM_PACKS = [p for p in PACKS if not p.purpose_written]
+STUBBED_PACKS = [p for p in PACKS if p.stubbed]
 RUNGS = sorted({p.slug for p in CODEBASE_PACKS})  # the purpose-written rungs, by slug
 
 

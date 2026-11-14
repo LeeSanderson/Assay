@@ -26,6 +26,9 @@ tasks:
   # Rung C: shop-promotions-small (the promotions engine, M, in the small codebase).
   - path: tasks/typescript/shop-promotions-small
   - path: tasks/go/shop-promotions-small
+  # Rung D: shop-returns-small (partial returns and refunds, X, in the small codebase).
+  - path: tasks/typescript/shop-returns-small
+  - path: tasks/go/shop-returns-small
 
 agents:
   # Control: no variant flags (no skills, no settings, no extra instructions).

@@ -42,8 +42,7 @@ func (c *Checkout) Quote(cart *Cart, coupons []string) (Quote, error) {
 	return c.price(lines, coupons)
 }
 
-// PlaceOrder redeems the coupons only once the payment has gone through, so
-// a checkout that fails uses no coupon.
+// PlaceOrder redeems the coupons only after the payment, so a failed checkout uses none.
 func (c *Checkout) PlaceOrder(request CheckoutRequest) (Order, error) {
 	lines, err := c.lines(request.Cart)
 	if err != nil {
@@ -70,10 +69,8 @@ func (c *Checkout) PlaceOrder(request CheckoutRequest) (Order, error) {
 		}
 		paymentID = payment.ID
 	}
-	if c.deps.Promotions != nil {
-		if _, err := c.deps.Promotions.Redeem(engineLines(lines), request.Coupons, c.deps.Clock.Today()); err != nil {
-			return Order{}, err // the quote above has passed, so this does not happen
-		}
+	if c.deps.Promotions != nil { // the quote above has passed, so the redeem does too
+		_, _ = c.deps.Promotions.Redeem(engineLines(lines), request.Coupons, c.deps.Clock.Today())
 	}
 	order := Order{
 		ID:        id,
@@ -89,8 +86,7 @@ func (c *Checkout) PlaceOrder(request CheckoutRequest) (Order, error) {
 	return order, nil
 }
 
-// lines gives the lines of the cart, in cart order, at the prices of the
-// catalogue.
+// lines gives the lines of the cart, in cart order, at the catalogue's prices.
 func (c *Checkout) lines(cart *Cart) ([]OrderLine, error) {
 	if cart.IsEmpty() {
 		return nil, errors.New("the cart is empty")
@@ -104,33 +100,25 @@ func (c *Checkout) lines(cart *Cart) ([]OrderLine, error) {
 		if product.Discontinued {
 			return nil, fmt.Errorf("product %s is discontinued", line.SKU)
 		}
-		lines = append(lines, OrderLine{
-			SKU:       line.SKU,
-			Name:      product.Name,
-			UnitPrice: product.UnitPrice,
-			Quantity:  line.Quantity,
-		})
+		lines = append(lines, OrderLine{SKU: line.SKU, Name: product.Name, UnitPrice: product.UnitPrice, Quantity: line.Quantity})
 	}
 	return lines, nil
 }
 
-// price prices the lines with the promotions engine; without one, the cart
-// costs its subtotal.
+// price prices the lines with the engine; without one, at their subtotal.
 func (c *Checkout) price(lines []OrderLine, coupons []string) (Quote, error) {
 	if c.deps.Promotions != nil {
 		return c.deps.Promotions.Quote(engineLines(lines), coupons, c.deps.Clock.Today())
 	}
-	subtotal := 0
-	for _, line := range lines {
-		subtotal += line.UnitPrice * line.Quantity
-	}
-	return Quote{Subtotal: subtotal, Discounts: []Discount{}, Total: subtotal}, nil
+	quote, _ := NewPromotionEngine().Quote(engineLines(lines), nil, "")
+	quote.Discounts = []Discount{}
+	return quote, nil
 }
 
 func engineLines(lines []OrderLine) []Line {
-	engine := make([]Line, 0, len(lines))
-	for _, line := range lines {
-		engine = append(engine, Line{SKU: line.SKU, UnitPrice: line.UnitPrice, Quantity: line.Quantity})
+	engine := make([]Line, len(lines))
+	for i, line := range lines {
+		engine[i] = Line{SKU: line.SKU, UnitPrice: line.UnitPrice, Quantity: line.Quantity}
 	}
 	return engine
 }

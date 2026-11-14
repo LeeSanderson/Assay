@@ -24,7 +24,8 @@ import re
 import pytest
 
 from tests.task_packs import (BASE_IMAGE, CODEBASE_PACKS, EXERCISM_PACKS, FEATURE_SIZES, PACKS,
-                              RUNGS, SEED_SIZE_RANGES, SEED_SIZES, SOURCE_REPO, TS_TOOLCHAIN, base_image,
+                              RUNGS, SEED_SIZE_RANGES, SEED_SIZES, SOURCE_REPO, STUBBED_PACKS,
+                              TS_TOOLCHAIN, base_image,
                               harbor_rewards, packs, reference_case_names, run_in_image,
                               seed_design, seed_suite_case_names, stub_signatures, verify)
 
@@ -42,7 +43,11 @@ GO_PACKS = [p for p in PACKS if p.language == "go"]
 @each_pack
 def test_seed_repository_holds_only_the_stub_and_the_toolchain_files(pack):
     toolchain = TS_TOOLCHAIN if pack.language == "typescript" else ("go.mod",)
-    if pack.purpose_written:
+    if pack.purpose_written and not pack.stubbed:
+        # Rung D's seed has no stub: the feature adds its file.
+        assert set(pack.seed_files()) >= set(toolchain)
+        assert pack.stub not in pack.seed_files()
+    elif pack.purpose_written:
         # A codebase seed holds more than a stub; the stub and the toolchain are in it.
         assert set(pack.seed_files()) >= {pack.stub, *toolchain}
     else:
@@ -88,7 +93,7 @@ def test_instruction_names_no_test_command_before_the_footer(pack):
         assert "test" not in before_footer
 
 
-@each_pack
+@pytest.mark.parametrize("pack", STUBBED_PACKS, ids=str)
 def test_stub_keeps_the_source_signatures_with_a_not_implemented_body(pack):
     assert stub_signatures(pack) == list(pack.signatures)
     if pack.language == "typescript":
@@ -310,17 +315,39 @@ def test_gold_solution_gives_reward_1(pack, pack_images, tmp_path):
 
 @pytest.mark.slow
 @each_pack
-def test_untouched_stub_gives_reward_0_and_the_reference_tests_compile(pack, pack_images,
-                                                                       tmp_path):
+def test_untouched_seed_gives_reward_0_and_passes_no_feature_test(pack, pack_images, tmp_path):
     reward = verify(pack, pack_images(pack), tmp_path)
     assert reward["reward"] == 0
-    assert reward["reference_compiles"] == 1
     assert reward["agent_tests_total"] == 0
+    if not pack.stubbed:
+        # A seed with no stub lacks the feature's entry points, so no feature
+        # test compiles, and none passes. In Go the seed suite compiles in one
+        # package with the feature tests, so it does not run either: each of its
+        # files counts as a failed test. The next test runs it on its own.
+        assert reward["reference_compiles"] == 0
+        assert reward["reference_passed"] == 0
+        if pack.language == "go":
+            assert reward["seed_suite_passed"] == 0
+            assert reward["seed_suite_total"] == len(pack.seed_test_files())
+        else:
+            assert reward["seed_suite_passed"] == reward["seed_suite_total"]                 == _seed_suite_tests(pack)
+        return
     assert reward["seed_suite_passed"] == reward["seed_suite_total"] == _seed_suite_tests(pack)
+    assert reward["reference_compiles"] == 1
     if pack.purpose_written:
         # PRD section 20, check 2: the seed fails each feature test, and each one runs.
         assert reward["reference_passed"] == 0
         assert reward["reference_total"] == pack.reference_count
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("pack", [p for p in CODEBASE_PACKS if p.seed_test_files()], ids=str)
+def test_seed_suite_passes_on_the_unchanged_seed(pack, pack_images):
+    # The seed suite on its own, in the seed repository, with no feature test.
+    command = ("corepack yarn jest --ci" if pack.language == "typescript"
+               else "go test -count=1 ./...")
+    result = run_in_image(pack, pack_images(pack), f"cd /app && {command}")
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.slow
@@ -354,5 +381,5 @@ def test_harbor_oracle_agent_gets_reward_1(pack, tmp_path):
 def test_harbor_do_nothing_agent_gets_reward_0(pack, tmp_path):
     rewards = harbor_rewards(pack, "nop", tmp_path)
     assert rewards["reward"] == 0
-    assert rewards["reference_compiles"] == 1
+    assert rewards["reference_compiles"] == int(pack.stubbed)
     assert rewards["agent_tests_total"] == 0

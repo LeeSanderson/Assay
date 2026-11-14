@@ -4,8 +4,9 @@
 package shop
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 )
 
 type OrderStatus string // "paid", "shipped" or "cancelled"
@@ -88,13 +89,7 @@ func (o *Orders) Order(id string) (Order, error) {
 }
 
 func (o *Orders) WithStatus(status OrderStatus) []Order {
-	var orders []Order
-	for _, order := range o.repository.List() {
-		if order.Status == status {
-			orders = append(orders, order)
-		}
-	}
-	return orders
+	return slices.DeleteFunc(o.repository.List(), func(order Order) bool { return order.Status != status })
 }
 
 // Ship ships a paid order: its reserved stock leaves the inventory.
@@ -111,8 +106,7 @@ func (o *Orders) Ship(id string) error {
 	return nil
 }
 
-// Cancel cancels a paid order: its stock is released and its payment, if it
-// has one, refunded.
+// Cancel cancels a paid order: it releases the stock and refunds any payment.
 func (o *Orders) Cancel(id string) error {
 	order, err := o.paidOrder(id)
 	if err != nil {
@@ -132,8 +126,7 @@ func (o *Orders) Cancel(id string) error {
 }
 
 // Revenue gives the sum of the totals of the orders that are not cancelled.
-func (o *Orders) Revenue() int {
-	revenue := 0
+func (o *Orders) Revenue() (revenue int) {
 	for _, order := range o.repository.List() {
 		if order.Status != "cancelled" {
 			revenue += order.Total
@@ -158,16 +151,10 @@ func (o *Orders) BestSellers(limit int) []SKUSales {
 	for sku, quantity := range units {
 		sales = append(sales, SKUSales{SKU: sku, Quantity: quantity})
 	}
-	sort.Slice(sales, func(i, j int) bool {
-		if sales[i].Quantity != sales[j].Quantity {
-			return sales[i].Quantity > sales[j].Quantity
-		}
-		return sales[i].SKU < sales[j].SKU
+	slices.SortFunc(sales, func(a, b SKUSales) int {
+		return cmp.Or(cmp.Compare(b.Quantity, a.Quantity), cmp.Compare(a.SKU, b.SKU))
 	})
-	if len(sales) > limit {
-		sales = sales[:limit]
-	}
-	return sales
+	return sales[:min(limit, len(sales))]
 }
 
 func (o *Orders) paidOrder(id string) (Order, error) {
