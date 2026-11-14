@@ -1,0 +1,25 @@
+# The codebase ladder (PRD section 20): on which rung does each model tier,
+# condition and language start to fail, when the tasks grow from one Exercism
+# function to a cross-cutting feature in a medium codebase? The full matrix of
+# the difficulty ladder on each rung, at one repetition. Its task packs come
+# from the job files only; the rung order (A to E) of the summary is RUNGS in
+# summary.py.
+#
+#   uv run assay experiment codebase-ladder --dry-run    the plan, at no cost
+#   uv run assay experiment codebase-ladder              run the jobs; again to resume
+#
+# The trials of each job go to results/codebase-ladder/<job_name>/, and the
+# experiment log to analysis/codebase-ladder/experiment-log.jsonl.
+
+jobs = [                                       # run in this order, one after another
+  "jobs/codebase-ladder-hosted-control.yaml",
+  "jobs/codebase-ladder-hosted-tdd.yaml",
+  "jobs/codebase-ladder-local-control.yaml",   # on the host of the local server: --job codebase-ladder-local-control
+  "jobs/codebase-ladder-local-tdd.yaml",       # on the host of the local server: --job codebase-ladder-local-tdd
+]
+
+evaluations = ["replay", "agent-runs", "trajectory"]   # run order; a built-in name or ./path
+
+[summary]
+use = "./summary.py"
+# options = { usd_per_gbp = 1.27 }   # the rate that converts USD to GBP; set it on the day

@@ -19,6 +19,13 @@ summary and the difficulty-ladder summary share, so neither copies them:
   Its columns are a sequence of `Column`, so a summary can add its own
   (`TRIAL_COLUMNS` gives the Phase 0 columns, `TRIAL_KEY` their key);
 - `markdown_table`, `score`, `num`, `pct` and `of`: the markdown pieces.
+
+The two ladder summaries (the difficulty ladder and the codebase ladder)
+also share the parts of a ladder: `ladder_trial` (a trial's values with its
+rung and whether it timed out), `ladder_rows`, `ladder_grid` and
+`grid_markdown` (the pass grid), `ladder_rollup` and `rollup_markdown`,
+`ladder_columns` (the trials-table columns of a ladder) and
+`hosted_cost_markdown`.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 
+from analyze.trial import ABSENT
 from assay.summary import ExperimentView, TrialView
 
 CELL_KEYS = ("harness", "model_tier", "condition", "language")
@@ -351,3 +359,184 @@ def trials_markdown(trials: Sequence[dict], columns: Sequence[Column] = TRIAL_CO
     condition, then model tier, then language), and the key under the table."""
     rows = [[c.text(t) for c in columns] for t in sorted(trials, key=order)]
     return ["## Trials", "", *markdown_table([c.header for c in columns], rows), "", *key]
+
+
+# --- The parts of a ladder ------------------------------------------------------
+
+TIMEOUT = "AgentTimeoutError"  # Harbor's exception when the agent ran out of time
+
+
+def ladder_trial(t: TrialView) -> dict:
+    """The shared trial values, plus a ladder's own: the rung (the task pack's
+    slug), whether the agent ran out of time, whether the trial passed, the
+    agent time and the start. A trial whose agent ran out of time is a failed
+    trial, even when the code it left passes (the verifier runs after an
+    agent timeout)."""
+    record = t.record
+    timeout = record.exception_type == TIMEOUT
+    return {**trial_values(t),
+            "rung": t.pack_slug,
+            "timeout": timeout,
+            "passed": not timeout and (record.reward or {}).get("reward") == 1,
+            "agent_time_sec": None if record.agent_time_sec is ABSENT else record.agent_time_sec,
+            "started_at": record.started_at}
+
+
+def ladder_rungs(order: Sequence[str], trials: Sequence[dict]) -> list[str]:
+    """The rungs in ladder order; a rung that is not in it (a stand-in pack)
+    goes after them."""
+    return list(order) + sorted({t["rung"] for t in trials} - set(order))
+
+
+# The rollup's values of one trial. The cost is the money cost, which a local
+# trial does not have (L5).
+ROLLUP_VALUES = {
+    "input_tokens": lambda t: t["cost"]["input_tokens"],
+    "cache_tokens": lambda t: t["cost"]["cache_tokens"],
+    "output_tokens": lambda t: t["cost"]["output_tokens"],
+    "cost_usd": money_cost_usd,
+    "agent_time_sec": lambda t: t["agent_time_sec"],
+}
+
+
+def _total(values: list) -> float | None:
+    present = [v for v in values if v is not None]
+    return sum(present) if present else None
+
+
+def _mean(values: list) -> float | None:
+    present = [v for v in values if v is not None]
+    return sum(present) / len(present) if present else None
+
+
+def ladder_rows(view: ExperimentView) -> list[dict]:
+    """One row for each cell, by model tier, then condition, then language."""
+    return sorted(({k: c[k] for k in CELL_KEYS} for c in cells(view)),
+                  key=lambda c: tuple(str(c[k]) for k in
+                                      ("model_tier", "condition", "language", "harness")))
+
+
+def ladder_rollup(view: ExperimentView, trials: Sequence[dict]) -> list[dict]:
+    """For each row: the passed trials (reward 1) of the kept ones, the total
+    of each value over every kept trial, and its mean over the passed trials
+    only (None when there is none)."""
+    out = []
+    for row in ladder_rows(view):
+        kept = [t for t in trials if cell_key(t["cell"]) == cell_key(row)]
+        passed = [t for t in kept if t["passed"]]
+        out.append({**row, "kept": len(kept), "passed": len(passed),
+                    "totals": {k: _total([v(t) for t in kept])
+                               for k, v in ROLLUP_VALUES.items()},
+                    "means_per_passed_trial": {k: _mean([v(t) for t in passed])
+                                               for k, v in ROLLUP_VALUES.items()}})
+    return out
+
+
+def grid_entry(t: dict) -> dict:
+    """A kept trial's score in the pass grid: the reference tests it passed of
+    the total, its reward, and whether the agent ran out of time."""
+    reward = t["reward"] or {}
+    return {"trial": f"{t['job']}/{t['trial']}",
+            "reference_passed": reward.get("reference_passed"),
+            "reference_total": reward.get("reference_total"),
+            "reward": reward.get("reward"), "timeout": t["timeout"]}
+
+
+def ladder_grid(view: ExperimentView, trials: Sequence[dict], rungs: Sequence[str],
+                entry: Callable[[dict], dict] = grid_entry) -> list[dict]:
+    """For each row and rung, each kept trial's `entry`."""
+    grid = []
+    for row in ladder_rows(view):
+        scores: dict[str, list[dict]] = {rung: [] for rung in rungs}
+        for t in trials:
+            if cell_key(t["cell"]) == cell_key(row):
+                scores[t["rung"]].append(entry(t))
+        grid.append({**row, "rungs": scores})
+    return grid
+
+
+def row_label(row: dict) -> str:
+    return f"{row['model_tier']} · {row['condition']} · {row['language']}"
+
+
+def grid_score(trial_score: dict) -> str:
+    """`passed/total ✓` or `✗`, or `timeout` when the agent ran out of time."""
+    return "timeout" if trial_score["timeout"] else score(trial_score, "/")
+
+
+def grid_markdown(summary: dict, note: str, headers: Sequence[str] | None = None,
+                  cell: Callable[[dict], str] = grid_score) -> list[str]:
+    """The Pass grid section: one row for each row of `summary["grid"]`, one
+    column for each rung (headed by `headers`, by default the rungs), and
+    `note` under the table."""
+    rows = [[row_label(row)] + [", ".join(cell(s) for s in row["rungs"][rung]) or "—"
+                                for rung in summary["rungs"]]
+            for row in summary["grid"]]
+    header = ["Model tier · condition · language", *(headers or summary["rungs"])]
+    return ["## Pass grid", "", *markdown_table(header, rows), "", note, ""]
+
+
+ROLLUP_COLUMNS = (  # the rollup value, the headers of its total and its mean, and its digits
+    ("input_tokens", "Input tokens", "Mean input tokens per passed trial", 0),
+    ("cache_tokens", "Cached tokens", "Mean cached tokens per passed trial", 0),
+    ("output_tokens", "Output tokens", "Mean output tokens per passed trial", 0),
+    ("cost_usd", "USD", "Mean USD per passed trial", 2),
+    ("agent_time_sec", "Agent time (s)", "Mean agent time (s) per passed trial", 0),
+)
+
+
+def rollup_markdown(summary: dict) -> list[str]:
+    header = ["Model tier · condition · language", "Passed"]
+    for _, total, mean, _ in ROLLUP_COLUMNS:
+        header += [total, mean]
+    rows = []
+    for r in summary["rollup"]:
+        texts = [row_label(r), f"{r['passed']} of {r['kept']}" if r["kept"] else "-"]
+        for key, _, _, digits in ROLLUP_COLUMNS:
+            texts += [num(r["totals"][key], digits),
+                      num(r["means_per_passed_trial"][key], digits)]
+        rows.append(texts)
+    return ["## Rollup", "", *markdown_table(header, rows), "",
+            "Passed: the kept trials with reward 1, of all the kept trials of the row; "
+            "discarded trials are not counted. The totals count every kept trial. Failed "
+            "trials count in the totals but not in the means per passed trial. `-`: no passed "
+            "trial for a mean, or the local tier's cost, which is no money cost (L5). "
+            "Agent time is the agent's run only, without the container setup, the harness "
+            "installation and the verifier.", ""]
+
+
+def _local_model(t: dict) -> str:
+    """A local trial's model and the date it started, so that results from
+    different runs of the local server show; "-" for a hosted trial."""
+    if not t["local"]:
+        return "-"
+    return f"{t['model_tier']}, {(t['started_at'] or '-')[:10]}"
+
+
+def ladder_columns(rung: Callable[[dict], str] = lambda t: t["rung"],
+                   columns: Sequence[Column] = TRIAL_COLUMNS) -> tuple[Column, ...]:
+    """The Phase 0 columns, with the rung (its text from `rung`) after the
+    language and the local model after the model tier."""
+    out = []
+    for c in columns:
+        out.append(c)
+        if c.header == "Model tier":
+            out.append(Column("Local model", _local_model))
+        if c.header == "Language":
+            out.append(Column("Rung", rung))
+    return tuple(out)
+
+
+def ladder_trial_order(rungs: Sequence[str]) -> Callable[[dict], tuple]:
+    """The trials-table order of a ladder: by model tier, condition, language,
+    then rung in ladder order."""
+    return lambda t: (str(t["model_tier"]), str((t["cell"] or {}).get("condition")),
+                      t["language"], rungs.index(t["rung"]), t["job"], t["trial"])
+
+
+def hosted_cost_markdown(h: dict) -> list[str]:
+    """The Total hosted cost section, from `hosted_cost`."""
+    return ["", "## Total hosted cost", "",
+            f"{num(h['total_usd'], 2)} USD: {num(h['kept_usd'], 2)} kept + "
+            f"{num(h['discarded_usd'], 2)} discarded (£{h['total_gbp']:.2f} at "
+            f"1 GBP = {h['usd_per_gbp']} USD). There is no cap."]

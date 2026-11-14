@@ -1,0 +1,39 @@
+# The codebase ladder (PRD section 20), hosted control job: Haiku and Sonnet
+# x control x TypeScript and Go, on every rung, at -k 1. Harbor sets extra
+# instructions per job, so the two conditions are two jobs.
+#
+# The task packs: one TypeScript and one Go pack for each rung, in ladder
+# order (A to E). The four codebase-ladder-*.yaml jobs list the same packs; a
+# new rung adds its two lines to each of them. Every purpose-written pack has
+# an agent timeout of 3600 seconds; the poker packs stay unchanged.
+#
+# Run it through the experiment:  uv run assay experiment codebase-ladder
+
+job_name: codebase-ladder-hosted-control
+jobs_dir: results
+n_attempts: 1
+
+tasks:
+  # Rung A: poker (one function in a stub; the difficulty-ladder pack, unchanged).
+  - path: tasks/typescript/poker
+  - path: tasks/go/poker
+  # Rung B: shop-promotions-stub (the promotions engine, M, from a stub).
+  - path: tasks/typescript/shop-promotions-stub
+  - path: tasks/go/shop-promotions-stub
+
+agents:
+  # Control: no variant flags (no skills, no settings, no extra instructions).
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-haiku-5-5
+    kwargs:
+      # Claude Code version: the same value in all the job files (PRD "Version pins").
+      version: &claude_code_version "2.1.308"
+    env: &hosted_env
+      DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1"   # every model tier (L9)
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+
+  - import_path: instruments.agent:InstrumentedClaudeCode
+    model_name: anthropic/claude-sonnet-5-5
+    kwargs:
+      version: *claude_code_version
+    env: *hosted_env
