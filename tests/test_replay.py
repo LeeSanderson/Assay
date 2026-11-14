@@ -519,6 +519,7 @@ def test_docker_containers_replay_a_typescript_trial(tmp_path):
     b.reward = {
         "reward": 1, "reference_compiles": 1, "reference_passed": 29, "reference_total": 29,
         "agent_tests_compile": 1, "agent_tests_passed": 1, "agent_tests_total": 1,
+        "seed_suite_passed": 0, "seed_suite_total": 0,
     }
     b.build()
 

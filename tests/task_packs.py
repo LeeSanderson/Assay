@@ -14,7 +14,10 @@ import subprocess
 import tomllib
 import uuid
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from pathlib import Path
+
+from analyze.languages import LANGUAGES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODEL_SLUG = "split-second-stopwatch"  # rung 1: the pack the others follow
@@ -40,13 +43,14 @@ class Pack:
     reference_count: int  # the reference cases that the gold solution passes
     signatures: tuple[str, ...]  # the exported signatures of the source stub
     opening: str  # the first line of the source instructions
+    root: Path = REPO_ROOT / "tasks"  # the test-fixture packs are in tests/fixtures/packs
 
     def __str__(self) -> str:
         return f"{self.language}-{self.slug}"
 
     @property
     def path(self) -> Path:
-        return REPO_ROOT / "tasks" / self.language / self.slug
+        return self.root / self.language / self.slug
 
     @property
     def seed(self) -> Path:
@@ -101,6 +105,22 @@ class Pack:
     def seed_files(self) -> list[str]:
         return sorted(p.relative_to(self.seed).as_posix()
                       for p in self.seed.rglob("*") if p.is_file())
+
+    def seed_test_files(self) -> list[str]:
+        """The seed suite: the seed files in the language's test-file class."""
+        patterns = LANGUAGES[self.language].test_files
+        return [f for f in self.seed_files()
+                if any(fnmatch(f.rsplit("/", 1)[-1], p) for p in patterns)]
+
+    @property
+    def seed_suite(self) -> Path:
+        """The withheld copy of the seed suite, which the verifier restores
+        (PRD section 20, "The pack recipe"). Absent when the suite is empty."""
+        return self.path / "tests" / "seed-suite"
+
+    def seed_suite_copy(self) -> list[str]:
+        return sorted(p.relative_to(self.seed_suite).as_posix()
+                      for p in self.seed_suite.rglob("*") if p.is_file())
 
     def stub_text(self) -> str:
         return (self.seed / self.stub).read_text(encoding="utf-8")
@@ -249,11 +269,15 @@ def checked_rewards(rewards: dict) -> dict:
     return rewards
 
 
-def verify(pack: Pack, image: str, tmp_path: Path, files: dict[str, str] | None = None) -> dict:
-    """Write `files` over the seed repository in /app, run the pack's
-    tests/test.sh with no network, and return its reward.json."""
+def verify(pack: Pack, image: str, tmp_path: Path, files: dict[str, str] | None = None,
+           delete: tuple[str, ...] = ()) -> dict:
+    """Write `files` over the seed repository in /app and delete the `delete`
+    paths from it, run the pack's tests/test.sh with no network, and return
+    its reward.json."""
+    removal = "".join(f"rm /app/{path} && " for path in delete)
     result = run_in_image(
-        pack, image, "bash /tests/test.sh >/dev/null 2>&1; cat /logs/verifier/reward.json",
+        pack, image,
+        removal + "bash /tests/test.sh >/dev/null 2>&1; cat /logs/verifier/reward.json",
         files, tmp_path)
     assert result.returncode == 0, result.stderr
     return checked_rewards(json.loads(result.stdout))

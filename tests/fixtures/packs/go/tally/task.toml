@@ -1,0 +1,20 @@
+schema_version = "1.4"
+
+# A test fixture, not a task pack of the ladder: the smallest codebase pack
+# with a seed suite (PRD section 20, "The pack recipe"; issue #80). Its
+# tests/test.sh is the model pack's with the slug swapped; its seed suite is
+# environment/seed's *_test.go files, and tests/seed-suite holds a copy of them.
+[metadata]
+language = "go"
+base_image = "golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5"
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 600.0
+
+[environment]
+cpus = 2
+memory_mb = 4096
+network_mode = "public"

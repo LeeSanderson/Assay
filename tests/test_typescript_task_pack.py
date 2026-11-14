@@ -121,6 +121,7 @@ def test_agent_pass_counts_the_prd_test_file_class_only(image, tmp_path):
         "reference_passed": REFERENCE_TEST_COUNT, "reference_total": REFERENCE_TEST_COUNT,
         # A skipped test counts in the total but not as passed.
         "agent_tests_compile": 1, "agent_tests_passed": 2, "agent_tests_total": 4,
+        "seed_suite_passed": 0, "seed_suite_total": 0,
     }
 
 
