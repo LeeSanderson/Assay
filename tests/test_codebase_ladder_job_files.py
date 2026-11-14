@@ -25,9 +25,9 @@ JOBS = {  # in run order: job file -> (model tiers, condition)
     "codebase-ladder-local-tdd.yaml": (LOCAL, "instrument-tdd"),
 }
 # The rungs that are built so far, in ladder order (PRD section 20, "The
-# rungs"): rung A is the poker pack, unchanged; rung B the first
-# purpose-written pack. A later rung adds its slug here.
-BUILT_RUNGS = ("poker", "shop-promotions-stub")
+# rungs"): rung A is the poker pack, unchanged; rungs B and C the first
+# purpose-written packs. A later rung adds its slug here.
+BUILT_RUNGS = ("poker", "shop-promotions-stub", "shop-promotions-small")
 PLANNED_RUNGS = ("poker", "shop-promotions-stub", "shop-promotions-small",
                  "shop-returns-small", "shop-returns-medium")
 
@@ -172,7 +172,7 @@ def test_the_dry_run_plans_12_trials_for_each_built_rung_at_no_cost(monkeypatch,
     out = capsys.readouterr().out
     names = [Path(name).stem for name in JOBS]
     assert [out.index(n) for n in names] == sorted(out.index(n) for n in names)
-    assert f"{12 * len(BUILT_RUNGS)} expected trials" in out  # 24 on rungs A and B
+    assert f"{12 * len(BUILT_RUNGS)} expected trials" in out  # 36 on rungs A to C
     cells = [line.split() for line in out.splitlines() if line.startswith("  cell ")]
     # cell <n> <harness> <model tier> <condition> <language>: n is the rungs of the cell.
     assert sorted((c[3], c[4], c[5], int(c[1])) for c in cells) == sorted(

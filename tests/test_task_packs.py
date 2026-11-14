@@ -24,7 +24,7 @@ import re
 import pytest
 
 from tests.task_packs import (BASE_IMAGE, CODEBASE_PACKS, EXERCISM_PACKS, FEATURE_SIZES, PACKS,
-                              RUNGS, SEED_SIZES, SOURCE_REPO, TS_TOOLCHAIN, base_image,
+                              RUNGS, SEED_SIZE_RANGES, SEED_SIZES, SOURCE_REPO, TS_TOOLCHAIN, base_image,
                               harbor_rewards, packs, reference_case_names, run_in_image,
                               seed_design, seed_suite_case_names, stub_signatures, verify)
 
@@ -197,6 +197,33 @@ def test_metadata_records_a_blind_solve_whose_failures_each_trace_to_the_interfa
     for failure in failed:
         assert failure["test"] in cases, failure["test"]
         assert " ".join(failure["sentence"].split()) in section, failure["sentence"]
+
+
+@each_codebase_pack
+def test_seed_suite_copy_is_the_seed_test_files_in_their_seed_form(pack):
+    # The verifier restores the seed suite from this copy (PRD section 20,
+    # "The pack recipe"); a pack with no seed suite holds no copy.
+    if not pack.seed_test_files():
+        assert not pack.seed_suite.exists()
+        return
+    assert pack.seed_suite_copy() == pack.seed_test_files()
+    for name in pack.seed_test_files():
+        assert (pack.seed_suite / name).read_bytes() == (pack.seed / name).read_bytes(), name
+
+
+@each_codebase_pack
+def test_codebase_seed_is_inside_the_size_ranges_of_its_seed_size(pack):
+    # PRD section 20, "The domain": lines of production code (non-blank),
+    # production files, and seed-suite tests.
+    seed_size = pack.task_toml()["metadata"]["seed_size"]
+    if seed_size == "stub":
+        assert pack.seed_test_files() == []
+        return
+    ranges = SEED_SIZE_RANGES[seed_size]
+    sizes = {"lines": pack.production_lines(), "files": len(pack.production_files()),
+             "tests": len(seed_suite_case_names(pack))}
+    for key, (least, most) in ranges.items():
+        assert least <= sizes[key] <= most, (key, sizes[key])
 
 
 @each_codebase_pack

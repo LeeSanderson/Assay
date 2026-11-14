@@ -41,6 +41,13 @@ CODEBASE_FOOTER = ("Add this feature to the repository. Keep the existing behavi
                    "see will check your solution.\n")
 # The two dials of the codebase ladder (PRD section 20, "The rungs").
 SEED_SIZES = ("stub", "small", "medium")
+# The size ranges of a codebase seed (PRD section 20, "The domain"): lines of
+# production code (non-blank), production files and seed-suite tests, each
+# (least, most).
+SEED_SIZE_RANGES = {
+    "small": {"lines": (600, 1000), "files": (6, 10), "tests": (40, 80)},
+    "medium": {"lines": (4000, 6000), "files": (30, 50), "tests": (200, 400)},
+}
 FEATURE_SIZES = ("one function", "M", "X")
 
 
@@ -136,6 +143,18 @@ class Pack:
         patterns = LANGUAGES[self.language].test_files
         return [f for f in self.seed_files()
                 if any(fnmatch(f.rsplit("/", 1)[-1], p) for p in patterns)]
+
+    def production_files(self) -> list[str]:
+        """The seed's production code: its files but the tests and the toolchain."""
+        toolchain = TS_TOOLCHAIN if self.language == "typescript" else ("go.mod",)
+        tests = set(self.seed_test_files())
+        return [f for f in self.seed_files() if f not in tests and f not in toolchain]
+
+    def production_lines(self) -> int:
+        """The non-blank lines of the seed's production code."""
+        return sum(1 for f in self.production_files()
+                   for line in (self.seed / f).read_text(encoding="utf-8").splitlines()
+                   if line.strip())
 
     @property
     def seed_suite(self) -> Path:
@@ -239,7 +258,9 @@ def _exported_names(language: str, text: str) -> set[str]:
             if m := re.match(r"export (?:class|interface|type|function|const|enum) (\w+)", line):
                 names.add(m.group(1))
                 block = m.group(1) if line.rstrip().endswith("{") else ""
-            elif block and (m := re.match(r"\s+(?:public |readonly |static )*(\w+)\??[:(<]",
+            # A member is at the first indent (two spaces); a deeper line is
+            # in a method body.
+            elif block and (m := re.match(r"  (?:public |readonly |static )*(\w+)\??[:(<]",
                                           line)):
                 if m.group(1) != "constructor" and not line.lstrip().startswith("private"):
                     names.add(f"{block}.{m.group(1)}")
@@ -250,7 +271,7 @@ def _exported_names(language: str, text: str) -> set[str]:
             names.add(f"{m.group(1)}.{m.group(2)}")
         elif m := re.match(r"func ([A-Z]\w*)\(", line):
             names.add(m.group(1))
-        elif block and (m := re.match(r"\t([A-Z]\w*)\s", line)):
+        elif block and (m := re.match(r"\t([A-Z]\w*)[\s(]", line)):  # field or method
             names.add(f"{block}.{m.group(1)}")
     types = {n for n in names if "." not in n}
     return {n.lower() for n in names if not (n.startswith("New") and n[3:] in types)}
@@ -336,27 +357,38 @@ PACKS: list[Pack] = [
 
 # The purpose-written packs of the codebase ladder (PRD section 20; ADR 0006).
 # The signatures are those of the stub, which the pack authors.
+# Rungs B and C share the stub of the promotions engine: on rung C it sits in
+# the small codebase, beside the checkout that it connects to.
 _PROMOTIONS = "Build the promotions engine of a shop."
+_PROMOTIONS_IN_CODEBASE = ("Build the promotions engine of the shop in this repository, and "
+                           "connect it to the checkout.")
+_PROMOTIONS_TS = (
+    "export type PromotionKind = 'percentage' | 'fixed' | 'buy-x-get-y' | 'bundle'",
+    "export interface Line {", "export interface Promotion {", "export interface Coupon {",
+    "export interface Discount {", "export interface Quote {",
+    "export class PromotionEngine {",
+    "public addPromotion(promotion: Promotion): void {",
+    "public addCoupon(coupon: Coupon): void {",
+    "public quote(lines: Line[], coupons: string[], today: string): Quote {",
+    "public redeem(lines: Line[], coupons: string[], today: string): Quote {")
+_PROMOTIONS_GO = (
+    "func NewPromotionEngine() *PromotionEngine",
+    "func (e *PromotionEngine) AddPromotion(promotion Promotion) error",
+    "func (e *PromotionEngine) AddCoupon(coupon Coupon) error",
+    "func (e *PromotionEngine) Quote(lines []Line, coupons []string, today string) "
+    "(Quote, error)",
+    "func (e *PromotionEngine) Redeem(lines []Line, coupons []string, today string) "
+    "(Quote, error)")
 CODEBASE_PACKS: list[Pack] = [
-    Pack("typescript", "shop-promotions-stub", 48, (
-        "export type PromotionKind = 'percentage' | 'fixed' | 'buy-x-get-y' | 'bundle'",
-        "export interface Line {", "export interface Promotion {", "export interface Coupon {",
-        "export interface Discount {", "export interface Quote {",
-        "export class PromotionEngine {",
-        "public addPromotion(promotion: Promotion): void {",
-        "public addCoupon(coupon: Coupon): void {",
-        "public quote(lines: Line[], coupons: string[], today: string): Quote {",
-        "public redeem(lines: Line[], coupons: string[], today: string): Quote {"),
-        _PROMOTIONS, feature_stub="promotions", module="shop"),
-    Pack("go", "shop-promotions-stub", 48, (
-        "func NewPromotionEngine() *PromotionEngine",
-        "func (e *PromotionEngine) AddPromotion(promotion Promotion) error",
-        "func (e *PromotionEngine) AddCoupon(coupon Coupon) error",
-        "func (e *PromotionEngine) Quote(lines []Line, coupons []string, today string) "
-        "(Quote, error)",
-        "func (e *PromotionEngine) Redeem(lines []Line, coupons []string, today string) "
-        "(Quote, error)"),
-        _PROMOTIONS, feature_stub="promotions", module="shop"),
+    Pack("typescript", "shop-promotions-stub", 48, _PROMOTIONS_TS, _PROMOTIONS,
+         feature_stub="promotions", module="shop"),
+    Pack("go", "shop-promotions-stub", 48, _PROMOTIONS_GO, _PROMOTIONS,
+         feature_stub="promotions", module="shop"),
+    # Rung C: rung B's 48 feature tests and 13 of the checkout integration.
+    Pack("typescript", "shop-promotions-small", 61, _PROMOTIONS_TS, _PROMOTIONS_IN_CODEBASE,
+         feature_stub="promotions", module="shop"),
+    Pack("go", "shop-promotions-small", 61, _PROMOTIONS_GO, _PROMOTIONS_IN_CODEBASE,
+         feature_stub="promotions", module="shop"),
 ]
 PACKS += CODEBASE_PACKS
 EXERCISM_PACKS = [p for p in PACKS if not p.purpose_written]

@@ -144,9 +144,13 @@ def test_fixture_seed_suite_copy_is_the_seed_test_files_in_two_folders(pack):
         assert (pack.seed_suite / name).read_bytes() == (pack.seed / name).read_bytes(), name
 
 
-@pytest.mark.parametrize("pack", PACKS, ids=str)
-def test_every_pack_has_an_empty_seed_suite_and_no_seed_test_file(pack):
-    # An Exercism pack has no seed suite, so it holds no copy of one.
+@pytest.mark.parametrize(
+    "pack", [p for p in PACKS if p.task_toml()["metadata"].get("seed_size", "stub") == "stub"],
+    ids=str)
+def test_every_pack_on_a_stub_has_an_empty_seed_suite_and_no_seed_test_file(pack):
+    # An Exercism pack, or a purpose-written pack on a stub, has no seed
+    # suite, so it holds no copy of one. tests/test_task_packs.py checks the
+    # copy of a codebase seed's suite.
     assert pack.seed_test_files() == []
     assert not pack.seed_suite.exists()
 

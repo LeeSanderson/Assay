@@ -1,0 +1,66 @@
+schema_version = "1.4"
+
+# Rung C of the codebase ladder (PRD section 20; issue #83): the promotions
+# engine (M) of rung B, built inside the small codebase of the order and
+# inventory service and connected to its checkout. A purpose-written pack
+# (ADR 0006), the same as tasks/typescript/shop-promotions-small but for the
+# language. Its tests/test.sh is the model pack's with the slug swapped. The
+# feature tests are rung B's, then those of the checkout integration.
+# tests/seed-suite holds the seed suite (the seed's *_test.go files) in its
+# seed form.
+[metadata]
+language = "go"
+rung = "C"
+seed_size = "small"
+feature_size = "M"
+feature_tests = 61
+seed_suite_tests = 59
+seed_files = [
+    "cart.go",
+    "cart_test.go",
+    "catalogue.go",
+    "catalogue_test.go",
+    "checkout.go",
+    "checkout_test.go",
+    "clock.go",
+    "clock_test.go",
+    "go.mod",
+    "inventory.go",
+    "inventory_test.go",
+    "orders.go",
+    "orders_test.go",
+    "payments.go",
+    "payments_test.go",
+    "promotions.go",
+    "receipt.go",
+    "receipt_test.go",
+]
+# tests/test.sh: when agent test files (`*_test.go`) exist but do not compile,
+# agent_tests_passed is 0 and agent_tests_total is max(counted tests, agent test
+# files), so replay labels the snapshot red-compile, not no-tests.
+red_compile_rule = "agent test files exist and do not compile: agent_tests_passed = 0, agent_tests_total = max(counted tests, agent test files)"
+base_image = "golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5"
+
+# PRD section 20, check 3: the blind solve, run by jobs/codebase-ladder-blind-solve.yaml.
+# Each failed hidden test names the sentence of the Interface section that states it.
+# The seed suite passed too (59 of 59).
+[metadata.blind_solve]
+model = "claude-opus-5-5"
+condition = "control"
+date = "2026-11-14"
+reward = 1
+reference_passed = 61
+reference_total = 61
+cost_usd = 0.33
+failed = []
+
+[agent]
+timeout_sec = 3600.0
+
+[verifier]
+timeout_sec = 600.0
+
+[environment]
+cpus = 2
+memory_mb = 4096
+network_mode = "public"
