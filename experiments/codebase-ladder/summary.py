@@ -9,7 +9,7 @@ codebase-ladder-summary.md (for a person) and codebase-ladder-summary.json
    score, rungs A to E (`passed/total ✓` or `✗`, `timeout`, or `—` when it
    has no kept trial yet). A trial that broke the seed suite adds its
    seed-suite count (`24/30 ✗ seed 38/40`), also when it completed the
-   feature. The column of rung A names its task, poker, and a note says that
+   feature or timed out (`timeout seed 38/40`). The column of rung A names its task, poker, and a note says that
    each failure boundary is provisional while each cell has one repetition;
 2. the rollup, 3. the missing trials, 4. the trials table and 5. the total
    hosted cost, as in the difficulty-ladder summary.
@@ -85,10 +85,10 @@ def _grid_entry(t: dict) -> dict:
 
 def _grid_cell(s: dict) -> str:
     """The difficulty ladder's score, with ` seed passed/total` when the
-    trial broke the seed suite."""
+    trial broke the seed suite, whether it completed or timed out."""
     text = grid_score(s)
     passed, total = s["seed_suite_passed"], s["seed_suite_total"]
-    if not s["timeout"] and total and passed is not None and passed < total:
+    if total and passed is not None and passed < total:
         text += f" seed {passed}/{total}"
     return text
 
@@ -111,7 +111,7 @@ GRID_NOTE = (
     "One column for each rung, A to E. A cell gives the feature tests passed of the total, "
     "with ✓ when they and the seed suite all pass (reward 1) and ✗ otherwise, and "
     "`seed passed/total` when the trial broke the seed suite (the existing code); `timeout` "
-    "when the agent ran out of time; `—` when the rung has no kept trial yet. "
+    "when the agent ran out of time, with the seed mark too when its code broke the seed suite; `—` when the rung has no kept trial yet. "
     "Rung A is the poker task pack of the difficulty ladder, without change. "
     "Each failure boundary is provisional while each cell has one repetition.")
 

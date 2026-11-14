@@ -410,7 +410,8 @@ def _mean(values: list) -> float | None:
 
 
 def ladder_rows(view: ExperimentView) -> list[dict]:
-    """One row for each cell, by model tier, then condition, then language."""
+    """One row for each cell, by model tier, then condition, then language,
+    then harness."""
     return sorted(({k: c[k] for k in CELL_KEYS} for c in cells(view)),
                   key=lambda c: tuple(str(c[k]) for k in
                                       ("model_tier", "condition", "language", "harness")))

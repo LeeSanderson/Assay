@@ -109,6 +109,9 @@ def test_the_pass_grid_marks_passed_failed_seed_suite_broken_timeout_and_not_run
         # The feature is complete, but the agent broke the seed suite.
         trial(HOSTED[1], SONNET, "go", STUB): [rewarded(reward=0, seed_suite_passed=39)],
         trial(HOSTED[1], SONNET, "typescript", STUB): [timed_out],
+        # The agent ran out of time, and its code broke the seed suite.
+        trial(HOSTED[1], HAIKU, "go", STUB): [
+            timed_out, rewarded(reward=0, reference_passed=0, seed_suite_passed=38)],
     })
 
     assert experiment(fake, *hosted()) == 0
@@ -123,6 +126,7 @@ def test_the_pass_grid_marks_passed_failed_seed_suite_broken_timeout_and_not_run
         "29/29 ✓", "24/30 ✗ seed 38/40"]
     assert row(markdown, f"{SONNET} · instrument-tdd · go")[1] == "29/29 ✗ seed 39/40"
     assert row(markdown, f"{SONNET} · instrument-tdd · typescript")[1] == "timeout"
+    assert row(markdown, f"{HAIKU} · instrument-tdd · go")[1] == "timeout seed 38/40"
     # The local jobs have not run.
     assert row(markdown, f"{LOCAL_MODEL} · control · go") == ["—"] * 5
     [stub] = [s for r in data["grid"]
