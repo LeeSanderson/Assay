@@ -242,17 +242,38 @@ def test_seed_suite_copy_is_the_seed_test_files_in_their_seed_form(pack):
         assert (pack.seed_suite / name).read_bytes() == (pack.seed / name).read_bytes(), name
 
 
+@pytest.mark.parametrize("pack", [p for p in PACKS + FIXTURE_PACKS if p.language == "go"],
+                         ids=str)
+def test_go_seed_suite_copy_records_the_tests_that_the_verifier_counts(pack):
+    # A Go seed suite that does not compile runs no test, so the verifier
+    # reads its test count from tests/seed-suite-tests, beside the copy.
+    count = pack.path / "tests" / "seed-suite-tests"
+    if not pack.seed_test_files():
+        assert not count.exists()
+        return
+    assert count.read_text(encoding="utf-8") == f"{seed_suite_tests(pack)}\n"
+    assert seed_suite_tests(pack) > len(pack.seed_test_files())
+
+
+@pytest.mark.parametrize("pack", FIXTURE_PACKS, ids=str)
+def test_seed_suite_tests_counts_each_leaf_test_of_the_fixture_seed_suite(pack):
+    # 3 tests in the top folder and 2 in a subfolder; the Go ones are
+    # top-level test functions with no t.Run.
+    assert seed_suite_tests(pack) == 5
+
+
 @each_codebase_pack
 def test_codebase_seed_is_inside_the_size_ranges_of_its_seed_size(pack):
     # PRD section 20, "The domain": lines of production code (non-blank),
-    # production files, and seed-suite tests.
+    # production files, and seed-suite tests as the verifier counts them (the
+    # leaf cases, not the describe groups).
     seed_size = pack.task_toml()["metadata"]["seed_size"]
     if seed_size == "stub":
         assert pack.seed_test_files() == []
         return
     ranges = SEED_SIZE_RANGES[seed_size]
     sizes = {"lines": pack.production_lines(), "files": len(pack.production_files()),
-             "tests": len(seed_suite_case_names(pack))}
+             "tests": seed_suite_tests(pack)}
     for key, (least, most) in ranges.items():
         assert least <= sizes[key] <= most, (key, sizes[key])
 
@@ -349,18 +370,16 @@ def test_untouched_seed_gives_reward_0_and_passes_no_feature_test(pack, pack_ima
         # A seed with no stub lacks the feature's entry points, so no feature
         # test compiles, and none passes. In Go the feature tests compile in the
         # root package with the seed tests there, so the outcome pass does not
-        # compile and the seed suite passes no test: each of its files counts
-        # as a failed test, or each test of the packages that did run (the
-        # medium codebase's layers), when that is more. The next test runs it
-        # on its own.
+        # compile and the seed suite passes none of its tests, each of which
+        # counts. The next test runs the seed suite on its own.
         assert reward["reference_compiles"] == 0
         assert reward["reference_passed"] == 0
         if pack.language == "go":
             assert reward["seed_suite_passed"] == 0
-            assert len(pack.seed_test_files()) <= reward["seed_suite_total"] \
-                <= _seed_suite_tests(pack)
+            assert reward["seed_suite_total"] == _seed_suite_tests(pack)
         else:
-            assert reward["seed_suite_passed"] == reward["seed_suite_total"]                 == _seed_suite_tests(pack)
+            assert reward["seed_suite_passed"] == reward["seed_suite_total"] \
+                == _seed_suite_tests(pack)
         return
     assert reward["seed_suite_passed"] == reward["seed_suite_total"] == _seed_suite_tests(pack)
     assert reward["reference_compiles"] == 1

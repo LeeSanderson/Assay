@@ -115,11 +115,15 @@ def _ts_leaf_cases(text: str) -> int:
     return len(re.findall(r"\bit\(\s*'", text))
 
 
+_GO_TEST_FUNC = re.compile(r"^func Test\w*\(", re.MULTILINE)
+
+
 def _go_leaf_cases(text: str) -> int:
-    """A Go test file's `t.Run` cases whose function holds no `t.Run` (a
-    `describe` group is a t.Run that holds others)."""
+    """A Go test file's top-level tests and `t.Run` cases whose function
+    holds no `t.Run` (a `describe` group is a t.Run that holds others), as
+    go test reports them."""
     leaves = 0
-    for match in _GO_CASE.finditer(text):
+    for match in (*_GO_TEST_FUNC.finditer(text), *_GO_CASE.finditer(text)):
         start = text.index("{", match.end())
         depth, end = 0, start
         for end in range(start, len(text)):

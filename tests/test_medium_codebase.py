@@ -27,7 +27,7 @@ import pytest
 
 from tests.task_packs import (GO_DECLARATION, GO_FUNC, REPO_ROOT, SEED_SIZE_RANGES, TS_EXPORT,
                               TS_TOOLCHAIN, Pack, docker, packs, seed_design,
-                              seed_suite_case_names)
+                              seed_suite_case_names, seed_suite_tests)
 
 TS, GO = packs("shop-returns-medium")["typescript"], packs("shop-returns-medium")["go"]
 MEDIUM_CODEBASES = (TS, GO)
@@ -118,10 +118,12 @@ def _feature_test_imports(pack: Pack) -> dict[str, set[str]]:
 @each_language
 def test_medium_codebase_is_inside_the_size_ranges_of_a_medium_seed(pack):
     # PRD section 20, "The domain": 4,000 to 6,000 lines of production code
-    # (non-blank) in 30 to 50 files, and a seed suite of 200 to 400 tests.
+    # (non-blank) in 30 to 50 files, and a seed suite of 200 to 400 tests,
+    # counted as the verifier counts them (the leaf cases, not the describe
+    # groups).
     ranges = SEED_SIZE_RANGES["medium"]
     sizes = {"lines": pack.production_lines(), "files": len(pack.production_files()),
-             "tests": len(seed_suite_case_names(pack))}
+             "tests": seed_suite_tests(pack)}
     for key, (least, most) in ranges.items():
         assert least <= sizes[key] <= most, (key, sizes[key])
 

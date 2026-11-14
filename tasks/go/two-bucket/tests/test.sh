@@ -2,16 +2,20 @@
 # Assay verifier for the Go two-bucket task pack (PRD section 6, "Task packs").
 #
 # The seed suite is the tests that the seed holds before the agent starts.
-# tests/seed-suite/ holds a copy of it in its seed form, at the same paths; a
-# pack with no seed suite holds no copy. An agent test is a test file that the
-# copy does not hold, or whose content differs from the copy's (PRD section 20,
-# "The pack recipe").
+# tests/seed-suite/ holds a copy of it in its seed form, at the same paths, and
+# tests/seed-suite-tests the number of its tests; a pack with no seed suite
+# holds neither. An agent test is a test file that the copy does not hold, or
+# whose content differs from the copy's (PRD section 20, "The pack recipe").
 #
 # 1. Outcome pass: copy the repository to a scratch directory, remove every
 #    test file (`*_test.go`), restore the seed suite from the copy, add the
 #    reference tests, and run the packages that hold them, so both compile
 #    together with the agent's code. A test whose top-level function a
 #    reference file declares counts in reference_*; any other in seed_suite_*.
+#    A seed suite that does not compile passes none of its recorded tests.
+#    When a package does not build, the reference tests run again on their
+#    own, without the seed suite, for reference_*: the build failure may be
+#    the seed suite's alone.
 # 2. Agent pass: in a second scratch copy, remove each seed test file that the
 #    agent did not change, and run the agent's tests. If agent test files
 #    exist but do not compile, agent_tests_passed is 0 and agent_tests_total
@@ -25,6 +29,7 @@ set -u
 APP=${ASSAY_APP_DIR:-/app}
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SEED_SUITE="$HERE/seed-suite"
+SEED_SUITE_TESTS="$HERE/seed-suite-tests"
 OUT=${ASSAY_VERIFIER_DIR:-/logs/verifier}
 PASS_TIMEOUT=240s
 
@@ -108,6 +113,10 @@ run_go_tests() {
 }
 
 mapfile -t seed_tests < <(seed_suite_files)
+# The tests of the seed suite, as go test counts them: the recorded number, or
+# one for each file when none is recorded.
+seed_suite_count=${#seed_tests[@]}
+if [ -f "$SEED_SUITE_TESTS" ]; then seed_suite_count=$(tr -dc '0-9' < "$SEED_SUITE_TESTS"); fi
 
 # --- 1. Outcome pass -------------------------------------------------------
 scratch="$(mktemp -d)"
@@ -120,10 +129,11 @@ cp -r "$HERE"/reference/. "$scratch"/
 mapfile -t reference_files < <(cd "$HERE/reference" && find . -type f -print | sed 's|^\./||')
 reference_names=$(cd "$HERE/reference" \
   && sed -En 's/^func ((Test|Example|Fuzz)[A-Za-z0-9_]*)\(.*/\1/p' "${reference_files[@]}" | tr '\n' ' ')
-# The packages that hold the reference tests or the seed suite.
-mapfile -t packages < <(for f in "${reference_files[@]}" "${seed_tests[@]}"; do
-  d=$(dirname "$f"); [ "$d" = . ] && echo . || echo "./$d"
-done | sort -u)
+# packages_of <file>...: the packages that hold the files.
+packages_of() {
+  for f in "$@"; do d=$(dirname "$f"); [ "$d" = . ] && echo . || echo "./$d"; done | sort -u
+}
+mapfile -t packages < <(packages_of "${reference_files[@]}" "${seed_tests[@]}")
 
 run_go_tests "$scratch" "$OUT/outcome.json" "${packages[@]}"
 reference_compiles=$compiles
@@ -132,12 +142,25 @@ reference_total=$total
 seed_suite_passed=$other_passed
 seed_suite_total=$other_total
 # A seed suite that does not compile, or does not run, passes no test, and
-# each of its files counts: each file of a seed suite that runs holds a test.
-if [ "$compiles" -eq 0 ] || [ "$seed_suite_total" -lt "${#seed_tests[@]}" ]; then
+# counts each of its tests.
+if [ "$compiles" -eq 0 ] || [ "$seed_suite_total" -lt "$seed_suite_count" ]; then
   seed_suite_passed=0
-  if [ "$seed_suite_total" -lt "${#seed_tests[@]}" ]; then
-    seed_suite_total=${#seed_tests[@]}
+  if [ "$seed_suite_total" -lt "$seed_suite_count" ]; then
+    seed_suite_total=$seed_suite_count
   fi
+fi
+# Whether the reference tests compile does not depend on the seed suite.
+if [ "$compiles" -eq 0 ] && [ "${#seed_tests[@]}" -gt 0 ]; then
+  alone="$(mktemp -d)"
+  copy_repository "$APP" "$alone"
+  find "$alone" -type f \( "${name_tests[@]}" \) -delete
+  cp -r "$HERE"/reference/. "$alone"/
+  mapfile -t reference_packages < <(packages_of "${reference_files[@]}")
+  run_go_tests "$alone" "$OUT/reference.json" "${reference_packages[@]}"
+  reference_compiles=$compiles
+  reference_passed=$passed
+  reference_total=$total
+  rm -rf "$alone"
 fi
 if [ "$reference_compiles" -eq 1 ] && [ "$reference_total" -gt 0 ] \
    && [ "$reference_passed" -eq "$reference_total" ] \

@@ -245,6 +245,49 @@ def test_an_agent_test_that_does_not_compile_is_red_compile_and_the_seed_suite_s
     assert reward["reward"] == 1
 
 
+# A production file that declares the name of a seed test, so that the seed
+# test's package compiles but its tests do not. The feature tests use neither.
+CLASH_IN_SUBFOLDER = ("names/clash.go",
+                      "package names\n\n// TestNormaliseTrims clashes with a seed test.\n"
+                      "func TestNormaliseTrims() {}\n")
+CLASH_BESIDE_THE_FEATURE = ("clash.go",
+                            "package tally\n\n// TestCountIsZeroAtFirst clashes with a seed test.\n"
+                            "func TestCountIsZeroAtFirst() {}\n")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("pack", [GO], ids=str)
+def test_go_seed_suite_that_does_not_compile_in_a_subfolder_keeps_its_count_and_the_feature_runs(
+    pack, image, tmp_path
+):
+    # The feature's package builds, so the feature tests compile and pass;
+    # the seed suite fails as a whole and counts each of its tests, not files.
+    name, content = CLASH_IN_SUBFOLDER
+    reward = verify(pack, image, tmp_path, {STUB["go"]: gold(pack), name: content})
+    assert reward["reference_compiles"] == 1
+    assert reward["reference_passed"] == reward["reference_total"] == FEATURE_TESTS
+    assert reward["seed_suite_passed"] == 0
+    assert reward["seed_suite_total"] == SEED_SUITE_TESTS
+    assert reward["reward"] == 0
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("pack", [GO], ids=str)
+def test_go_seed_suite_that_does_not_compile_beside_the_feature_tests_leaves_them_compiling(
+    pack, image, tmp_path
+):
+    # The seed tests of the feature's package do not compile, so that package
+    # does not run with them; the feature tests compile, and run, on their own.
+    name, content = CLASH_BESIDE_THE_FEATURE
+    reward = verify(pack, image, tmp_path, {STUB["go"]: gold(pack), name: content})
+    assert reward["reference_compiles"] == 1
+    assert reward["reference_passed"] == reward["reference_total"] == FEATURE_TESTS
+    assert reward["seed_suite_passed"] == 0
+    assert reward["seed_suite_total"] == SEED_SUITE_TESTS
+    assert reward["reward"] == 0
+    assert reward["agent_tests_total"] == 0
+
+
 # --- Slow: replay and the trajectory on fixture snapshots --------------------------
 
 
