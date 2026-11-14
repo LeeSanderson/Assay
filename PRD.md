@@ -1358,6 +1358,8 @@ All purpose-written rungs use one domain: an order and inventory service.
 | The small codebase (C, D) | 600 to 1,000 lines of production code in 6 to 10 files. A seed suite of 40 to 80 tests. | The catalogue, the inventory, the orders, and the checkout, with repositories in memory. |
 | The medium codebase (E) | 4,000 to 6,000 lines of production code in 30 to 50 files. A seed suite of 200 to 400 tests. | The small codebase, the promotions engine, the customers and accounts, the shipping, the invoices, an event log, and the reports. The code has layers (domain, services, adapters) and its own conventions for errors, identifiers, and money. |
 
+A line of production code is a non-blank line of a production file in the seed, comments included. A test of the seed suite is a test that the verifier counts: a `describe` group or a Go parent test that only holds others is not a test.
+
 **M, the promotions engine.** Percentage and fixed discounts, buy-X-get-Y, bundles, and coupons with an expiry date and a usage limit. Rules for stacking, exclusivity, and precedence. On rung C, the engine must also connect to the checkout.
 
 **X, partial returns and refunds.** X changes the order lines, the inventory (the rules for restock), the prices (a refund reverses each discount in proportion, so a bundle that is returned in part gets a new price), and the payments (credit notes). On rung E, the event log, the reports, and the shipping are not in the specification of X. The seed suite of E covers them.

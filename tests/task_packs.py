@@ -309,7 +309,8 @@ class Pack:
         return [f for f in self.seed_files() if f not in tests and f not in self.lang.toolchain]
 
     def production_lines(self) -> int:
-        """The non-blank lines of the seed's production code."""
+        """The non-blank lines of the seed's production code, comments included
+        (PRD section 20, "The domain": the definition of a line of production code)."""
         return sum(1 for f in self.production_files()
                    for line in (self.seed / f).read_text(encoding="utf-8").splitlines()
                    if line.strip())
