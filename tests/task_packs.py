@@ -248,36 +248,64 @@ def _design_file(language: str, name: str) -> str:
 
 
 def _exported_names(language: str, text: str) -> set[str]:
-    """The exported types, functions, methods and fields of a source file,
-    lower-cased so that `unitPrice` and `UnitPrice` match. A Go `New<Type>`
-    function is the constructor of the TypeScript class <Type>, so it is
-    left out."""
+    """The exported types, functions, constants, methods and fields of a
+    source file, lower-cased and without underscores, so that `unitPrice` and
+    `UnitPrice`, and `STANDARD_TAX_RATE` and `StandardTaxRate`, match. A Go
+    `New<Type>` function is the constructor of the TypeScript class <Type>,
+    and a TypeScript `new<Type>` function the Go `New<Type>`, so both are left
+    out."""
     names: set[str] = set()
-    block = ""  # the type whose body the line is in
+    block = ""  # the type (or object constant) whose body the line is in
     for line in text.splitlines():
         if line.startswith("}"):
             block = ""
         elif language == "typescript":
-            if m := re.match(r"export (?:class|interface|type|function|const|enum) (\w+)", line):
-                names.add(m.group(1))
-                block = m.group(1) if line.rstrip().endswith("{") else ""
+            if m := re.match(r"export (class|interface|type|function|const|enum) (\w+)", line):
+                names.add(m.group(2))
+                # A function's body holds no members.
+                opens = line.rstrip().endswith("{") and m.group(1) != "function"
+                block = m.group(2) if opens else ""
             # A member is at the first indent (two spaces); a deeper line is
             # in a method body.
             elif block and (m := re.match(r"  (?:public |readonly |static )*(\w+)\??[:(<]",
                                           line)):
                 if m.group(1) != "constructor" and not line.lstrip().startswith("private"):
                     names.add(f"{block}.{m.group(1)}")
-        elif m := re.match(r"type ([A-Z]\w*) ", line):
+        elif m := re.match(r"(?:type|var|const) ([A-Z]\w*)[\s\[]", line):
             names.add(m.group(1))
             block = m.group(1) if line.rstrip().endswith("{") else ""
         elif m := re.match(r"func \(\w+ \*?(\w+)\) ([A-Z]\w*)\(", line):
             names.add(f"{m.group(1)}.{m.group(2)}")
-        elif m := re.match(r"func ([A-Z]\w*)\(", line):
+        elif m := re.match(r"func ([A-Z]\w*)[\[(]", line):
             names.add(m.group(1))
         elif block and (m := re.match(r"\t([A-Z]\w*)[\s(]", line)):  # field or method
             names.add(f"{block}.{m.group(1)}")
     types = {n for n in names if "." not in n}
-    return {n.lower() for n in names if not (n.startswith("New") and n[3:] in types)}
+    return {n.lower().replace("_", "") for n in names
+            if not (n[:3].lower() == "new" and n[3:] in types)}
+
+
+# The exported names that only one language can have (the medium codebase;
+# docs/codebase-ladder/medium-codebase.md, "The Go port"). seed_design leaves
+# them out.
+LANGUAGE_ONLY_NAMES = {
+    "typescript": set(),
+    "go": {
+        # ShopError implements Go's error interface with fields; the
+        # TypeScript class inherits its message from Error.
+        "shoperror.code", "shoperror.message", "shoperror.error",
+        # Go has one name space for types and functions, so the function of
+        # each figure of domain/report is named <Figure>Of.
+        "salessummaryof", "dailysalesof", "weekdaysalesof", "promotionusageof",
+        "customersalesof", "productsalesof", "shippingcostsof",
+        # The TypeScript Shop is the inferred return type of createShop; the
+        # Go Shop struct names its fields.
+        *(f"shop.{field}" for field in (
+            "clock", "ids", "payments", "outbox", "events", "catalogue", "inventory",
+            "promotions", "customers", "accounts", "checkout", "orders", "shipping",
+            "invoicing", "purchasing", "reports")),
+    },
+}
 
 
 def seed_design(pack: Pack) -> dict:
@@ -291,7 +319,7 @@ def seed_design(pack: Pack) -> dict:
         if f not in tests:
             names |= _exported_names(pack.language, (pack.seed / f).read_text(encoding="utf-8"))
     return {"files": sorted(_design_file(pack.language, f) for f in files),
-            "exported": sorted(names)}
+            "exported": sorted(names - LANGUAGE_ONLY_NAMES[pack.language])}
 
 
 def base_image(pack_path: Path) -> str:
@@ -405,10 +433,13 @@ PACKS += CODEBASE_PACKS
 # The medium codebase (issue #85; PRD section 20, "The domain"): the seed of
 # rung E, built ahead of its pack. Only its seed (environment/seed and the
 # Dockerfile) exists, so it is not in CODEBASE_PACKS yet; the pack of rung E
-# (issue #87) moves it there. tests/test_medium_codebase.py checks it.
+# (issue #87) moves it there. tests/test_medium_codebase.py checks it, and
+# the parity of its two languages (the Go port is issue #86).
 MEDIUM_CODEBASES: list[Pack] = [
     Pack("typescript", "shop-returns-medium", 38, (), _RETURNS, feature_stub="returns",
          module="shop", stubbed=False),
+    Pack("go", "shop-returns-medium", 38, (), _RETURNS, feature_stub="returns", module="shop",
+         stubbed=False),
 ]
 EXERCISM_PACKS = [p for p in PACKS if not p.purpose_written]
 STUBBED_PACKS = [p for p in PACKS if p.stubbed]

@@ -3,7 +3,7 @@
 The medium codebase is the seed of rung E of the codebase ladder (PRD section 20, issue #85). It is the small codebase of rung D grown into an order and inventory service in layers. This note describes its design, so that the Go port (issue #86) can follow it file for file, and so that the pack of rung E (issue #87) knows what it builds on.
 
 - The TypeScript codebase: `tasks/typescript/shop-returns-medium/environment/seed/`, with its `Dockerfile` beside it (the same as rung D's).
-- The Go port goes to `tasks/go/shop-returns-medium/environment/seed/`.
+- The Go port (issue #86): `tasks/go/shop-returns-medium/environment/seed/`, with rung D's Go `Dockerfile`. It is described in "The Go port" below.
 - `tests/test_medium_codebase.py` checks the codebase: the size ranges, the layers, the root entry points, the seed suite in the pinned image, the feature tests of M (they pass) and the feature tests of X (they fail). `tests/task_packs.py` lists it in `MEDIUM_CODEBASES` until the pack of rung E moves it into `CODEBASE_PACKS`.
 
 ## What it holds
@@ -140,3 +140,17 @@ The Go port holds the same files, with `.go` for `.ts` and `_test.go` for `.test
 - **Sorting.** `compareText` is Go's `<` on strings (both compare code units for ASCII), and every sort is stable with a tie-break, so both languages list in the same order.
 - **Size.** Go is longer than TypeScript for the same design (error returns, struct literals). The TypeScript codebase sits near the bottom of the line range (4,099 of 4,000 to 6,000) for that reason: a Go port at 1.2 to 1.4 times the lines stays under 6,000. If the Go port goes over, shorten comments before you cut behaviour, because the seed suites must hold the same cases.
 - **Tests.** Each `describe` is a `t.Run` group, and each `it` a `t.Run` inside it, with the same names; a TypeScript test file with no `describe` (`domain/cart.test.ts`, `adapters/clock.test.ts`) has `t.Run` cases at the top.
+
+### What the port did
+
+The Go codebase is 4,352 lines of production code in 49 files (1.06 times the TypeScript), and its seed suite has the same 33 files and the same 373 cases, in the same order. `tests/test_medium_codebase.py` checks both languages, and the parity of the seed design and the case names.
+
+- **Imports.** The services and the adapters dot-import `shop/domain`, so that their code names the domain as the TypeScript does. The root files declare the aliases in grouped `type`, `const` and `var` blocks, and declare every name that rung D's root file of the same name declared, so that the Go feature tests of M pass unchanged in the root package; those of X fail there only on the names of X (`Returns`, `ReturnsDeps`, `NewReturns`, `ReturnLine`, `CreditNote`, `CreditLine`).
+- **Names that only Go has.** `ShopError.Code`, `Message` and `Error()`; the functions of the report figures, named `<Figure>Of` (`SalesSummaryOf`), since Go has one name space for types and functions; and the fields of the `Shop` struct that `CreateShop` returns (the TypeScript `Shop` is an inferred type). `LANGUAGE_ONLY_NAMES` in `tests/task_packs.py` lists them; the parity check leaves them out.
+- **Results with no named type.** `Inventory.ReservedFor`, `Accounts.CreditHolders` and `ImportResult.Rejected` give anonymous structs, as the TypeScript does, through unexported aliases (`holding`, `creditHolder`, `rejection`).
+- **Stores.** Each store in memory is a small type over an unexported generic `table`; each recording store is an alias of the unexported generic `recording`.
+- **Optional values.** An optional number is its zero value when absent (`ShippingRate.FreeFrom`, `MaxUnitsPerParcel`), except a tax rate, where 0 is a rate: `InvoicingDeps.TaxRate` and `ShopOptions.TaxRate` are `*int`. An optional argument is a nil pointer (`Customers.Register`, `Shipping.CreateShipment`) or a variadic (`Catalogue.Reprice`). `Purchasing.DraftReorder` gives nil when no SKU is short.
+- **Dates.** `AddDays`, `EachDay`, `CheckDate` and `CheckPeriod` check their dates, as in TypeScript. `DaysBetween`, `MonthOf`, `StartOfMonth`, `EndOfMonth` and `Weekday` read the dates of records and return no error.
+- **Events.** `ChangeSink.Record` returns the event and an error, so that `EventLog` implements it. A `Subscriber` returns nothing; `CreateShop` drops the errors of the accounts and shipping handlers, which cannot fail on the shop's own events, and a recording store drops the error of the sink.
+- **Checks that Go makes for you.** A count, an amount or a rate is an `int`, so the checks for whole numbers have no Go form; the seed suite drops those assertions (and tests a negative tax rate and parcel limit), and keeps every case.
+- **Tests.** Each seed test file stands alone, with its own helpers under a prefix of its own, because the verifier drops each unchanged seed test file in the agent pass (issue #83). No helper panics.
