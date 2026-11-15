@@ -1,7 +1,8 @@
 """`assay experiment <name>`: the plan and the run of an experiment (PRD v3
 sections 5, 7 and 11; issues #60 and #61).
 
-    uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--retries N] [--debug]
+    uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch]
+        [--accept-changed-packs] [--retries N] [--debug]
 
 `<name>` is `experiments/<name>/experiment.toml`, from the current directory
 (the repository root). The plan reads the experiment's job files, and from
@@ -24,7 +25,11 @@ whose expected trials have all finished is logged as `job-skipped` and does
 not reach Harbor. A job with trials to run whose task packs changed since
 its trials ran (its lock.json pins other digests) is logged as
 `task-packs-changed` and stops the invocation as `error`, since Harbor
-refuses to resume it. A job that Harbor does not finish (Ctrl-C, or a
+refuses to resume it. With --accept-changed-packs, the job's lock.json is
+instead renamed to `lock.before-pack-change.json` (`.2.json` and so on when
+that name is taken), logged as `task-packs-accepted`, and Harbor runs the
+rest of the job on the packs as they are now; the trials that ran before
+keep the scores of the old packs. A job that Harbor does not finish (Ctrl-C, or a
 non-zero exit) stops the invocation. After the last job, the evaluations run over every trial of
 the experiment, whichever jobs ran, and then the summary (assay/summary.py)
 runs again into `analysis/<name>/summary/` and logs `summary-written`. The
@@ -370,7 +375,7 @@ def experiment_folders(plan: Plan) -> list[Path]:
     return [plan.paths.results, plan.paths.analysis]
 
 
-def print_resume(plan: Plan, from_scratch: bool) -> None:
+def print_resume(plan: Plan, from_scratch: bool, accept_changed_packs: bool = False) -> None:
     """What the next invocation deletes, keeps and runs (PRD section 11, "Resume")."""
     print()
     if from_scratch:
@@ -390,7 +395,12 @@ def print_resume(plan: Plan, from_scratch: bool) -> None:
         print(f"  {job.name:<22} {len(finished)} finished {noun} kept, {to_run} to run{done}")
         if to_run and not from_scratch and (
                 changed := changed_task_packs(plan.paths.job_results(job.name))):
-            print(f"    error: {changed_packs_message(plan, job, changed)}")
+            if accept_changed_packs:
+                print(f"    changed task packs accepted: lock.json would be kept as "
+                      f"{LOCK_KEPT_AS}.json, and the rest runs on the packs as they are "
+                      f"now: {', '.join(changed)}")
+            else:
+                print(f"    error: {changed_packs_message(plan, job, changed)}")
         for trial in [] if from_scratch else plan.paths.unfinished_trials(job.name):
             print(f"    {trial} (unfinished, Harbor deletes it)")
         for trial, event in halted.items():
@@ -432,8 +442,24 @@ def changed_packs_message(plan: Plan, job: JobPlan, changed: Sequence[str]) -> s
     n = trials_to_run(plan, job)
     return (f"job {job.name} has {n} trial{'' if n == 1 else 's'} to run, but these task "
             f"packs changed since its trials ran, and Harbor will not mix the two versions "
-            f"in one job: {', '.join(changed)}. Restore the packs to run the rest, or delete "
-            f"{folder} to run the whole job again (or use --from-scratch for every job).")
+            f"in one job: {', '.join(changed)}. Restore the packs to run the rest, delete "
+            f"{folder} to run the whole job again (or use --from-scratch for every job), or "
+            f"use --accept-changed-packs to run the rest on the packs as they are now.")
+
+
+LOCK_KEPT_AS = "lock.before-pack-change"
+
+
+def keep_lock_aside(job_dir: Path) -> Path:
+    """Rename the job's lock.json to the first free lock.before-pack-change
+    name, so that Harbor writes a new lock against the packs as they are now.
+    An earlier kept lock is never overwritten."""
+    n = 1
+    while (kept := job_dir / (f"{LOCK_KEPT_AS}.json" if n == 1
+                              else f"{LOCK_KEPT_AS}.{n}.json")).exists():
+        n += 1
+    (job_dir / "lock.json").rename(kept)
+    return kept
 
 
 def assay_commit() -> str | None:
@@ -589,11 +615,14 @@ def discard_halted_trials(plan: Plan, log: ExperimentLog) -> None:
 
 def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
                    run_harbor: Callable[[Sequence[str]], int], containers: Containers,
-                   retries: int = 0) -> int:
+                   retries: int = 0, accept_changed_packs: bool = False) -> int:
     """Run the selected jobs in order, one at a time, and log the invocation.
     After each run of a job, check its trials, discard the infrastructure
     failures and run the job again for them, up to `retries` times. Stops at
     the first job that Harbor did not finish, and after a job with a halt.
+    A job to resume whose task packs changed stops the invocation, unless
+    `accept_changed_packs`: then its lock.json is kept aside and Harbor runs
+    the rest of the job on the packs as they are now.
     When every job completes, run the evaluations over every trial of the
     experiment."""
     log = ExperimentLog(plan.paths)
@@ -615,7 +644,15 @@ def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
                                   trials=plan.paths.finished_trials(job.name))
                         print(f"\njob {job.name}: complete, every trial finished")
                     break
-                if changed := changed_task_packs(plan.paths.job_results(job.name)):
+                job_dir = plan.paths.job_results(job.name)
+                if (changed := changed_task_packs(job_dir)) and accept_changed_packs:
+                    kept = keep_lock_aside(job_dir)
+                    log.write("task-packs-accepted", job=job.name, packs=changed,
+                              lock_kept_as=kept.as_posix())
+                    print(f"\njob {job.name}: task packs changed since its trials ran; "
+                          f"running the rest on the packs as they are now "
+                          f"(old lock kept as {kept.as_posix()}): {', '.join(changed)}")
+                elif changed:
                     log.write("task-packs-changed", job=job.name, packs=changed)
                     print(f"error: assay experiment: {changed_packs_message(plan, job, changed)}",
                           file=sys.stderr)
@@ -661,7 +698,8 @@ def error(message: str) -> int:
     return 2
 
 
-USAGE = "usage: assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--retries N] [--debug]"
+USAGE = ("usage: assay experiment <name> [--job J]... [--dry-run] [--from-scratch] "
+         "[--accept-changed-packs] [--retries N] [--debug]")
 
 
 def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
@@ -672,7 +710,7 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
     argv = list(args)
     args = list(args)
     names, jobs = [], []
-    dry_run = from_scratch = debug = False
+    dry_run = from_scratch = debug = accept_changed_packs = False
     retries = 0
     while args:
         arg = args.pop(0)
@@ -680,6 +718,8 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
             dry_run = True
         elif arg == "--from-scratch":
             from_scratch = True
+        elif arg == "--accept-changed-packs":
+            accept_changed_packs = True
         elif arg == "--debug":
             debug = True  # the one option that reaches Harbor
         elif arg == "--job":
@@ -705,7 +745,7 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
         return error(str(e))
     print_plan(plan)
     if dry_run:
-        print_resume(plan, from_scratch)
+        print_resume(plan, from_scratch, accept_changed_packs)
         print("\ndry run: no job runs, and nothing is written or deleted.")
         return 0
     if from_scratch:
@@ -717,4 +757,5 @@ def experiment(args: Sequence[str], run_harbor: Callable[[Sequence[str]], int],
         from assay.containers import DockerContainers
 
         containers = DockerContainers()
-    return run_experiment(plan, argv, debug, run_harbor, containers, retries)
+    return run_experiment(plan, argv, debug, run_harbor, containers, retries,
+                          accept_changed_packs)

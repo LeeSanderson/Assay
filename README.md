@@ -31,6 +31,7 @@ uv run assay experiment phase0-tdd             # run; run again to resume
 | `--job J` | Run only this job. It can repeat. The evaluations and the summary still cover every trial of the experiment. |
 | `--dry-run` | Check the plan and print it: the jobs, the expected trials of each cell, the evaluations, the summary, and what resume would keep, delete and rerun. It never calls Harbor or Docker and deletes nothing. |
 | `--from-scratch` | Delete `results/<name>` and `analysis/<name>`, the experiment log included, then run. |
+| `--accept-changed-packs` | Resume a job even though its task packs changed since its trials ran. Without it, the job stops with an error, because Harbor refuses to mix two versions of a pack in one job. With it, the job's `lock.json` is renamed to `lock.before-pack-change.json` (or `.2.json`, and so on), the log records `task-packs-accepted`, and the remaining trials run on the packs as they are now. The trials that ran before keep their old scores. |
 | `--retries N` | After each job, run its infrastructure failures again, up to N times. The default is 0. |
 | `--debug` | Give `--debug` to Harbor. No other option reaches Harbor. |
 

@@ -2,7 +2,7 @@
 and the one way to run the analysis tools on its results.
 
     uv run assay run -c jobs/<file>.yaml -y [--overwrite] [harbor run options]
-    uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--debug]
+    uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--accept-changed-packs] [--retries N] [--debug]
                                                 (assay/experiment.py)
     uv run assay <subcommand> [args]   (each analysis tool's `main` in the `analyze` package)
 

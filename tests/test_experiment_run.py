@@ -253,10 +253,39 @@ def test_a_job_to_resume_whose_task_packs_changed_stops_before_harbor(repo, caps
     assert experiment(lambda args: pytest.fail("Harbor ran a job with changed task packs")) == 2
 
     err = capsys.readouterr().err
-    assert "tasks/go/slug" in err and "delete results/exp/a" in err
+    assert "tasks/go/slug" in err and "delete results/exp/a" in err and "--accept-changed-packs" in err
     events = log(repo)
     assert [e["packs"] for e in events if e["event"] == "task-packs-changed"] == [["tasks/go/slug"]]
     assert events[-1]["outcome"] == "error"
+
+
+def test_accept_changed_packs_keeps_the_old_lock_aside_and_resumes(repo, capsys):
+    write_experiment(repo, write_job(repo, "a", n_attempts=3))
+    job = repo / "results" / "exp" / "a"
+    assert experiment(FakeHarbor(stop_after=1)) != 0
+    write_lock(repo, "a", "sha256:" + "0" * 64)
+    old_lock = (job / "lock.json").read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    assert experiment(lambda args: pytest.fail("a dry run ran Harbor"),
+                      "--dry-run", "--accept-changed-packs") == 0
+    out = capsys.readouterr().out
+    assert "error:" not in out and "accepted" in out and "tasks/go/slug" in out
+    assert (job / "lock.json").read_text(encoding="utf-8") == old_lock  # a dry run moves nothing
+
+    harbor = FakeHarbor(stop_after=1)
+    assert experiment(harbor, "--accept-changed-packs") != 0
+    assert harbor.ran == ["a/slug__01"]
+    assert not (job / "lock.json").exists()
+    assert (job / "lock.before-pack-change.json").read_text(encoding="utf-8") == old_lock
+    accepted = [e for e in log(repo) if e["event"] == "task-packs-accepted"]
+    assert [(e["job"], e["packs"], e["lock_kept_as"]) for e in accepted] == [
+        ("a", ["tasks/go/slug"], "results/exp/a/lock.before-pack-change.json")]
+
+    write_lock(repo, "a", "sha256:" + "1" * 64)  # the packs changed again
+    assert experiment(FakeHarbor(), "--accept-changed-packs") == 0
+    assert (job / "lock.before-pack-change.json").read_text(encoding="utf-8") == old_lock
+    assert "sha256:" + "1" * 64 in (job / "lock.before-pack-change.2.json").read_text(encoding="utf-8")
 
 
 def write_lock(repo, job, digest):

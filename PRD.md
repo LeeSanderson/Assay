@@ -681,7 +681,7 @@ A comparison changes one factor only. Two levels of a factor compare only where 
 ## 11. `assay experiment`
 
 ```
-uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--retries N] [--debug]
+uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--accept-changed-packs] [--retries N] [--debug]
 ```
 
 | Option | Effect |
@@ -690,6 +690,7 @@ uv run assay experiment <name> [--job J]... [--dry-run] [--from-scratch] [--retr
 | `--job J` | Run only these jobs. It can repeat. The evaluations and the summary always cover every trial of the experiment. |
 | `--dry-run` | Do the plan-time checks, print the plan, and stop. It costs nothing. It never calls Harbor or `Containers`, and it deletes nothing. |
 | `--from-scratch` | Delete `results/<experiment>` and `analysis/<experiment>`, the experiment log included, then run. With `--dry-run`, it only prints. |
+| `--accept-changed-packs` | Resume a job whose task packs changed since its trials ran. Rename its `lock.json` to `lock.before-pack-change.json` (or `.2.json`, and so on), log `task-packs-accepted`, and let Harbor run the rest on the packs as they are now. Without it, such a job stops the invocation as `error` (`task-packs-changed`). With `--dry-run`, it only prints. |
 | `--retries N` | After each job, run its infrastructure failures again, up to N times. The default is 0. |
 | `--debug` | Give `--debug` to Harbor. |
 
