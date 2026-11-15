@@ -207,15 +207,62 @@ def test_job_selects_the_jobs_that_run(repo):
 
 def test_only_debug_reaches_harbor(repo, capsys):
     write_experiment(repo, write_job(repo, "a"))
-    harbor = FakeHarbor()
+    calls = []
+
+    def harbor(args):  # finishes no trial, so each invocation has a trial to run
+        calls.append(list(args))
+        return 0
 
     assert experiment(harbor) == 0
     assert experiment(harbor, "--debug") == 0
     assert experiment(harbor, "--n-concurrent", "4") == 2
 
     plain = ["-c", "jobs/a.yaml", "--jobs-dir", "results/exp", "-y"]
-    assert harbor.calls == [plain, [*plain, "--debug"]]
+    assert calls == [plain, [*plain, "--debug"]]
     assert "--n-concurrent" in capsys.readouterr().err
+
+
+def test_a_job_with_every_trial_finished_does_not_reach_harbor(repo, capsys):
+    write_experiment(repo, write_job(repo, "a"), write_job(repo, "b", n_attempts=2))
+    assert experiment(FakeHarbor(stop_after=1)) != 0  # a finishes; b stops after one trial
+    write_lock(repo, "a", "sha256:" + "0" * 64)  # a's task pack changed since: no matter
+    capsys.readouterr()
+
+    harbor = FakeHarbor()
+    assert experiment(harbor) == 0
+
+    assert harbor.ran == ["b/slug__01"]
+    assert [args[args.index("-c") + 1] for args in harbor.calls] == ["jobs/b.yaml"]
+    events = [e for e in log(repo) if e["invocation"] == log(repo)[-1]["invocation"]]
+    skipped = [e for e in events if e["event"] == "job-skipped"]
+    assert [(e["job"], e["trials"]) for e in skipped] == [("a", ["slug__00"])]
+    assert events[-1]["outcome"] == "complete"
+    assert "job a: complete" in capsys.readouterr().out
+
+
+def test_a_job_to_resume_whose_task_packs_changed_stops_before_harbor(repo, capsys):
+    write_experiment(repo, write_job(repo, "a", n_attempts=2))
+    assert experiment(FakeHarbor(stop_after=1)) != 0
+    write_lock(repo, "a", "sha256:" + "0" * 64)
+    capsys.readouterr()
+
+    assert experiment(lambda args: pytest.fail("Harbor ran a job with changed task packs"),
+                      "--dry-run") == 0
+    assert "these task packs changed since its trials ran" in capsys.readouterr().out
+
+    assert experiment(lambda args: pytest.fail("Harbor ran a job with changed task packs")) == 2
+
+    err = capsys.readouterr().err
+    assert "tasks/go/slug" in err and "delete results/exp/a" in err
+    events = log(repo)
+    assert [e["packs"] for e in events if e["event"] == "task-packs-changed"] == [["tasks/go/slug"]]
+    assert events[-1]["outcome"] == "error"
+
+
+def write_lock(repo, job, digest):
+    """Harbor's job lock.json, pinning tasks/go/slug at the digest."""
+    lock = {"trials": [{"task": {"name": "slug", "path": "tasks/go/slug", "digest": digest}}]}
+    (repo / "results" / "exp" / job / "lock.json").write_text(json.dumps(lock), encoding="utf-8")
 
 
 def test_from_scratch_deletes_the_results_and_the_analysis_then_runs(repo):

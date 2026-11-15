@@ -20,8 +20,12 @@ each through the `assay run` path with `--jobs-dir results/<name> -y`, and
 `--debug` when given (no other option reaches Harbor). Each invocation
 appends to the experiment log `analysis/<name>/experiment-log.jsonl`. Resume
 is the default: Harbor keeps each finished trial and runs the rest. A job
-that Harbor does not finish (Ctrl-C, or a non-zero exit) stops the
-invocation. After the last job, the evaluations run over every trial of
+whose expected trials have all finished is logged as `job-skipped` and does
+not reach Harbor. A job with trials to run whose task packs changed since
+its trials ran (its lock.json pins other digests) is logged as
+`task-packs-changed` and stops the invocation as `error`, since Harbor
+refuses to resume it. A job that Harbor does not finish (Ctrl-C, or a
+non-zero exit) stops the invocation. After the last job, the evaluations run over every trial of
 the experiment, whichever jobs ran, and then the summary (assay/summary.py)
 runs again into `analysis/<name>/summary/` and logs `summary-written`. The
 plan loads the summary and checks its options. --from-scratch first deletes `results/<name>` and
@@ -382,7 +386,11 @@ def print_resume(plan: Plan, from_scratch: bool) -> None:
                                             if TrialId(job.name, t) not in halted]
         to_run = max(sum(job.expected.values()) - len(finished), 0)
         noun = "trial" if len(finished) == 1 else "trials"
-        print(f"  {job.name:<22} {len(finished)} finished {noun} kept, {to_run} to run")
+        done = "  (complete: Harbor does not run)" if not to_run else ""
+        print(f"  {job.name:<22} {len(finished)} finished {noun} kept, {to_run} to run{done}")
+        if to_run and not from_scratch and (
+                changed := changed_task_packs(plan.paths.job_results(job.name))):
+            print(f"    error: {changed_packs_message(plan, job, changed)}")
         for trial in [] if from_scratch else plan.paths.unfinished_trials(job.name):
             print(f"    {trial} (unfinished, Harbor deletes it)")
         for trial, event in halted.items():
@@ -392,6 +400,40 @@ def print_resume(plan: Plan, from_scratch: bool) -> None:
                 print(f"    {trial.trial} (halted: {what}, Assay deletes it)")
     if not from_scratch:
         print_evaluation_reuse(plan, plan.planned_evaluations, excluded=set(halted))
+
+
+def trials_to_run(plan: Plan, job: JobPlan) -> int:
+    """The expected trials of the job that have no finished trial yet."""
+    return max(sum(job.expected.values()) - len(plan.paths.finished_trials(job.name)), 0)
+
+
+def changed_task_packs(job_dir: Path) -> list[str]:
+    """The task packs that Harbor's lock.json of the job pins at a digest
+    that is no longer their content. Harbor refuses to resume such a job, so
+    that one job never mixes trials of two versions of a pack."""
+    from harbor.publisher.packager import Packager
+
+    try:
+        lock = json.loads((job_dir / "lock.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    pinned = {t["task"]["path"]: t["task"].get("digest") for t in lock.get("trials", [])
+              if t.get("task", {}).get("path")}
+    changed = []
+    for path, digest in pinned.items():
+        pack = Path(path)
+        if not pack.is_dir() or f"sha256:{Packager.compute_content_hash(pack)[0]}" != digest:
+            changed.append(pack.as_posix())
+    return sorted(changed)
+
+
+def changed_packs_message(plan: Plan, job: JobPlan, changed: Sequence[str]) -> str:
+    folder = plan.paths.job_results(job.name).as_posix()
+    n = trials_to_run(plan, job)
+    return (f"job {job.name} has {n} trial{'' if n == 1 else 's'} to run, but these task "
+            f"packs changed since its trials ran, and Harbor will not mix the two versions "
+            f"in one job: {', '.join(changed)}. Restore the packs to run the rest, or delete "
+            f"{folder} to run the whole job again (or use --from-scratch for every job).")
 
 
 def assay_commit() -> str | None:
@@ -563,8 +605,22 @@ def run_experiment(plan: Plan, argv: Sequence[str], debug: bool,
         for job in plan.jobs:
             if not job.selected:
                 continue
-            retry = 0
+            retry, exit_code, halts = 0, 0, 0
             while True:
+                if not trials_to_run(plan, job):
+                    # Nothing for Harbor to do; its resume would only re-lock the
+                    # job against the task packs as they are now.
+                    if not retry:
+                        log.write("job-skipped", job=job.name,
+                                  trials=plan.paths.finished_trials(job.name))
+                        print(f"\njob {job.name}: complete, every trial finished")
+                    break
+                if changed := changed_task_packs(plan.paths.job_results(job.name)):
+                    log.write("task-packs-changed", job=job.name, packs=changed)
+                    print(f"error: assay experiment: {changed_packs_message(plan, job, changed)}",
+                          file=sys.stderr)
+                    exit_code = 2
+                    break
                 if not servers_answer(job, log):
                     exit_code = 2
                     break
